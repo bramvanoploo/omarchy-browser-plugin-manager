@@ -407,7 +407,7 @@ Item {
       color: piButton.enabled
         ? (piButton.primary || piButton.danger ? piButton.tone : Commons.Color.foreground)
         : Util.alpha(Commons.Color.foreground, 0.35)
-      font.family: Style.font.family
+      font.family: Style.font.menuFamily
       font.pixelSize: Style.font.body
       font.bold: piButton.primary || piButton.danger
     }
@@ -424,7 +424,7 @@ Item {
     width: cardColumn.width
     wrapMode: Text.Wrap
     color: Util.alpha(Commons.Color.foreground, 0.75)
-    font.family: Style.font.family
+    font.family: Style.font.menuFamily
     font.pixelSize: Style.font.body
   }
 
@@ -457,23 +457,26 @@ Item {
     BorderSurface {
       id: card
       anchors.centerIn: parent
-      width: Math.min(parent.width - Style.space(48), Style.space(420))
-      height: cardColumn.implicitHeight + Style.space(48)
+      width: Math.min(Style.space(360), panel.width - Style.gapsOut * 2)
+      height: Math.min(cardColumn.implicitHeight + Style.spacing.panelPadding * 2,
+                       panel.height - Style.gapsOut * 2)
+      clip: true
       radius: Style.cornerRadius
-      color: Commons.Color.popups.background
-      borderSpec: Border.flat(Commons.Color.popups.border, Math.max(1, Style.normalBorderWidth))
+      color: Commons.Color.menu.background
+      borderSpec: Border.surfaceSpec("menu", "border", Commons.Color.menu.border,
+                                     Math.max(1, Style.space(2)))
+      padding: Style.spacing.panelPadding
 
       // Swallow clicks over the card so the scrim MouseArea below doesn't close.
       MouseArea { anchors.fill: parent; onClicked: {} }
 
       Column {
         id: cardColumn
-        anchors {
-          top: parent.top
-          left: parent.left
-          right: parent.right
-          margins: Style.spacing.panelPadding
-        }
+        anchors.fill: parent
+        anchors.topMargin: card.contentTopInset
+        anchors.rightMargin: card.contentRightInset
+        anchors.bottomMargin: card.contentBottomInset
+        anchors.leftMargin: card.contentLeftInset
         spacing: Style.spacing.panelGap
 
         Text {
@@ -481,7 +484,7 @@ Item {
           text: ({ install: "Install plugin", uninstall: "Uninstall plugin",
                    enable: "Enable plugin", disable: "Disable plugin" })[root.mode]
           color: Commons.Color.foreground
-          font.family: Style.font.family
+          font.family: Style.font.menuFamily
           font.bold: true
           font.pixelSize: Style.font.heading
         }
