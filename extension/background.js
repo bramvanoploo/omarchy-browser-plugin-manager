@@ -40,6 +40,7 @@ function talkToHost(message) {
 }
 
 api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  console.debug("[plugin-installer] background got message:", message && message.type);
   const allowed = ["ping", "status", "install", "uninstall", "enable", "disable"];
   if (!message || !allowed.includes(message.type)) return false;
   talkToHost(message)

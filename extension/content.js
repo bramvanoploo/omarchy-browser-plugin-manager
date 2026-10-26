@@ -60,6 +60,7 @@
 
   async function pingHost() {
     const response = await talkToHost({ type: "ping" });
+    console.debug("[plugin-installer] ping response:", JSON.stringify(response));
     return Boolean(response && response.ok);
   }
 
