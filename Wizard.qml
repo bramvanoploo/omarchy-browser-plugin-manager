@@ -2,6 +2,8 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
+import qs.Commons
+import qs.Ui
 
 // Plugin Installer wizard overlay.
 // Summoned by the native messaging host (browser button click) with payload
@@ -369,38 +371,50 @@ Item {
       ])
     }
   }
-
   // ---- UI -----------------------------------------------------------------
 
-  component PiButton: Rectangle {
+  // All chrome below is painted from the Omarchy theme (qs.Commons: the
+  // active theme's palette + typography/spacing/rounding tokens; qs.Ui: the
+  // shared BorderSurface), so the wizard follows theme switches instantly.
+
+  component PiButton: BorderSurface {
     id: piButton
     property string label: ""
     property bool primary: false
     property bool danger: false
-    property color textColor: primary || danger ? "#16161d" : "#e6e6f0"
+    readonly property color tone: danger
+      ? Commons.Color.urgent
+      : primary ? Commons.Color.accent : Commons.Color.foreground
+    readonly property bool hot: piMouse.containsMouse
     signal clickedPi
-    width: labelText.implicitWidth + 36
-    height: 38
-    radius: 8
-    color: enabled
-      ? (piMouse.containsMouse
-          ? (danger ? "#f18c75" : primary ? "#c9f46e" : "#343446")
-          : (danger ? "#e05260" : primary ? "#b7ef51" : "#2c2c3c"))
-      : "#26262f"
-    border.color: primary || danger ? "transparent" : "#4a4a5e"
-    border.width: primary || danger ? 0 : 1
+
+    width: labelText.implicitWidth + Style.space(36)
+    height: Style.space(34)
+    radius: Style.cornerRadius
+    color: !enabled ? "transparent"
+      : primary || danger
+        ? (hot ? Util.alpha(tone, 0.22) : Util.alpha(tone, 0.1))
+        : (hot ? Style.hoverFill : "transparent")
+    borderSpec: Border.flat(enabled
+      ? Util.alpha(tone, hot ? 1 : (primary || danger ? 0.6 : 0.38))
+      : Util.alpha(Commons.Color.foreground, 0.2),
+      Math.max(1, Style.normalBorderWidth))
+
     Text {
       id: labelText
       anchors.centerIn: parent
       text: piButton.label
-      color: piButton.textColor
-      font.bold: piButton.primary
+      color: piButton.enabled
+        ? (piButton.primary || piButton.danger ? piButton.tone : Commons.Color.foreground)
+        : Util.alpha(Commons.Color.foreground, 0.35)
+      font.family: Style.font.family
+      font.pixelSize: Style.font.body
+      font.bold: piButton.primary || piButton.danger
     }
     MouseArea {
       id: piMouse
       anchors.fill: parent
       hoverEnabled: true
-      enabled: piButton.enabled
       cursorShape: Qt.PointingHandCursor
       onClicked: piButton.clickedPi()
     }
@@ -409,7 +423,9 @@ Item {
   component PiLine: Text {
     width: cardColumn.width
     wrapMode: Text.Wrap
-    color: "#c9c9da"
+    color: Util.alpha(Commons.Color.foreground, 0.75)
+    font.family: Style.font.family
+    font.pixelSize: Style.font.body
   }
 
   Shortcut {
@@ -430,7 +446,7 @@ Item {
 
     Rectangle {
       anchors.fill: parent
-      color: "#88000000"
+      color: Commons.Color.menu.scrim
     }
 
     MouseArea {
@@ -438,40 +454,49 @@ Item {
       onClicked: root.close()
     }
 
-    Rectangle {
+    BorderSurface {
       id: card
       anchors.centerIn: parent
-      width: 460
-      height: cardColumn.implicitHeight + 48
-      radius: 12
-      color: "#1e1e2e"
-      border.color: "#3a3a4e"
-      border.width: 1
+      width: Math.min(parent.width - Style.space(48), Style.space(420))
+      height: cardColumn.implicitHeight + Style.space(48)
+      radius: Style.cornerRadius
+      color: Commons.Color.popups.background
+      borderSpec: Border.flat(Commons.Color.popups.border, Math.max(1, Style.normalBorderWidth))
+
+      // Swallow clicks over the card so the scrim MouseArea below doesn't close.
+      MouseArea { anchors.fill: parent; onClicked: {} }
 
       Column {
         id: cardColumn
-        anchors { top: parent.top; left: parent.left; right: parent.right; margins: 24 }
-        spacing: 10
+        anchors {
+          top: parent.top
+          left: parent.left
+          right: parent.right
+          margins: Style.spacing.panelPadding
+        }
+        spacing: Style.spacing.panelGap
 
         Text {
           width: parent.width
           text: ({ install: "Install plugin", uninstall: "Uninstall plugin",
                    enable: "Enable plugin", disable: "Disable plugin" })[root.mode]
-          color: "#f2f2fa"
+          color: Commons.Color.foreground
+          font.family: Style.font.family
           font.bold: true
-          font.pixelSize: 18
+          font.pixelSize: Style.font.heading
         }
         PiLine {
           text: root.pluginName + "  \u00b7  " + root.pluginId
-          color: "#f2f2fa"
+          color: Commons.Color.foreground
           font.bold: true
+          font.pixelSize: Style.font.title
         }
 
         // ---- stage: review ----
         Column {
           visible: root.stage === "review"
           width: cardColumn.width
-          spacing: 6
+          spacing: Style.spacing.lg
           PiLine {
             visible: root.catalogEntry !== null
             text: {
@@ -502,12 +527,12 @@ Item {
           }
           PiLine {
             visible: root.catalogEntry !== null
-            color: "#f4bd62"
+            color: Commons.Color.accent
             text: "Installs the repository's current HEAD, which may differ from the verified snapshot."
           }
           PiLine {
             visible: root.reviewBlocked.length > 0
-            color: "#f18c75"
+            color: Commons.Color.urgent
             text: root.reviewBlocked
           }
         }
@@ -551,14 +576,14 @@ Item {
         Column {
           visible: root.stage === "placement"
           width: cardColumn.width
-          spacing: 10
+          spacing: Style.spacing.rowGap
           PiLine {
             text: root.mode === "install"
               ? "Installed (disabled). Where should the bar icon go?"
               : "Where should the bar icon go?"
           }
           Row {
-            spacing: 8
+            spacing: Style.spacing.controlGap
             PiButton { label: "Left"; onClickedPi: root.enable("left") }
             PiButton { label: "Center"; onClickedPi: root.enable("center") }
             PiButton { label: "Right"; onClickedPi: root.enable("right") }
@@ -572,7 +597,7 @@ Item {
         // ---- stage: done ----
         PiLine {
           visible: root.stage === "done"
-          color: "#b7ef51"
+          color: Commons.Color.accent
           text: {
             if (root.mode === "uninstall")
               return "Uninstalled. Reinstall from the plugin page at any time."
@@ -588,24 +613,24 @@ Item {
         // ---- stage: error ----
         PiLine {
           visible: root.stage === "error"
-          color: "#f18c75"
+          color: Commons.Color.urgent
           text: ({ install: "Installation failed.", uninstall: "Uninstall failed.",
                    enable: "Enabling failed.", disable: "Disabling failed." })[root.mode]
         }
         PiLine {
           visible: root.stage === "error" && root.installOutput.length > 0
-          color: "#9a9ab0"
-          font.pixelSize: 12
+          color: Util.alpha(Commons.Color.foreground, 0.55)
+          font.pixelSize: Style.font.bodySmall
           elide: Text.ElideRight
           maximumLineCount: 8
           text: root.installOutput
         }
 
-        Item { width: 1; height: 6 }
+        Item { width: 1; height: Style.spacing.xs }
 
         // ---- footer ----
         Row {
-          spacing: 8
+          spacing: Style.spacing.controlGap
           PiButton {
             visible: root.mode === "install" && root.stage === "review"
             enabled: root.canInstall
