@@ -393,12 +393,12 @@ Item {
     radius: Style.cornerRadius
     color: !enabled ? "transparent"
       : primary || danger
-        ? (hot ? Util.alpha(tone, 0.22) : Util.alpha(tone, 0.1))
-        : (hot ? Style.hoverFill : "transparent")
+        ? (hot ? Util.alpha(tone, 0.2) : Util.alpha(tone, 0.12))
+        : (hot ? Util.alpha(Commons.Color.foreground, 0.12) : Util.alpha(Commons.Color.foreground, 0.05))
     borderSpec: Border.flat(enabled
-      ? Util.alpha(tone, hot ? 1 : (primary || danger ? 0.6 : 0.38))
+      ? (primary || danger ? tone : Util.alpha(Commons.Color.foreground, 0.3))
       : Util.alpha(Commons.Color.foreground, 0.2),
-      Math.max(1, Style.normalBorderWidth))
+      1)
 
     Text {
       id: labelText
@@ -407,7 +407,7 @@ Item {
       color: piButton.enabled
         ? (piButton.primary || piButton.danger ? piButton.tone : Commons.Color.foreground)
         : Util.alpha(Commons.Color.foreground, 0.35)
-      font.family: Style.font.menuFamily
+      font.family: Style.font.family
       font.pixelSize: Style.font.body
       font.bold: piButton.primary || piButton.danger
     }
@@ -424,7 +424,7 @@ Item {
     width: cardColumn.width
     wrapMode: Text.Wrap
     color: Util.alpha(Commons.Color.foreground, 0.75)
-    font.family: Style.font.menuFamily
+    font.family: Style.font.family
     font.pixelSize: Style.font.body
   }
 
@@ -446,7 +446,7 @@ Item {
 
     Rectangle {
       anchors.fill: parent
-      color: Commons.Color.menu.scrim
+      color: Qt.rgba(0, 0, 0, 0.65)
     }
 
     MouseArea {
@@ -457,15 +457,14 @@ Item {
     BorderSurface {
       id: card
       anchors.centerIn: parent
-      width: Math.min(Style.space(360), panel.width - Style.gapsOut * 2)
-      height: Math.min(cardColumn.implicitHeight + Style.spacing.panelPadding * 2,
-                       panel.height - Style.gapsOut * 2)
+      width: Math.min(Style.space(360), panel.width - Style.space(48))
+      height: Math.min(cardColumn.implicitHeight + Style.space(48),
+                       panel.height - Style.space(48))
       clip: true
       radius: Style.cornerRadius
-      color: Commons.Color.menu.background
-      borderSpec: Border.surfaceSpec("menu", "border", Commons.Color.menu.border,
-                                     Math.max(1, Style.space(2)))
-      padding: Style.spacing.panelPadding
+      color: Commons.Color.popups.background
+      borderSpec: Border.flat(Commons.Color.accent, Style.normalBorderWidth)
+      padding: Style.space(24)
 
       // Swallow clicks over the card so the scrim MouseArea below doesn't close.
       MouseArea { anchors.fill: parent; onClicked: {} }
@@ -484,7 +483,7 @@ Item {
           text: ({ install: "Install plugin", uninstall: "Uninstall plugin",
                    enable: "Enable plugin", disable: "Disable plugin" })[root.mode]
           color: Commons.Color.foreground
-          font.family: Style.font.menuFamily
+          font.family: Style.font.family
           font.bold: true
           font.pixelSize: Style.font.heading
         }
