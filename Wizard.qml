@@ -428,21 +428,6 @@ Item {
     font.pixelSize: Style.font.body
   }
 
-  // Verified / Unverified labels: identical to the surrounding PiLine text,
-  // only the color differs (marketplace tones: stable #b4c96f, accent #ff5a36).
-  component PiBadge: Text {
-    property string badgeLabel: ""
-    property color tone: "#b4c96f"
-    text: badgeLabel
-    color: tone
-    font.family: Style.font.family
-    font.pixelSize: Style.font.body
-  }
-
-  // Verified / Unverified + snapshot markers with the marketplace tones.
-  function verificationTone(verified) { return verified ? "#b4c96f" : "#ff5a36" }
-
-
   Shortcut {
     sequence: "Escape"
     enabled: root.opened
@@ -531,33 +516,15 @@ Item {
             visible: root.catalogEntry !== null
             text: "Source: " + root.pluginRepo
           }
-          Row {
+          PiLine {
             visible: root.catalogEntry !== null
-            spacing: Style.space(6)
-            PiBadge {
-              badgeLabel: root.catalogEntry
-                ? (root.catalogEntry.verificationStatus === "verified" ? "Verified" : "Unverified")
-                : ""
-              tone: root.verificationTone(root.catalogEntry
-                && root.catalogEntry.verificationStatus === "verified")
-            }
-            PiBadge {
-              badgeLabel: root.catalogEntry
-                ? (root.catalogEntry.verificationSnapshotStatus === "verified"
-                  ? "Snapshot verified" : "Snapshot unverified")
-                : ""
-              tone: root.verificationTone(root.catalogEntry
-                && root.catalogEntry.verificationSnapshotStatus === "verified")
-            }
-            Text {
-              height: Style.space(21)
-              verticalAlignment: Text.AlignVCenter
-              color: Util.alpha(Color.foreground, 0.75)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.body
-              text: root.catalogEntry
-                ? "at " + root.shortSha(root.catalogEntry.listingValidatedCommit)
-                : ""
+            text: {
+              var e = root.catalogEntry
+              if (!e) return ""
+              var verification = e.verificationStatus === "verified" ? "verified" : "unverified"
+              var snapshot = e.verificationSnapshotStatus === "verified" ? "snapshot verified" : "snapshot unverified"
+              return "Marketplace status: " + verification + " \u00b7 " + snapshot
+                + " at " + root.shortSha(e.listingValidatedCommit)
             }
           }
           PiLine {
