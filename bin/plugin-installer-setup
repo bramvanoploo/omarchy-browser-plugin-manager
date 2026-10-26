@@ -25,7 +25,13 @@ CHROME_DIRS=(
   "$HOME/.config/chromium"
   "$HOME/.config/BraveSoftware/Brave-Browser"
 )
-FIREFOX_DIR="$HOME/.mozilla/native-messaging-hosts"
+# Firefox (Linux) scans native messaging manifests in the XDG location
+# (~/.config/mozilla/... since Firefox 133) and the legacy ~/.mozilla one.
+# Register in both; older Firefox builds only read the legacy path.
+FIREFOX_DIRS=(
+  "${XDG_CONFIG_HOME:-$HOME/.config}/mozilla/native-messaging-hosts"
+  "$HOME/.mozilla/native-messaging-hosts"
+)
 
 usage() {
   cat <<EOF
@@ -48,10 +54,12 @@ uninstall() {
       removed=1
     fi
   done
-  if [[ -f "$FIREFOX_DIR/$HOST_NAME.json" ]]; then
-    rm -f "$FIREFOX_DIR/$HOST_NAME.json"
-    removed=1
-  fi
+  for dir in "${FIREFOX_DIRS[@]}"; do
+    if [[ -f "$dir/$HOST_NAME.json" ]]; then
+      rm -f "$dir/$HOST_NAME.json"
+      removed=1
+    fi
+  done
   echo "Native messaging manifests removed$([[ $removed == 1 ]] && echo ' (at least one)' || echo ' (none were present)')."
 }
 
@@ -100,8 +108,10 @@ main() {
     mkdir -p "$dir/NativeMessagingHosts"
     printf '%s\n' "$chromium_manifest" >"$dir/NativeMessagingHosts/$HOST_NAME.json"
   done
-  mkdir -p "$FIREFOX_DIR"
-  printf '%s\n' "$firefox_manifest" >"$FIREFOX_DIR/$HOST_NAME.json"
+  for dir in "${FIREFOX_DIRS[@]}"; do
+    mkdir -p "$dir"
+    printf '%s\n' "$firefox_manifest" >"$dir/$HOST_NAME.json"
+  done
 
   cat <<EOF
 Native messaging host registered:
