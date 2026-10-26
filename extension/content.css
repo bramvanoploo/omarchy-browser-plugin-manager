@@ -28,6 +28,28 @@
   filter: brightness(1.08);
 }
 
+.pi-button-secondary {
+  background: transparent;
+  color: #b7ef51;
+  border: 1px solid #b7ef51;
+  font-weight: 500;
+}
+
+.pi-button-secondary:not(:disabled):hover {
+  background: rgba(183, 239, 81, 0.12);
+  filter: none;
+}
+
+.pi-button-danger {
+  background: #e05260;
+  color: #fff;
+}
+
+.pi-button-danger:not(:disabled):hover {
+  background: #f18c75;
+  filter: none;
+}
+
 .pi-status[data-state="hidden"] {
   display: none;
 }

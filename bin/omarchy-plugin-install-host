@@ -4,7 +4,11 @@
 #
 # Messages from the extension:
 #   {"type":"ping"}
+#   {"type":"status","id":"acme.weather"}
 #   {"type":"install","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
+#   {"type":"uninstall","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
+#   {"type":"enable","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
+#   {"type":"disable","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
 #
 # This host NEVER installs anything. It validates the request against a fresh
 # fetch of the marketplace catalog, then summons the wizard overlay. The user
@@ -70,13 +74,106 @@ validate_install() {
       and ((.builtIn // false) | not)
   ' >/dev/null <<<"$catalog" || { echo "not-one-click-installable"; return 1; }
 
+  jq -e '.installed == false' >/dev/null <<<"$(plugin_status "$id")" || {
+    echo "already-installed"
+    return 1
+  }
+
+  return 0
+}
+
+# Is this plugin installed as a user (non-first-party) plugin? Prints
+# "installed enabled" fields as JSON.
+plugin_status() {
+  local id="$1"
+  omarchy plugin list --json 2>/dev/null | jq -c --arg id "$id" '
+    (. // []) | map(select(.id == $id))
+    | if length > 0 then .[0]
+      | {installed: (.firstParty | not), enabled: (.enabled // false), firstParty: .firstParty}
+      else {installed:false, enabled:false}
+      end
+  '
+}
+
+# Validate an uninstall request: the plugin must be installed as a user
+# plugin, and the id/repo must match the live catalog entry (so a page
+# cannot ask to remove arbitrary local plugins).
+validate_uninstall() {
+  local payload="$1" id repo catalog catalog_repo status norm_a norm_b
+
+  id=$(jq -r '.id // ""' <<<"$payload")
+  repo=$(jq -r '.repo // ""' <<<"$payload")
+
+  [[ $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ ]] || { echo "invalid-plugin-id"; return 1; }
+  [[ $repo =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?/?$ ]] || {
+    echo "invalid-repo-url"
+    return 1
+  }
+
+  status=$(plugin_status "$id")
+  jq -e '.installed == true' >/dev/null <<<"$status" || { echo "not-installed"; return 1; }
+
+  catalog=$(curl -fsS --max-time 12 "$CATALOG_URL" 2>/dev/null) || {
+    echo "catalog-unreachable"
+    return 1
+  }
+  catalog_repo=$(jq -r --arg id "$id" '
+    (.plugins // []) | map(select(.id == $id)) | first | .repo // ""
+  ' <<<"$catalog")
+  [[ -n $catalog_repo ]] || { echo "unknown-plugin-id"; return 1; }
+
+  norm_a=$(sed -E 's/\.git$//; s#/$##' <<<"$repo")
+  norm_b=$(sed -E 's/\.git$//; s#/$##' <<<"$catalog_repo")
+  [[ $norm_a == "$norm_b" ]] || { echo "repo-mismatch"; return 1; }
+
+  return 0
+}
+
+# Validate an enable/disable request: the plugin must be installed as a user
+# plugin, the id/repo must match the live catalog entry, and the current
+# enabled state must make the requested toggle meaningful.
+validate_toggle() {
+  local payload="$1" mode="$2" id repo catalog catalog_repo status norm_a norm_b
+
+  id=$(jq -r '.id // ""' <<<"$payload")
+  repo=$(jq -r '.repo // ""' <<<"$payload")
+
+  [[ $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ ]] || { echo "invalid-plugin-id"; return 1; }
+  [[ $repo =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?/?$ ]] || {
+    echo "invalid-repo-url"
+    return 1
+  }
+
+  status=$(plugin_status "$id")
+  jq -e '.installed == true' >/dev/null <<<"$status" || { echo "not-installed"; return 1; }
+
+  if [[ $mode == enable ]]; then
+    jq -e '.enabled == true' >/dev/null <<<"$status" && { echo "already-enabled"; return 1; }
+  else
+    jq -e '.enabled == true' >/dev/null <<<"$status" || { echo "already-disabled"; return 1; }
+  fi
+
+  catalog=$(curl -fsS --max-time 12 "$CATALOG_URL" 2>/dev/null) || {
+    echo "catalog-unreachable"
+    return 1
+  }
+  catalog_repo=$(jq -r --arg id "$id" '
+    (.plugins // []) | map(select(.id == $id)) | first | .repo // ""
+  ' <<<"$catalog")
+  [[ -n $catalog_repo ]] || { echo "unknown-plugin-id"; return 1; }
+
+  norm_a=$(sed -E 's/\.git$//; s#/$##' <<<"$repo")
+  norm_b=$(sed -E 's/\.git$//; s#/$##' <<<"$catalog_repo")
+  [[ $norm_a == "$norm_b" ]] || { echo "repo-mismatch"; return 1; }
+
   return 0
 }
 
 summon_wizard() {
-  local payload="$1" json
-  json=$(jq -cn '{
+  local payload="$1" mode="$2" json
+  json=$(jq -c --arg mode "$mode" '{
     source: "browser",
+    mode: $mode,
     id: .id,
     repo: .repo,
     name: .name
@@ -98,9 +195,46 @@ main() {
         reply --arg version "$HOST_VERSION" --arg host "$HOST_NAME" \
           '{ok:true, host:$host, version:$version}'
         ;;
+      status)
+        local_status=$(plugin_status "$(jq -r '.id // ""' <<<"$payload")")
+        send_frame "$(jq -c '. + {ok:true}' <<<"$local_status")"
+        ;;
       install)
         if reason=$(validate_install "$payload"); then
-          if summon_wizard "$payload"; then
+          if summon_wizard "$payload" "install"; then
+            reply_ok
+          else
+            reply_err "wizard-not-available (is dev.bram.plugin-installer enabled in the shell?)"
+          fi
+        else
+          reply_err "$reason"
+        fi
+        ;;
+      uninstall)
+        if reason=$(validate_uninstall "$payload"); then
+          if summon_wizard "$payload" "uninstall"; then
+            reply_ok
+          else
+            reply_err "wizard-not-available (is dev.bram.plugin-installer enabled in the shell?)"
+          fi
+        else
+          reply_err "$reason"
+        fi
+        ;;
+      enable)
+        if reason=$(validate_toggle "$payload" enable); then
+          if summon_wizard "$payload" "enable"; then
+            reply_ok
+          else
+            reply_err "wizard-not-available (is dev.bram.plugin-installer enabled in the shell?)"
+          fi
+        else
+          reply_err "$reason"
+        fi
+        ;;
+      disable)
+        if reason=$(validate_toggle "$payload" disable); then
+          if summon_wizard "$payload" "disable"; then
             reply_ok
           else
             reply_err "wizard-not-available (is dev.bram.plugin-installer enabled in the shell?)"

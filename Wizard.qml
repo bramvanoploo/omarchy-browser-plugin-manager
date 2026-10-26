@@ -24,6 +24,9 @@ Item {
   property string pluginId: ""
   property string pluginRepo: ""
   property string pluginName: ""
+  // "install" (default) | "uninstall" — decided by the native host from live
+  // local state, never by the page.
+  property string mode: "install"
 
   property bool catalogLoaded: false
   property bool manifestLoaded: false
@@ -46,8 +49,9 @@ Item {
 
   readonly property string reviewBlocked: {
     if (catalogError.length > 0) return catalogError
-    if (manifestError.length > 0) return manifestError
-    if (!catalogLoaded || !manifestLoaded) return "Loading marketplace data\u2026"
+    if (root.mode === "install" && manifestError.length > 0) return manifestError
+    if (!catalogLoaded) return "Loading marketplace data\u2026"
+    if (root.mode === "install" && !manifestLoaded) return "Loading marketplace data\u2026"
     return ""
   }
   readonly property bool canInstall: reviewBlocked.length === 0 && stage === "review"
@@ -59,6 +63,8 @@ Item {
     pluginId = String(payload.id || "")
     pluginRepo = String(payload.repo || "")
     pluginName = String(payload.name || pluginId)
+    mode = String(payload.mode || "install")
+    if (mode !== "uninstall" && mode !== "enable" && mode !== "disable") mode = "install"
 
     stage = "review"
     catalogLoaded = false
@@ -77,10 +83,14 @@ Item {
     catalogProc.running = true
     manifestProc.command = ["curl", "-fsS", "--max-time", "15", manifestUrl()]
     manifestProc.running = true
+    if (mode !== "install") listProc.running = true
   }
 
   function close() {
-    opened = false
+    // The registry invokes close() as the plugin's hide handler; hide() in
+    // turn calls close(). Clearing `opened` first makes that re-entry a no-op.
+    if (!root.opened) return
+    root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide((root.manifest && root.manifest.id) || "dev.bram.plugin-installer")
   }
@@ -127,6 +137,26 @@ Item {
     enableProc.running = true
   }
 
+  function runUninstall() {
+    if (root.catalogError.length > 0) return
+    root.stage = "removing"
+    removeProc.command = ["omarchy", "plugin", "remove", root.pluginId, "--yes"]
+    removeProc.running = true
+  }
+
+  function confirmEnable() {
+    if (root.catalogError.length > 0) return
+    if (root.isBarWidget) root.stage = "placement"
+    else root.enable("")
+  }
+
+  function runDisable() {
+    if (root.catalogError.length > 0) return
+    root.stage = "disabling"
+    disableProc.command = ["omarchy", "plugin", "disable", root.pluginId]
+    disableProc.running = true
+  }
+
   function leaveDisabled() {
     Quickshell.execDetached([
       root.omarchyPath + "/bin/omarchy-notification-send",
@@ -145,7 +175,7 @@ Item {
     var where = root.enabledSection ? " on the bar (" + root.enabledSection + " section)" : ""
     Quickshell.execDetached([
       root.omarchyPath + "/bin/omarchy-notification-send",
-      "Plugin installed",
+      root.mode === "install" ? "Plugin installed" : "Plugin enabled",
       root.pluginName + " is enabled" + where
     ])
   }
@@ -262,24 +292,103 @@ Item {
     }
   }
 
+  // ---- uninstall / enable / disable: local state check + actions ----------
+
+  Process {
+    id: listProc
+    command: ["omarchy", "plugin", "list", "--json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var entry = null
+        try {
+          var plugins = JSON.parse(String(text || "[]"))
+          entry = plugins.filter(function (item) {
+            return item && String(item.id) === root.pluginId
+          })[0] || null
+        } catch (e) {
+          entry = null
+        }
+        if (!entry || entry.firstParty) {
+          root.catalogError = "Plugin is not installed as a user plugin; nothing to do"
+        } else if (root.mode === "enable" && entry.enabled) {
+          root.catalogError = "Plugin is already enabled"
+        } else if (root.mode === "disable" && !entry.enabled) {
+          root.catalogError = "Plugin is already disabled"
+        } else if (root.mode === "uninstall"
+                   && root.manifest && String(root.manifest.id) === root.pluginId) {
+          root.catalogError = "The installer cannot uninstall itself. Remove it in a terminal: omarchy plugin remove dev.bram.plugin-installer --yes"
+        } else if (root.mode === "enable") {
+          root.stage = "enable-confirm"
+        } else if (root.mode === "disable") {
+          root.stage = "disable-confirm"
+        } else {
+          root.stage = "uninstall-confirm"
+        }
+      }
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0 && root.stage === "review") {
+        root.catalogError = "Could not read the local plugin list"
+      }
+    }
+  }
+
+  Process {
+    id: removeProc
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) {
+        root.stage = "error"
+        return
+      }
+      root.stage = "done"
+      Quickshell.execDetached([
+        root.omarchyPath + "/bin/omarchy-notification-send",
+        "Plugin uninstalled",
+        root.pluginName + " was removed and disabled"
+      ])
+    }
+  }
+
+  Process {
+    id: disableProc
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) {
+        root.stage = "error"
+        return
+      }
+      root.stage = "done"
+      Quickshell.execDetached([
+        root.omarchyPath + "/bin/omarchy-notification-send",
+        "Plugin disabled",
+        root.pluginName + " is disabled. Enable it again from the plugin page"
+      ])
+    }
+  }
+
   // ---- UI -----------------------------------------------------------------
 
   component PiButton: Rectangle {
     id: piButton
     property string label: ""
     property bool primary: false
-    property color textColor: primary ? "#16161d" : "#e6e6f0"
+    property bool danger: false
+    property color textColor: primary || danger ? "#16161d" : "#e6e6f0"
     signal clickedPi
     width: labelText.implicitWidth + 36
     height: 38
     radius: 8
     color: enabled
       ? (piMouse.containsMouse
-          ? (primary ? "#c9f46e" : "#343446")
-          : (primary ? "#b7ef51" : "#2c2c3c"))
+          ? (danger ? "#f18c75" : primary ? "#c9f46e" : "#343446")
+          : (danger ? "#e05260" : primary ? "#b7ef51" : "#2c2c3c"))
       : "#26262f"
-    border.color: primary ? "transparent" : "#4a4a5e"
-    border.width: primary ? 0 : 1
+    border.color: primary || danger ? "transparent" : "#4a4a5e"
+    border.width: primary || danger ? 0 : 1
     Text {
       id: labelText
       anchors.centerIn: parent
@@ -346,7 +455,8 @@ Item {
 
         Text {
           width: parent.width
-          text: "Install plugin"
+          text: ({ install: "Install plugin", uninstall: "Uninstall plugin",
+                   enable: "Enable plugin", disable: "Disable plugin" })[root.mode]
           color: "#f2f2fa"
           font.bold: true
           font.pixelSize: 18
@@ -412,13 +522,41 @@ Item {
           text: "Enabling the plugin\u2026"
           + (root.enabledSection ? " (bar section: " + root.enabledSection + ")" : "")
         }
+        PiLine {
+          visible: root.stage === "uninstall-confirm"
+          text: "Installed as a user plugin. Uninstalling removes the plugin files, "
+            + "disables it, and removes its bar layout entry."
+        }
+        PiLine {
+          visible: root.stage === "removing"
+          text: "Removing the plugin\u2026"
+        }
+        PiLine {
+          visible: root.stage === "enable-confirm"
+          text: root.isBarWidget
+            ? "Installed and disabled. Enable it and pick the bar section for its icon."
+            : "Installed and disabled. Enable it to load it into the shell."
+        }
+        PiLine {
+          visible: root.stage === "disable-confirm"
+          text: "Installed and enabled. Disabling unloads it from the shell; "
+            + "the plugin files stay installed."
+        }
+        PiLine {
+          visible: root.stage === "disabling"
+          text: "Disabling the plugin\u2026"
+        }
 
         // ---- stage: placement ----
         Column {
           visible: root.stage === "placement"
           width: cardColumn.width
           spacing: 10
-          PiLine { text: "Installed (disabled). Where should the bar icon go?" }
+          PiLine {
+            text: root.mode === "install"
+              ? "Installed (disabled). Where should the bar icon go?"
+              : "Where should the bar icon go?"
+          }
           Row {
             spacing: 8
             PiButton { label: "Left"; onClickedPi: root.enable("left") }
@@ -435,15 +573,24 @@ Item {
         PiLine {
           visible: root.stage === "done"
           color: "#b7ef51"
-          text: "Installed and enabled. Move later with: omarchy bar move "
-            + root.pluginId + " --section left|center|right"
+          text: {
+            if (root.mode === "uninstall")
+              return "Uninstalled. Reinstall from the plugin page at any time."
+            if (root.mode === "disable")
+              return "Disabled. Enable it again from the plugin page at any time."
+            if (root.mode === "enable")
+              return "Enabled." + (root.enabledSection ? " Bar section: " + root.enabledSection + "." : "")
+            return "Installed and enabled. Move later with: omarchy bar move "
+              + root.pluginId + " --section left|center|right"
+          }
         }
 
         // ---- stage: error ----
         PiLine {
           visible: root.stage === "error"
           color: "#f18c75"
-          text: "Installation failed."
+          text: ({ install: "Installation failed.", uninstall: "Uninstall failed.",
+                   enable: "Enabling failed.", disable: "Disabling failed." })[root.mode]
         }
         PiLine {
           visible: root.stage === "error" && root.installOutput.length > 0
@@ -460,26 +607,51 @@ Item {
         Row {
           spacing: 8
           PiButton {
-            visible: root.stage === "review"
+            visible: root.mode === "install" && root.stage === "review"
             enabled: root.canInstall
             primary: true
             label: "Install plugin"
             onClickedPi: root.install()
           }
           PiButton {
-            visible: root.stage === "placement"
+            visible: root.mode === "uninstall" && root.stage === "uninstall-confirm"
+            enabled: root.catalogError.length === 0
+            danger: true
+            primary: true
+            label: "Uninstall plugin"
+            onClickedPi: root.runUninstall()
+          }
+          PiButton {
+            visible: root.mode === "enable" && root.stage === "enable-confirm"
+            enabled: root.catalogError.length === 0
+            primary: true
+            label: "Enable plugin"
+            onClickedPi: root.confirmEnable()
+          }
+          PiButton {
+            visible: root.mode === "disable" && root.stage === "disable-confirm"
+            enabled: root.catalogError.length === 0
+            primary: true
+            label: "Disable plugin"
+            onClickedPi: root.runDisable()
+          }
+          PiButton {
+            visible: root.mode === "install" && root.stage === "placement"
             label: "Keep disabled"
             onClickedPi: root.leaveDisabled()
           }
           PiButton {
             visible: root.stage === "done" && root.summonable
+              && root.mode !== "uninstall" && root.mode !== "disable"
             primary: true
             label: "Open plugin"
             onClickedPi: root.openPlugin()
           }
           PiButton {
-            visible: root.stage === "review" || root.stage === "done" || root.stage === "error"
-            label: root.stage === "review" ? "Cancel" : "Done"
+            visible: root.stage === "review" || root.stage === "uninstall-confirm"
+              || root.stage === "enable-confirm" || root.stage === "disable-confirm"
+              || root.stage === "done" || root.stage === "error"
+            label: root.stage === "done" ? "Done" : "Cancel"
             onClickedPi: root.close()
           }
         }

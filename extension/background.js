@@ -36,7 +36,8 @@ function talkToHost(message) {
 }
 
 api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || (message.type !== "ping" && message.type !== "install")) return false;
+  const allowed = ["ping", "status", "install", "uninstall", "enable", "disable"];
+  if (!message || !allowed.includes(message.type)) return false;
   talkToHost(message)
     .then(sendResponse)
     .catch(() => sendResponse({ ok: false, reason: "host-error" }));
