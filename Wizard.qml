@@ -15,21 +15,7 @@ import qs.Ui
 Item {
   id: root
 
-  // TEMP DIAGNOSTIC: report what the theme singletons resolve to in this context
-  Timer {
-    interval: 1500
-    running: true
-    repeat: true
-    onTriggered: {
-      if (!Quickshell.exiting)
-        console.info("PI-THEME popups.bg=" + Commons.Color.popups.background
-          + " root.bg=" + Commons.Color.background
-          + " accent=" + Commons.Color.accent
-          + " menu.bg=" + Commons.Color.menu.background)
-      else stop()
-    }
   }
-
   property string omarchyPath: Quickshell.env("OMARCHY_PATH")
   property var shell: null
   property var manifest: null
@@ -477,7 +463,7 @@ Item {
                        panel.height - Style.space(48))
       clip: true
       radius: Style.cornerRadius
-      color: "#ff0000" // PROBE
+      color: Commons.Color.popups.background
       borderSpec: Border.flat(Commons.Color.accent, Style.normalBorderWidth)
       padding: Style.space(24)
 
