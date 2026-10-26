@@ -457,7 +457,7 @@ Item {
     BorderSurface {
       id: card
       anchors.centerIn: parent
-      width: Math.min(Style.space(360), panel.width - Style.space(48))
+      width: Math.min(Style.space(560), panel.width - Style.space(48))
       height: Math.min(cardColumn.implicitHeight + Style.space(48),
                        panel.height - Style.space(48))
       clip: true
