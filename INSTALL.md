@@ -27,6 +27,13 @@ otherwise the native host will reject its connection.
 
 **Firefox (release builds, >= 121)**
 
+Release builds enforce AMO signatures. Installing the unsigned `*.xpi` here
+fails with *"This extension could not be installed because the file appears
+to be corrupt"* — that is Firefox's generic signature-rejection message, the
+file is not corrupt. Use the temporary add-on below, the `*.xpi` on a
+signature-relaxed Firefox flavor, or a signed build (AMO "unlisted" signing
+gives a permanent, installable file without a public store listing).
+
 1. Open `about:debugging#/runtime/this-firefox`
 2. **Load Temporary Add-on** -> select `extension/manifest.json`
 3. Note: temporary add-ons reset at every Firefox restart; re-add them after

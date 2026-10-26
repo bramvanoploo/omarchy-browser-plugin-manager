@@ -27,7 +27,10 @@ mkdir -p "$STAGE/xpi"
 cp -r "$EXT_DIR/." "$STAGE/xpi/"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
-( cd "$STAGE/xpi" && zip -qr "$DIST_DIR/plugin-installer-$VERSION.xpi" . )
+# manifest.json first, no extra zip fields: Firefox signing-service layout.
+( cd "$STAGE/xpi" && \
+  zip -qX "$DIST_DIR/plugin-installer-$VERSION.xpi" manifest.json && \
+  zip -qrX "$DIST_DIR/plugin-installer-$VERSION.xpi" . -x manifest.json )
 
 # --- Source zip: whole project (setup + host + extension + docs). ---
 STAMP="$(date -u +%Y%m%d)"
