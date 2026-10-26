@@ -1,0 +1,50 @@
+#!/bin/bash
+# Builds downloadable, store-free browser-extension artifacts into dist/.
+#
+#   dist/plugin-installer-<version>.xpi   Firefox add-on (permanent install on
+#                                         ESR / Developer Edition / Nightly,
+#                                         which allow unsigned add-ons).
+#   dist/plugin-installer-<version>.zip   Full source archive; the Chrome /
+#                                         Chromium / Brave path (Load unpacked)
+#                                         and the Firefox temporary-add-on path.
+#
+# No Chrome Web Store or AMO publishing is involved.
+
+set -euo pipefail
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
+REPO_DIR="$(dirname -- "$BIN_DIR")"
+EXT_DIR="$REPO_DIR/extension"
+DIST_DIR="$REPO_DIR/dist"
+
+VERSION="$(jq -r .version "$EXT_DIR/manifest.json")"
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+
+# --- Firefox .xpi: zip of the extension/ contents at the archive root. ---
+mkdir -p "$STAGE/xpi"
+cp -r "$EXT_DIR/." "$STAGE/xpi/"
+rm -rf "$DIST_DIR"
+mkdir -p "$DIST_DIR"
+( cd "$STAGE/xpi" && zip -qr "$DIST_DIR/plugin-installer-$VERSION.xpi" . )
+
+# --- Source zip: whole project (setup + host + extension + docs). ---
+STAMP="$(date -u +%Y%m%d)"
+STAGE_SRC="$STAGE/src/omarchy-plugin-installation-helper"
+mkdir -p "$STAGE_SRC"
+git -C "$REPO_DIR" ls-files -z | xargs -0 -I{} cp -a --parents {} "$STAGE_SRC"/ 2>/dev/null \
+  || cp -a "$REPO_DIR"/. "$STAGE_SRC"/
+rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist"
+( cd "$STAGE/src" && zip -qr "$DIST_DIR/omarchy-plugin-installation-helper-$VERSION-$STAMP.zip" . )
+
+cat <<EOF
+Built in dist/:
+  plugin-installer-$VERSION.xpi                                  (Firefox add-on)
+  omarchy-plugin-installation-helper-$VERSION-$STAMP.zip         (Chrome family / source)
+
+Store-free install (see INSTALL.md):
+  Chrome/Chromium/Brave: unzip, ./bin/plugin-installer-setup --extension-dir ./extension,
+                         then chrome://extensions -> Load unpacked -> extension/
+  Firefox ESR/Dev Edition/Nightly: about:addons -> Install Add-on From File -> the .xpi
+EOF

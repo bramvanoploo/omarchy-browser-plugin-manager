@@ -80,7 +80,8 @@ main() {
     exit 1
   }
 
-  local chromium_id chromium_manifest firefox_manifest dir
+  local chromium_id chromium_manifest firefox_manifest dir ext_abs
+  ext_abs=$(realpath "$ext_dir")
   chromium_id=$(chrome_extension_id "$ext_dir")
 
   chromium_manifest=$(jq -cn \
@@ -114,7 +115,7 @@ Next steps (browser extensions must be loaded manually):
   Chrome / Chromium / Brave
     1. Open chrome://extensions (brave://extensions)
     2. Enable Developer mode
-    3. Load unpacked -> select: $ext_dir
+    3. Load unpacked -> select: $ext_abs
     (Load from exactly that path; the native host origin above is derived from it.)
 
   Firefox (>= 121, until the add-on is signed via AMO)
