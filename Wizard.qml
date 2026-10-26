@@ -428,6 +428,33 @@ Item {
     font.pixelSize: Style.font.body
   }
 
+  // Square-cornered marker pill identical to the marketplace site's
+  // .card-verification: code-bg background, mono bold 10px text, and
+  // stable (#b4c96f) / accent (#ff5a36) tones for verified / unverified.
+  component PiBadge: Rectangle {
+    id: piBadge
+    property string badgeLabel: ""
+    property color tone: "#b4c96f"
+    readonly property color codeBg: Qt.color("black").lightness() < 0.5
+      ? "#050507" : "#ffffff"
+    width: badgeText.implicitWidth + Style.space(14)
+    height: Style.space(21)
+    color: codeBg
+    Text {
+      id: badgeText
+      anchors.centerIn: parent
+      text: piBadge.badgeLabel
+      color: piBadge.tone
+      font.family: Style.font.family
+      font.bold: true
+      font.pixelSize: Style.font.bodySmall
+      font.letterSpacing: font.pixelSize * 0.04
+    }
+  }
+
+  // Verified / Unverified + snapshot markers with the marketplace tones.
+  function verificationTone(verified) { return verified ? "#b4c96f" : "#ff5a36" }
+
   Shortcut {
     sequence: "Escape"
     enabled: root.opened
@@ -516,15 +543,33 @@ Item {
             visible: root.catalogEntry !== null
             text: "Source: " + root.pluginRepo
           }
-          PiLine {
+          Row {
             visible: root.catalogEntry !== null
-            text: {
-              var e = root.catalogEntry
-              if (!e) return ""
-              var verification = e.verificationStatus === "verified" ? "verified" : "unverified"
-              var snapshot = e.verificationSnapshotStatus === "verified" ? "snapshot verified" : "snapshot unverified"
-              return "Marketplace status: " + verification + " \u00b7 " + snapshot
-                + " at " + root.shortSha(e.listingValidatedCommit)
+            spacing: Style.space(6)
+            PiBadge {
+              badgeLabel: root.catalogEntry
+                ? (root.catalogEntry.verificationStatus === "verified" ? "Verified" : "Unverified")
+                : ""
+              tone: root.verificationTone(root.catalogEntry
+                && root.catalogEntry.verificationStatus === "verified")
+            }
+            PiBadge {
+              badgeLabel: root.catalogEntry
+                ? (root.catalogEntry.verificationSnapshotStatus === "verified"
+                  ? "Snapshot verified" : "Snapshot unverified")
+                : ""
+              tone: root.verificationTone(root.catalogEntry
+                && root.catalogEntry.verificationSnapshotStatus === "verified")
+            }
+            Text {
+              height: Style.space(21)
+              verticalAlignment: Text.AlignVCenter
+              color: Util.alpha(Color.foreground, 0.75)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+              text: root.catalogEntry
+                ? "at " + root.shortSha(root.catalogEntry.listingValidatedCommit)
+                : ""
             }
           }
           PiLine {
