@@ -428,17 +428,15 @@ Item {
     font.pixelSize: Style.font.body
   }
 
-  // Marketplace verification label: same tones as the site's
-  // .card-verification (stable #b4c96f / accent #ff5a36), mono bold text only.
+  // Verified / Unverified labels: identical to the surrounding PiLine text,
+  // only the color differs (marketplace tones: stable #b4c96f, accent #ff5a36).
   component PiBadge: Text {
     property string badgeLabel: ""
     property color tone: "#b4c96f"
     text: badgeLabel
     color: tone
     font.family: Style.font.family
-    font.bold: true
-    font.pixelSize: Style.font.bodySmall
-    font.letterSpacing: Style.font.bodySmall * 0.04
+    font.pixelSize: Style.font.body
   }
 
   // Verified / Unverified + snapshot markers with the marketplace tones.
@@ -556,7 +554,7 @@ Item {
               verticalAlignment: Text.AlignVCenter
               color: Util.alpha(Color.foreground, 0.75)
               font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
+              font.pixelSize: Style.font.body
               text: root.catalogEntry
                 ? "at " + root.shortSha(root.catalogEntry.listingValidatedCommit)
                 : ""
