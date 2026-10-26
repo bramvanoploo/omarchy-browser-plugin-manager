@@ -13,11 +13,6 @@ set -euo pipefail
 
 HOST_NAME="dev.bram.plugininstall"
 FIREFOX_ADDON_ID="plugin-installer@bram.dev"
-# Firefox Internal UUIDs (about:debugging) of temporary add-on installs whose
-# native-messaging connections must be allowed. Firefox matches temporary
-# installs against that UUID, not the manifest add-on ID, and the UUID is
-# re-randomized on every "Load Temporary Add-on".
-FIREFOX_TEMP_IDS=()
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
@@ -35,14 +30,7 @@ FIREFOX_DIR="$HOME/.mozilla/native-messaging-hosts"
 usage() {
   cat <<EOF
 Usage: plugin-installer-setup [--extension-dir PATH] [--uninstall]
-                             [--firefox-temp-id UUID]
 
-  --firefox-temp-id UUID  Firefox "Internal UUID" of a temporary add-on
-                        (shown in about:debugging). Temporary installs are
-                        allowlisted by that UUID, not the add-on ID; the UUID
-                        changes every time the add-on is re-loaded. Repeat the
-                        flag for several. Requires a Firefox restart to take
-                        effect (Firefox reads host manifests at startup).
   --extension-dir PATH  Directory that will be loaded as the unpacked
                         extension (default: $REPO_DIR/extension).
                         The Chrome/Chromium/Brave native-messaging origin is
@@ -80,9 +68,6 @@ main() {
   while (( $# > 0 )); do
     case "$1" in
       --extension-dir) ext_dir="${2:?--extension-dir requires a path}"; shift 2 ;;
-      --firefox-temp-id)
-        u="${2:?--firefox-temp-id requires a UUID}"; u="${u#\{}"; u="${u%\}}"
-        FIREFOX_TEMP_IDS+=("$u"); shift 2 ;;
       --uninstall) uninstall; exit 0 ;;
       -h|--help) usage; exit 0 ;;
       *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -105,18 +90,11 @@ main() {
     --arg origin "chrome-extension://$chromium_id/" \
     '{name:$name, path:$path, type:"stdio", allowed_origins:[$origin]}')
 
-  local temp_json="[]"
-  if ((${#FIREFOX_TEMP_IDS[@]} > 0)); then
-    temp_json=$(printf '%s\n' "${FIREFOX_TEMP_IDS[@]}" \
-      | jq -Rcn '[inputs] | map("{" + . + "}")')
-  fi
-
   firefox_manifest=$(jq -cn \
     --arg name "$HOST_NAME" \
     --arg path "$HOST_PATH" \
     --arg addon "$FIREFOX_ADDON_ID" \
-    --argjson temp "$temp_json" \
-    '{name:$name, path:$path, type:"stdio", allowed_extensions:([$addon] + $temp)}')
+    '{name:$name, path:$path, type:"stdio", allowed_extensions:[$addon]}')
 
   for dir in "${CHROME_DIRS[@]}"; do
     mkdir -p "$dir/NativeMessagingHosts"

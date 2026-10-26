@@ -1,0 +1,53 @@
+#!/bin/bash
+# Signs the Firefox add-on with AMO "unlisted" signing so release builds of
+# Firefox accept it as a permanent install (about:addons -> Install Add-on
+# From File). Unlisted signing is not a store listing: the signed .xpi can be
+# distributed from any download link.
+#
+# Prerequisites (free):
+#   1. https://addons.mozilla.org/ -> developer account
+#   2. https://addons.mozilla.org/developers/keys/ -> create API key+secret
+#   3. web-ext:  npm install --global web-ext   (or: npm exec --yes --)
+#
+# Usage:
+#   AMO_API_KEY=... AMO_API_SECRET=... bin/sign
+#
+# Output:
+#   dist/signed/plugin-installer-<version>-signed.xpi
+# Its add-on ID stays plugin-installer@bram.dev (from manifest.json
+# browser_specific_settings), which the native messaging host allowlists.
+
+set -euo pipefail
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
+REPO_DIR="$(dirname -- "$BIN_DIR")"
+EXT_DIR="$REPO_DIR/extension"
+OUT_DIR="$REPO_DIR/dist/signed"
+
+[[ -n "${AMO_API_KEY:-}" && -n "${AMO_API_SECRET:-}" ]] || {
+  echo "Set AMO_API_KEY and AMO_API_SECRET (https://addons.mozilla.org/developers/keys/)." >&2
+  exit 1
+}
+
+if command -v web-ext >/dev/null; then
+  WEB_EXT=(web-ext)
+elif command -v npm >/dev/null; then
+  WEB_EXT=(npm exec --yes -- web-ext)
+else
+  echo "web-ext not found; install it with: npm install --global web-ext" >&2
+  exit 1
+fi
+
+mkdir -p "$OUT_DIR"
+cd "$EXT_DIR"
+"${WEB_EXT[@]}" sign \
+  --channel=unlisted \
+  --api-key="$AMO_API_KEY" \
+  --api-secret="$AMO_API_SECRET" \
+  --artifacts-dir "$OUT_DIR"
+
+signed=$(ls -t "$OUT_DIR"/*-signed.xpi 2>/dev/null | head -1)
+[[ -n "$signed" ]] || { echo "signing produced no *-signed.xpi" >&2; exit 1; }
+echo "Signed add-on: $signed"
+echo "Install on release Firefox: about:addons -> gear -> Install Add-on From File"

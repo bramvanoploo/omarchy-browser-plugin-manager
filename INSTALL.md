@@ -25,26 +25,32 @@ otherwise the native host will reject its connection.
 2. Enable **Developer mode** (top right)
 3. **Load unpacked** -> select the `extension/` directory from this archive
 
-**Firefox (release builds, >= 121)**
+**Firefox (release builds, >= 121): signed `.xpi` required**
 
-Release builds enforce AMO signatures. Installing the unsigned `*.xpi` here
-fails with *"This extension could not be installed because the file appears
-to be corrupt"* — that is Firefox's generic signature-rejection message, the
-file is not corrupt. Use the temporary add-on below, the `*.xpi` on a
-signature-relaxed Firefox flavor, or a signed build (AMO "unlisted" signing
-gives a permanent, installable file without a public store listing).
+Release Firefox permanently installs only AMO-signed add-ons, and the
+native-messaging allowlist matches the stable add-on ID
+`plugin-installer@bram.dev` — which only a permanent install gives:
 
-1. Open `about:debugging#/runtime/this-firefox`
-2. **Load Temporary Add-on** -> select `extension/manifest.json`
-3. Note: temporary add-ons reset at every Firefox restart; re-add them after
-   restarts (or use `*.xpi` below on a Firefox flavor that allows unsigned
-   add-ons).
+1. Obtain `plugin-installer-<version>-signed.xpi` — the maintainer signs it
+   with AMO *unlisted* signing (`bin/sign`; a free AMO developer account, no
+   store listing), or sign it yourself the same way.
+2. `about:addons` -> gear icon -> **Install Add-on From File...** -> the
+   signed `.xpi`.
 
-**Firefox ESR / Developer Edition / Nightly**
+Installing the *unsigned* `*.xpi` fails with *"the file appears to be
+corrupt"* — Firefox's generic signature-rejection message, not a broken file.
+
+**Do not use "Load Temporary Add-on" (about:debugging):** temporary installs
+are allowlisted by a random Internal UUID that is re-generated on every
+load, and Firefox reads native-messaging host manifests only at startup —
+so the allowlist can never catch up and the Install button never appears.
+
+**Firefox ESR / Developer Edition / Nightly: unsigned `.xpi`**
 
 These builds allow unsigned add-ons. Install `*.xpi` from this archive via
 `about:addons` -> gear icon -> **Install Add-on From File...**, with
 `xpinstall.signatures.required` set to `false` in `about:config` if needed.
+Permanent installs use the stable add-on ID, so native messaging works.
 
 ## 3. Verify
 
