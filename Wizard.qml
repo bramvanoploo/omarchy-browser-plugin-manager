@@ -435,8 +435,7 @@ Item {
     id: piBadge
     property string badgeLabel: ""
     property color tone: "#b4c96f"
-    readonly property color codeBg: Qt.hslLightness(Color.background) < 0.5
-      ? "#050507" : "#ffffff"
+    readonly property color codeBg: root.isDark(Color.background) ? "#050507" : "#ffffff"
     width: badgeText.implicitWidth + Style.space(14)
     height: Style.space(21)
     color: codeBg
@@ -454,6 +453,14 @@ Item {
 
   // Verified / Unverified + snapshot markers with the marketplace tones.
   function verificationTone(verified) { return verified ? "#b4c96f" : "#ff5a36" }
+
+  function isDark(c) {
+    var s = c.toString() // "#ffrrggbb"
+    var r = parseInt(s.substring(3, 5), 16)
+    var g = parseInt(s.substring(5, 7), 16)
+    var b = parseInt(s.substring(7, 9), 16)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128
+  }
 
   Shortcut {
     sequence: "Escape"
