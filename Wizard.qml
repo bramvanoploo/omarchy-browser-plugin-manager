@@ -383,8 +383,8 @@ Item {
     property bool primary: false
     property bool danger: false
     readonly property color tone: danger
-      ? Commons.Color.urgent
-      : primary ? Commons.Color.accent : Commons.Color.foreground
+      ? Color.urgent
+      : primary ? Color.accent : Color.foreground
     readonly property bool hot: piMouse.containsMouse
     signal clickedPi
 
@@ -394,10 +394,10 @@ Item {
     color: !enabled ? "transparent"
       : primary || danger
         ? (hot ? Util.alpha(tone, 0.2) : Util.alpha(tone, 0.12))
-        : (hot ? Util.alpha(Commons.Color.foreground, 0.12) : Util.alpha(Commons.Color.foreground, 0.05))
+        : (hot ? Util.alpha(Color.foreground, 0.12) : Util.alpha(Color.foreground, 0.05))
     borderSpec: Border.flat(enabled
-      ? (primary || danger ? tone : Util.alpha(Commons.Color.foreground, 0.3))
-      : Util.alpha(Commons.Color.foreground, 0.2),
+      ? (primary || danger ? tone : Util.alpha(Color.foreground, 0.3))
+      : Util.alpha(Color.foreground, 0.2),
       1)
 
     Text {
@@ -405,8 +405,8 @@ Item {
       anchors.centerIn: parent
       text: piButton.label
       color: piButton.enabled
-        ? (piButton.primary || piButton.danger ? piButton.tone : Commons.Color.foreground)
-        : Util.alpha(Commons.Color.foreground, 0.35)
+        ? (piButton.primary || piButton.danger ? piButton.tone : Color.foreground)
+        : Util.alpha(Color.foreground, 0.35)
       font.family: Style.font.family
       font.pixelSize: Style.font.body
       font.bold: piButton.primary || piButton.danger
@@ -423,7 +423,7 @@ Item {
   component PiLine: Text {
     width: cardColumn.width
     wrapMode: Text.Wrap
-    color: Util.alpha(Commons.Color.foreground, 0.75)
+    color: Util.alpha(Color.foreground, 0.75)
     font.family: Style.font.family
     font.pixelSize: Style.font.body
   }
@@ -462,8 +462,8 @@ Item {
                        panel.height - Style.space(48))
       clip: true
       radius: Style.cornerRadius
-      color: Commons.Color.popups.background
-      borderSpec: Border.flat(Commons.Color.accent, Style.normalBorderWidth)
+      color: Color.popups.background
+      borderSpec: Border.flat(Color.accent, Style.normalBorderWidth)
       padding: Style.space(24)
 
       // Swallow clicks over the card so the scrim MouseArea below doesn't close.
@@ -482,14 +482,14 @@ Item {
           width: parent.width
           text: ({ install: "Install plugin", uninstall: "Uninstall plugin",
                    enable: "Enable plugin", disable: "Disable plugin" })[root.mode]
-          color: Commons.Color.foreground
+          color: Color.foreground
           font.family: Style.font.family
           font.bold: true
           font.pixelSize: Style.font.heading
         }
         PiLine {
           text: root.pluginName + "  \u00b7  " + root.pluginId
-          color: Commons.Color.foreground
+          color: Color.foreground
           font.bold: true
           font.pixelSize: Style.font.title
         }
@@ -529,12 +529,12 @@ Item {
           }
           PiLine {
             visible: root.catalogEntry !== null
-            color: Commons.Color.accent
+            color: Color.accent
             text: "Installs the repository's current HEAD, which may differ from the verified snapshot."
           }
           PiLine {
             visible: root.reviewBlocked.length > 0
-            color: Commons.Color.urgent
+            color: Color.urgent
             text: root.reviewBlocked
           }
         }
@@ -599,7 +599,7 @@ Item {
         // ---- stage: done ----
         PiLine {
           visible: root.stage === "done"
-          color: Commons.Color.accent
+          color: Color.accent
           text: {
             if (root.mode === "uninstall")
               return "Uninstalled. Reinstall from the plugin page at any time."
@@ -615,13 +615,13 @@ Item {
         // ---- stage: error ----
         PiLine {
           visible: root.stage === "error"
-          color: Commons.Color.urgent
+          color: Color.urgent
           text: ({ install: "Installation failed.", uninstall: "Uninstall failed.",
                    enable: "Enabling failed.", disable: "Disabling failed." })[root.mode]
         }
         PiLine {
           visible: root.stage === "error" && root.installOutput.length > 0
-          color: Util.alpha(Commons.Color.foreground, 0.55)
+          color: Util.alpha(Color.foreground, 0.55)
           font.pixelSize: Style.font.bodySmall
           elide: Text.ElideRight
           maximumLineCount: 8
