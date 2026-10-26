@@ -428,39 +428,22 @@ Item {
     font.pixelSize: Style.font.body
   }
 
-  // Square-cornered marker pill identical to the marketplace site's
-  // .card-verification: code-bg background, mono bold 10px text, and
-  // stable (#b4c96f) / accent (#ff5a36) tones for verified / unverified.
-  component PiBadge: Rectangle {
-    id: piBadge
+  // Marketplace verification label: same tones as the site's
+  // .card-verification (stable #b4c96f / accent #ff5a36), mono bold text only.
+  component PiBadge: Text {
     property string badgeLabel: ""
     property color tone: "#b4c96f"
-    readonly property color codeBg: root.isDark(Color.background) ? "#050507" : "#ffffff"
-    width: badgeText.implicitWidth + Style.space(14)
-    height: Style.space(21)
-    color: codeBg
-    Text {
-      id: badgeText
-      anchors.centerIn: parent
-      text: piBadge.badgeLabel
-      color: piBadge.tone
-      font.family: Style.font.family
-      font.bold: true
-      font.pixelSize: Style.font.bodySmall
-      font.letterSpacing: Style.font.bodySmall * 0.04
-    }
+    text: badgeLabel
+    color: tone
+    font.family: Style.font.family
+    font.bold: true
+    font.pixelSize: Style.font.bodySmall
+    font.letterSpacing: Style.font.bodySmall * 0.04
   }
 
   // Verified / Unverified + snapshot markers with the marketplace tones.
   function verificationTone(verified) { return verified ? "#b4c96f" : "#ff5a36" }
 
-  function isDark(c) {
-    var s = c.toString() // "#ffrrggbb"
-    var r = parseInt(s.substring(3, 5), 16)
-    var g = parseInt(s.substring(5, 7), 16)
-    var b = parseInt(s.substring(7, 9), 16)
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128
-  }
 
   Shortcut {
     sequence: "Escape"
