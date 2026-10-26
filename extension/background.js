@@ -4,7 +4,7 @@
 
 const api = typeof browser !== "undefined" ? browser : chrome;
 
-const HOST_NAME = "dev.bram.plugininstall";
+const HOST_NAME = "dev_bram_plugininstall";
 const HOST_TIMEOUT_MS = 12000; // install validation fetches the catalog remotely
 
 function talkToHost(message) {

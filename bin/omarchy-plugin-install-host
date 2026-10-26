@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-HOST_NAME="dev.bram.plugininstall"
+HOST_NAME="dev_bram_plugininstall"
 HOST_VERSION="0.1.0"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="dev.bram.plugin-installer"
