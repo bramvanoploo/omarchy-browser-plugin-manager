@@ -477,7 +477,7 @@ Item {
                        panel.height - Style.space(48))
       clip: true
       radius: Style.cornerRadius
-      color: Commons.Color.popups.background
+      color: "#ff0000" // PROBE
       borderSpec: Border.flat(Commons.Color.accent, Style.normalBorderWidth)
       padding: Style.space(24)
 
