@@ -1,2 +1,4 @@
 dist/
 dist/signed/
+generate-firefox-addon.sh
+extension/.amo-upload-uuid
