@@ -183,6 +183,12 @@ summon_wizard() {
 
 main() {
   local length payload type reason
+  # Debugging aid (Firefox connection investigation): per-launch trace.
+  PI_TRACE="${PI_NATIVE_TRACE:-/tmp/opencode/native-host-trace.log}"
+  if mkdir -p "$(dirname "$PI_TRACE")" 2>/dev/null; then
+    printf '%s launch pid=%s argv=%s\n' "$(date +%T)" "$$" "$*" >> "$PI_TRACE"
+    trap 'printf "%s exit pid=%s rc=%s\n" "$(date +%T)" "$$" "$?" >> "$PI_TRACE"' EXIT
+  fi
 
   while :; do
     length=$(head -c4 | od -An -v -tu4 --endian=little | tr -d ' ')
@@ -190,6 +196,7 @@ main() {
     payload=$(head -c "$length")
 
     type=$(jq -r '.type // ""' <<<"$payload" 2>/dev/null || true)
+    printf '%s recv pid=%s bytes=%s type=%s\n' "$(date +%T)" "$$" "$length" "${type:-?}" >> "$PI_TRACE" 2>/dev/null || true
     case "$type" in
       ping)
         reply --arg version "$HOST_VERSION" --arg host "$HOST_NAME" \
