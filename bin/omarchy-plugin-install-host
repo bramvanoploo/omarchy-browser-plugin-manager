@@ -1,0 +1,121 @@
+#!/bin/bash
+# Native messaging host for the Omarchy Plugin Installer browser extension.
+# Speaks Chrome/Firefox native messaging: 4-byte little-endian length + JSON.
+#
+# Messages from the extension:
+#   {"type":"ping"}
+#   {"type":"install","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
+#
+# This host NEVER installs anything. It validates the request against a fresh
+# fetch of the marketplace catalog, then summons the wizard overlay. The user
+# must confirm inside the wizard for anything to happen.
+
+set -euo pipefail
+
+HOST_NAME="dev.bram.plugininstall"
+HOST_VERSION="0.1.0"
+CATALOG_URL="https://plugins.omarchy.org/catalog.json"
+WIZARD_ID="dev.bram.plugin-installer"
+
+send_frame() {
+  local payload="$1"
+  local length=${#payload}
+  printf "$(printf '%08x' "$length" | sed 's/\(..\)\(..\)\(..\)\(..\)/\\x\4\\x\3\\x\2\\x\1/')"
+  printf '%s' "$payload"
+}
+
+reply() { send_frame "$(jq -cn "$@")"; }
+
+reply_ok() { reply '{"ok":true}'; }
+
+reply_err() {
+  local reason="$1"
+  reply --arg reason "$reason" '{ok:false, reason:$reason}'
+}
+
+# Validate one install request; exit 0 when the request is trustworthy enough
+# to summon the wizard for. Prints a machine-readable reason on failure.
+validate_install() {
+  local payload="$1" id repo catalog catalog_repo norm_a norm_b
+
+  id=$(jq -r '.id // ""' <<<"$payload")
+  repo=$(jq -r '.repo // ""' <<<"$payload")
+
+  [[ $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ ]] || { echo "invalid-plugin-id"; return 1; }
+  [[ $repo =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?/?$ ]] || {
+    echo "invalid-repo-url"
+    return 1
+  }
+
+  catalog=$(curl -fsS --max-time 12 "$CATALOG_URL" 2>/dev/null) || {
+    echo "catalog-unreachable"
+    return 1
+  }
+
+  catalog_repo=$(jq -r --arg id "$id" '
+    (.plugins // []) | map(select(.id == $id)) | first | .repo // ""
+  ' <<<"$catalog")
+  [[ -n $catalog_repo ]] || { echo "unknown-plugin-id"; return 1; }
+
+  # The catalog is the source of truth: same repo, one-click installable.
+  norm_a=$(sed -E 's/\.git$//; s#/$##' <<<"$repo")
+  norm_b=$(sed -E 's/\.git$//; s#/$##' <<<"$catalog_repo")
+  [[ $norm_a == "$norm_b" ]] || { echo "repo-mismatch"; return 1; }
+
+  jq -e --arg id "$id" '
+    (.plugins // []) | map(select(.id == $id)) | first
+    | (.installAvailable == true)
+      and (.upstreamCheckStatus != "failed")
+      and ((.installCommand // "") | length > 0)
+      and ((.builtIn // false) | not)
+  ' >/dev/null <<<"$catalog" || { echo "not-one-click-installable"; return 1; }
+
+  return 0
+}
+
+summon_wizard() {
+  local payload="$1" json
+  json=$(jq -cn '{
+    source: "browser",
+    id: .id,
+    repo: .repo,
+    name: .name
+  }' <<<"$payload")
+  omarchy-shell shell summon "$WIZARD_ID" "$json" >/dev/null
+}
+
+main() {
+  local length payload type reason
+
+  while :; do
+    length=$(head -c4 | od -An -v -tu4 --endian=little | tr -d ' ')
+    [[ -n ${length:-} ]] && (( length > 0 )) || exit 0
+    payload=$(head -c "$length")
+
+    type=$(jq -r '.type // ""' <<<"$payload" 2>/dev/null || true)
+    case "$type" in
+      ping)
+        reply --arg version "$HOST_VERSION" --arg host "$HOST_NAME" \
+          '{ok:true, host:$host, version:$version}'
+        ;;
+      install)
+        if reason=$(validate_install "$payload"); then
+          if summon_wizard "$payload"; then
+            reply_ok
+          else
+            reply_err "wizard-not-available (is dev.bram.plugin-installer enabled in the shell?)"
+          fi
+        else
+          reply_err "$reason"
+        fi
+        ;;
+      *)
+        reply_err "unknown-message-type"
+        ;;
+    esac
+  done
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

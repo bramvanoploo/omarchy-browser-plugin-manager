@@ -1,0 +1,44 @@
+// Omarchy Plugin Installer - background service worker (MV3).
+// Content scripts cannot open native messaging ports, so the extension
+// relays ping/install requests to the registered native host here.
+
+const api = typeof browser !== "undefined" ? browser : chrome;
+
+const HOST_NAME = "dev.bram.plugininstall";
+const HOST_TIMEOUT_MS = 12000; // install validation fetches the catalog remotely
+
+function talkToHost(message) {
+  return new Promise((resolve) => {
+    let port;
+    try {
+      port = api.runtime.connectNative(HOST_NAME);
+    } catch (e) {
+      resolve({ ok: false, reason: "host-not-registered" });
+      return;
+    }
+    let settled = false;
+    const finish = (response) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { port.disconnect(); } catch (e) { /* already gone */ }
+      resolve(response);
+    };
+    const timer = setTimeout(
+      () => finish({ ok: false, reason: "host-timeout" }),
+      HOST_TIMEOUT_MS
+    );
+    port.onMessage.addListener((response) => finish(response));
+    port.onDisconnect.addListener(() =>
+      finish({ ok: false, reason: "host-not-registered" }));
+    port.postMessage(message);
+  });
+}
+
+api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (!message || (message.type !== "ping" && message.type !== "install")) return false;
+  talkToHost(message)
+    .then(sendResponse)
+    .catch(() => sendResponse({ ok: false, reason: "host-error" }));
+  return true; // keep the message channel open for the async response
+});

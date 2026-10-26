@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.bram.plugin-installer",
+  "name": "Plugin Installer",
+  "version": "0.1.0",
+  "author": "Bram van Oploo",
+  "description": "Installation wizard for Omarchy plugins, summoned from the browser extension's Install button",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Wizard.qml"
+  }
+}

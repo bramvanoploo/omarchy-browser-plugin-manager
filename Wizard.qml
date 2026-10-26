@@ -1,0 +1,489 @@
+import Quickshell
+import Quickshell.Io
+import Quickshell.Wayland
+import QtQuick
+
+// Plugin Installer wizard overlay.
+// Summoned by the native messaging host (browser button click) with payload
+// {id, repo, name}. The payload is treated as a hint only: the catalog entry
+// and the repository manifest are re-fetched and cross-checked before
+// anything is displayed, and nothing is installed until the user clicks
+// Install in this overlay.
+
+Item {
+  id: root
+
+  property string omarchyPath: Quickshell.env("OMARCHY_PATH")
+  property var shell: null
+  property var manifest: null
+
+  property bool opened: false
+  // review | installing | placement | enabling | done | error
+  property string stage: "review"
+
+  property string pluginId: ""
+  property string pluginRepo: ""
+  property string pluginName: ""
+
+  property bool catalogLoaded: false
+  property bool manifestLoaded: false
+  property var catalogEntry: null
+  property var pluginManifest: null
+  property string catalogError: ""
+  property string manifestError: ""
+
+  property string installOutput: ""
+  property bool isBarWidget: false
+  property string defaultSection: "center"
+  property string enabledSection: ""
+
+  readonly property var manifestKinds: pluginManifest && pluginManifest.kinds
+    ? pluginManifest.kinds : []
+  readonly property bool summonable:
+    manifestKinds.indexOf("overlay") !== -1
+    || manifestKinds.indexOf("panel") !== -1
+    || manifestKinds.indexOf("menu") !== -1
+
+  readonly property string reviewBlocked: {
+    if (catalogError.length > 0) return catalogError
+    if (manifestError.length > 0) return manifestError
+    if (!catalogLoaded || !manifestLoaded) return "Loading marketplace data\u2026"
+    return ""
+  }
+  readonly property bool canInstall: reviewBlocked.length === 0 && stage === "review"
+
+  function open(payloadJson) {
+    var payload = {}
+    try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
+
+    pluginId = String(payload.id || "")
+    pluginRepo = String(payload.repo || "")
+    pluginName = String(payload.name || pluginId)
+
+    stage = "review"
+    catalogLoaded = false
+    manifestLoaded = false
+    catalogEntry = null
+    pluginManifest = null
+    catalogError = ""
+    manifestError = ""
+    installOutput = ""
+    isBarWidget = false
+    defaultSection = "center"
+    enabledSection = ""
+
+    opened = true
+
+    catalogProc.running = true
+    manifestProc.command = ["curl", "-fsS", "--max-time", "15", manifestUrl()]
+    manifestProc.running = true
+  }
+
+  function close() {
+    opened = false
+    if (root.shell && typeof root.shell.hide === "function")
+      root.shell.hide((root.manifest && root.manifest.id) || "dev.bram.plugin-installer")
+  }
+
+  // github.com/<owner>/<repo>[.git] -> owner/repo (empty when not parseable)
+  function ownerRepo(url) {
+    var match = /^https:\/\/github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(\.git)?\/?$/.exec(url || "")
+    return match ? match[1] + "/" + match[2] : ""
+  }
+
+  function manifestUrl() {
+    var slug = ownerRepo(root.pluginRepo)
+    if (!slug) return ""
+    return "https://raw.githubusercontent.com/" + slug + "/HEAD/manifest.json"
+  }
+
+  function sameRepo(a, b) {
+    var na = String(a || "").replace(/\.git$/, "").replace(/\/$/, "")
+    var nb = String(b || "").replace(/\.git$/, "").replace(/\/$/, "")
+    return na.length > 0 && na === nb
+  }
+
+  function finishLoads() {
+    if (!root.catalogLoaded || !root.manifestLoaded) return
+  }
+
+  function shortSha(sha) {
+    return /^[a-f0-9]{40}$/i.test(sha || "") ? sha.slice(0, 7) : "unknown"
+  }
+
+  function install() {
+    if (!root.canInstall) return
+    root.stage = "installing"
+    addProc.command = ["omarchy", "plugin", "add", root.pluginRepo, "--yes"]
+    addProc.running = true
+  }
+
+  function enable(section) {
+    root.enabledSection = section
+    root.stage = "enabling"
+    var args = ["omarchy", "plugin", "enable", root.pluginId]
+    if (section) args = args.concat(["--section", section])
+    enableProc.command = args
+    enableProc.running = true
+  }
+
+  function leaveDisabled() {
+    Quickshell.execDetached([
+      root.omarchyPath + "/bin/omarchy-notification-send",
+      "Plugin not enabled",
+      root.pluginName + " was installed disabled. Enable with: omarchy plugin enable " + root.pluginId
+    ])
+    root.close()
+  }
+
+  function openPlugin() {
+    Quickshell.execDetached(["omarchy-shell", "shell", "summon", root.pluginId, "{}"])
+    root.close()
+  }
+
+  function notifyInstalled() {
+    var where = root.enabledSection ? " on the bar (" + root.enabledSection + " section)" : ""
+    Quickshell.execDetached([
+      root.omarchyPath + "/bin/omarchy-notification-send",
+      "Plugin installed",
+      root.pluginName + " is enabled" + where
+    ])
+  }
+
+  // ---- data fetching ------------------------------------------------------
+
+  Process {
+    id: catalogProc
+    command: ["curl", "-fsS", "--max-time", "15", "https://plugins.omarchy.org/catalog.json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var raw = String(text || "").trim()
+        if (!raw) {
+          root.catalogError = "Marketplace catalog could not be fetched"
+        } else {
+          var entry = null
+          try {
+            var catalog = JSON.parse(raw)
+            entry = (catalog.plugins || []).filter(function (item) {
+              return item && String(item.id) === root.pluginId
+            })[0] || null
+          } catch (e) {
+            entry = null
+          }
+          if (!entry) {
+            root.catalogError = "Plugin not found in the marketplace catalog"
+          } else if (!entry.installAvailable
+                     || entry.upstreamCheckStatus === "failed"
+                     || entry.builtIn
+                     || !(entry.installCommand || "")) {
+            root.catalogError = "This plugin is not one-click installable ("
+              + (entry.status || "unavailable") + ")"
+          } else if (!root.sameRepo(root.pluginRepo, entry.repo)) {
+            root.catalogError = "Repository mismatch between the request and the catalog; aborting"
+          } else {
+            root.catalogEntry = entry
+          }
+        }
+        root.catalogLoaded = true
+        root.finishLoads()
+      }
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0 && !root.catalogLoaded) {
+        root.catalogError = "Marketplace catalog could not be fetched"
+        root.catalogLoaded = true
+        root.finishLoads()
+      }
+    }
+  }
+
+  Process {
+    id: manifestProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var raw = String(text || "").trim()
+        if (!raw) {
+          root.manifestError = "Plugin manifest.json could not be fetched"
+        } else {
+          var m = null
+          try { m = JSON.parse(raw) } catch (e) { m = null }
+          if (!m) {
+            root.manifestError = "Plugin manifest.json is not valid JSON"
+          } else if (String(m.id) !== root.pluginId) {
+            root.manifestError = "Manifest id mismatch (" + String(m.id) + ")"
+          } else {
+            root.pluginManifest = m
+            root.isBarWidget = (m.kinds || []).indexOf("bar-widget") !== -1
+            root.defaultSection = (m.barWidget && m.barWidget.defaultSection) || "center"
+          }
+        }
+        root.manifestLoaded = true
+        root.finishLoads()
+      }
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0 && !root.manifestLoaded) {
+        root.manifestError = "Plugin manifest.json could not be fetched"
+        root.manifestLoaded = true
+        root.finishLoads()
+      }
+    }
+  }
+
+  // ---- install / enable ---------------------------------------------------
+
+  Process {
+    id: addProc
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput = String(text || "") }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) {
+        root.stage = "error"
+        return
+      }
+      if (root.isBarWidget) root.stage = "placement"
+      else root.enable("")
+    }
+  }
+
+  Process {
+    id: enableProc
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) {
+        root.stage = "error"
+        return
+      }
+      root.stage = "done"
+      root.notifyInstalled()
+    }
+  }
+
+  // ---- UI -----------------------------------------------------------------
+
+  component PiButton: Rectangle {
+    id: piButton
+    property string label: ""
+    property bool primary: false
+    property color textColor: primary ? "#16161d" : "#e6e6f0"
+    signal clickedPi
+    width: labelText.implicitWidth + 36
+    height: 38
+    radius: 8
+    color: enabled
+      ? (piMouse.containsMouse
+          ? (primary ? "#c9f46e" : "#343446")
+          : (primary ? "#b7ef51" : "#2c2c3c"))
+      : "#26262f"
+    border.color: primary ? "transparent" : "#4a4a5e"
+    border.width: primary ? 0 : 1
+    Text {
+      id: labelText
+      anchors.centerIn: parent
+      text: piButton.label
+      color: piButton.textColor
+      font.bold: piButton.primary
+    }
+    MouseArea {
+      id: piMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      enabled: piButton.enabled
+      cursorShape: Qt.PointingHandCursor
+      onClicked: piButton.clickedPi()
+    }
+  }
+
+  component PiLine: Text {
+    width: cardColumn.width
+    wrapMode: Text.Wrap
+    color: "#c9c9da"
+  }
+
+  Shortcut {
+    sequence: "Escape"
+    enabled: root.opened
+    onActivated: root.close()
+  }
+
+  PanelWindow {
+    id: panel
+    visible: root.opened
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: "transparent"
+    WlrLayershell.namespace: "dev-bram-plugin-installer"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+    exclusionMode: ExclusionMode.Ignore
+
+    Rectangle {
+      anchors.fill: parent
+      color: "#88000000"
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      onClicked: root.close()
+    }
+
+    Rectangle {
+      id: card
+      anchors.centerIn: parent
+      width: 460
+      height: cardColumn.implicitHeight + 48
+      radius: 12
+      color: "#1e1e2e"
+      border.color: "#3a3a4e"
+      border.width: 1
+
+      Column {
+        id: cardColumn
+        anchors { top: parent.top; left: parent.left; right: parent.right; margins: 24 }
+        spacing: 10
+
+        Text {
+          width: parent.width
+          text: "Install plugin"
+          color: "#f2f2fa"
+          font.bold: true
+          font.pixelSize: 18
+        }
+        PiLine {
+          text: root.pluginName + "  \u00b7  " + root.pluginId
+          color: "#f2f2fa"
+          font.bold: true
+        }
+
+        // ---- stage: review ----
+        Column {
+          visible: root.stage === "review"
+          width: cardColumn.width
+          spacing: 6
+          PiLine {
+            visible: root.catalogEntry !== null
+            text: {
+              var e = root.catalogEntry || {}
+              var bits = []
+              if (e.author) bits.push("by " + e.author)
+              if (e.version) bits.push("v" + e.version)
+              if (e.license) bits.push(e.license)
+              var kinds = root.manifestKinds
+              if (kinds.length) bits.push(kinds.join(", "))
+              return bits.join("  \u00b7  ")
+            }
+          }
+          PiLine {
+            visible: root.catalogEntry !== null
+            text: "Source: " + root.pluginRepo
+          }
+          PiLine {
+            visible: root.catalogEntry !== null
+            text: {
+              var e = root.catalogEntry
+              if (!e) return ""
+              var verification = e.verificationStatus === "verified" ? "verified" : "unverified"
+              var snapshot = e.verificationSnapshotStatus === "verified" ? "snapshot verified" : "snapshot unverified"
+              return "Marketplace status: " + verification + " \u00b7 " + snapshot
+                + " at " + root.shortSha(e.listingValidatedCommit)
+            }
+          }
+          PiLine {
+            visible: root.catalogEntry !== null
+            color: "#f4bd62"
+            text: "Installs the repository's current HEAD, which may differ from the verified snapshot."
+          }
+          PiLine {
+            visible: root.reviewBlocked.length > 0
+            color: "#f18c75"
+            text: root.reviewBlocked
+          }
+        }
+
+        // ---- stage: installing / enabling ----
+        PiLine {
+          visible: root.stage === "installing"
+          text: "Cloning and validating the plugin\u2026"
+        }
+        PiLine {
+          visible: root.stage === "enabling"
+          text: "Enabling the plugin\u2026"
+          + (root.enabledSection ? " (bar section: " + root.enabledSection + ")" : "")
+        }
+
+        // ---- stage: placement ----
+        Column {
+          visible: root.stage === "placement"
+          width: cardColumn.width
+          spacing: 10
+          PiLine { text: "Installed (disabled). Where should the bar icon go?" }
+          Row {
+            spacing: 8
+            PiButton { label: "Left"; onClickedPi: root.enable("left") }
+            PiButton { label: "Center"; onClickedPi: root.enable("center") }
+            PiButton { label: "Right"; onClickedPi: root.enable("right") }
+            PiButton {
+              label: "Keep default (" + root.defaultSection + ")"
+              onClickedPi: root.enable("")
+            }
+          }
+        }
+
+        // ---- stage: done ----
+        PiLine {
+          visible: root.stage === "done"
+          color: "#b7ef51"
+          text: "Installed and enabled. Move later with: omarchy bar move "
+            + root.pluginId + " --section left|center|right"
+        }
+
+        // ---- stage: error ----
+        PiLine {
+          visible: root.stage === "error"
+          color: "#f18c75"
+          text: "Installation failed."
+        }
+        PiLine {
+          visible: root.stage === "error" && root.installOutput.length > 0
+          color: "#9a9ab0"
+          font.pixelSize: 12
+          elide: Text.ElideRight
+          maximumLineCount: 8
+          text: root.installOutput
+        }
+
+        Item { width: 1; height: 6 }
+
+        // ---- footer ----
+        Row {
+          spacing: 8
+          PiButton {
+            visible: root.stage === "review"
+            enabled: root.canInstall
+            primary: true
+            label: "Install plugin"
+            onClickedPi: root.install()
+          }
+          PiButton {
+            visible: root.stage === "placement"
+            label: "Keep disabled"
+            onClickedPi: root.leaveDisabled()
+          }
+          PiButton {
+            visible: root.stage === "done" && root.summonable
+            primary: true
+            label: "Open plugin"
+            onClickedPi: root.openPlugin()
+          }
+          PiButton {
+            visible: root.stage === "review" || root.stage === "done" || root.stage === "error"
+            label: root.stage === "review" ? "Cancel" : "Done"
+            onClickedPi: root.close()
+          }
+        }
+      }
+    }
+  }
+}

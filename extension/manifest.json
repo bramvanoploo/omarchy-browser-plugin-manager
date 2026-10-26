@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Omarchy Plugin Installer",
+  "version": "0.1.0",
+  "description": "Adds an 'Install with Omarchy' button to one-click-installable plugins on plugins.omarchy.org. Requires the Omarchy Plugin Installer shell plugin and its native messaging host.",
+  "permissions": ["nativeMessaging"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://plugins.omarchy.org/plugin.html*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon.png",
+    "48": "icons/icon.png",
+    "128": "icons/icon.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "plugin-installer@bram.dev",
+      "strict_min_version": "121.0"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+/* "Install with Omarchy" row, prepended inside the marketplace command panel. */
+.pi-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px 0 14px;
+}
+
+.pi-button {
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  background: #b7ef51;
+  color: #16161d;
+}
+
+.pi-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.pi-button:not(:disabled):hover {
+  filter: brightness(1.08);
+}
+
+.pi-status[data-state="hidden"] {
+  display: none;
+}
+
+.pi-status {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
