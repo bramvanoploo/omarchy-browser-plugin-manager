@@ -151,6 +151,7 @@
     if (!PLUGIN_ID) return;
     // Ping first: buttons only ever exist on machines that can act on them.
     hostAvailable = await pingHost();
+    console.debug("[plugin-installer] ping:", hostAvailable);
     if (!hostAvailable) return;
 
     let plugin = null;
@@ -158,11 +159,16 @@
       const catalog = await loadCatalog();
       plugin = (catalog.plugins || []).find((item) => item && item.id === PLUGIN_ID);
     } catch (e) {
+      console.debug("[plugin-installer] catalog load failed:", e);
       return;
     }
-    if (!installable(plugin)) return;
+    if (!installable(plugin)) {
+      console.debug("[plugin-installer] not installable per catalog:", Boolean(plugin));
+      return;
+    }
 
     const state = await talkToHost({ type: "status", id: PLUGIN_ID });
+    console.debug("[plugin-installer] status:", state);
 
     // The detail section renders async after the page's own catalog fetch.
     mountButtons(plugin, state);

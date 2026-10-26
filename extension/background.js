@@ -13,6 +13,7 @@ function talkToHost(message) {
     try {
       port = api.runtime.connectNative(HOST_NAME);
     } catch (e) {
+      console.warn("[plugin-installer] connectNative threw:", e);
       resolve({ ok: false, reason: "host-not-registered" });
       return;
     }
@@ -29,8 +30,11 @@ function talkToHost(message) {
       HOST_TIMEOUT_MS
     );
     port.onMessage.addListener((response) => finish(response));
-    port.onDisconnect.addListener(() =>
-      finish({ ok: false, reason: "host-not-registered" }));
+    port.onDisconnect.addListener(() => {
+      const err = api.runtime.lastError;
+      if (err) console.warn("[plugin-installer] native host disconnect:", err.message);
+      finish({ ok: false, reason: "host-not-registered" });
+    });
     port.postMessage(message);
   });
 }
