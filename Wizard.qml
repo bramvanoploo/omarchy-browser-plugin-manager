@@ -435,7 +435,7 @@ Item {
     id: piBadge
     property string badgeLabel: ""
     property color tone: "#b4c96f"
-    readonly property color codeBg: Qt.hsvLightness(Color.background) < 0.5
+    readonly property color codeBg: Qt.hslLightness(Color.background) < 0.5
       ? "#050507" : "#ffffff"
     width: badgeText.implicitWidth + Style.space(14)
     height: Style.space(21)
