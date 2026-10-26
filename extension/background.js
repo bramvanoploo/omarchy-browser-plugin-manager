@@ -29,10 +29,14 @@ function talkToHost(message) {
       () => finish({ ok: false, reason: "host-timeout" }),
       HOST_TIMEOUT_MS
     );
-    port.onMessage.addListener((response) => finish(response));
+    port.onMessage.addListener((response) => {
+      console.debug("[plugin-installer] native host replied:", JSON.stringify(response));
+      finish(response);
+    });
     port.onDisconnect.addListener(() => {
       const err = api.runtime.lastError;
-      if (err) console.warn("[plugin-installer] native host disconnect:", err.message);
+      console.warn("[plugin-installer] native host disconnected; lastError:",
+        err ? err.message : "(not set by browser)");
       finish({ ok: false, reason: "host-not-registered" });
     });
     port.postMessage(message);
