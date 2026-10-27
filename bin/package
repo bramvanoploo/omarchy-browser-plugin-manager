@@ -32,6 +32,11 @@ mkdir -p "$DIST_DIR"
   zip -qX "$DIST_DIR/plugin-installer-$VERSION.xpi" manifest.json && \
   zip -qrX "$DIST_DIR/plugin-installer-$VERSION.xpi" . -x manifest.json )
 
+# --- Chrome / Chromium / Brave zip: same root-level zip layout, the Chrome
+# Web Store upload format. "Load unpacked" uses the extension/ dir directly.
+cp "$DIST_DIR/plugin-installer-$VERSION.xpi" \
+   "$DIST_DIR/plugin-installer-$VERSION-chrome.zip"
+
 # --- Source zip: whole project (setup + host + extension + docs). ---
 STAMP="$(date -u +%Y%m%d)"
 STAGE_SRC="$STAGE/src/omarchy-plugin-installation-helper"
@@ -44,6 +49,7 @@ rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist"
 cat <<EOF
 Built in dist/:
   plugin-installer-$VERSION.xpi                                  (Firefox add-on)
+  plugin-installer-$VERSION-chrome.zip                           (Chrome Web Store upload)
   omarchy-plugin-installation-helper-$VERSION-$STAMP.zip         (Chrome family / source)
 
 Store-free install (see INSTALL.md):

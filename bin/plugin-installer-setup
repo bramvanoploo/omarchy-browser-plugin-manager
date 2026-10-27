@@ -70,6 +70,17 @@ chrome_extension_id() {
     | tr '0123456789abcdef' 'abcdefghijklmnop'
 }
 
+# Stable Chrome extension ID derived from the manifest's "key" (public key):
+# used by packed/zip installs and Chrome Web Store installs. Empty when the
+# manifest pins no key.
+chrome_key_id() {
+  local key
+  key=$(jq -r '.key // ""' "$1" 2>/dev/null) || return 0
+  [[ -n $key ]] || return 0
+  printf '%s' "$key" | base64 -d | sha256sum | cut -c1-32 \
+    | tr '0123456789abcdef' 'abcdefghijklmnop'
+}
+
 main() {
   local ext_dir="$EXT_DIR"
 
@@ -88,15 +99,24 @@ main() {
     exit 1
   }
 
-  local chromium_id chromium_manifest firefox_manifest dir ext_abs
+  local chromium_id key_id chromium_manifest firefox_manifest dir ext_abs origins
   ext_abs=$(realpath "$ext_dir")
   chromium_id=$(chrome_extension_id "$ext_dir")
+  key_id=$(chrome_key_id "$ext_dir/manifest.json")
 
+  # Pin both the path-derived unpacked ID and the key-pinned stable ID so
+  # Load unpacked, zipped dev installs, and store installs all reach the host.
+  origins="chrome-extension://$chromium_id/"
+  [[ -n $key_id && $key_id != "$chromium_id" ]] && origins+=" chrome-extension://$key_id/"
+
+  local chromium_manifest firefox_manifest dir ext_abs origins
   chromium_manifest=$(jq -cn \
     --arg name "$HOST_NAME" \
     --arg path "$HOST_PATH" \
-    --arg origin "chrome-extension://$chromium_id/" \
-    '{name:$name, path:$path, type:"stdio", allowed_origins:[$origin]}')
+    '{name:$name, path:$path, type:"stdio",
+      description:"Native messaging host for the Omarchy Plugin Installer browser extension.",
+      allowed_origins:($ARGS.positional)}' \
+    --args $origins)
 
   # Firefox REQUIRES "description" in the app manifest (Chrome ignores it):
   # without it NativeManifests.sys.mjs rejects the whole file and Firefox
@@ -122,7 +142,7 @@ main() {
 Native messaging host registered:
   host:  $HOST_NAME
   path:  $HOST_PATH
-  chrome/chromium/brave origin: chrome-extension://$chromium_id/
+  chrome/chromium/brave origins: $origins
   firefox add-on:               $FIREFOX_ADDON_ID
 
 Next steps (browser extensions must be loaded manually):

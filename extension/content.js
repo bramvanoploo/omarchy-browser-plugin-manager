@@ -69,13 +69,12 @@
 }
 .pi-button.pi-button-danger {
   color: var(--accent, #ffcead) !important;
-  border-color: var(--accent, #ffcead) !important;
 }
-/* Install action: the marketplace's own stable tone. Text, border and icon
- * (icons draw with currentColor). */
+/* Install action: the marketplace's own stable tone. Text and icon
+ * (icons draw with currentColor). All button borders stay the base
+ * .pi-button rule: var(--line-strong). */
 .pi-button.pi-button-install {
   color: var(--stable, #b4c96f) !important;
-  border-color: var(--stable, #b4c96f) !important;
 }
 .pi-icon {
   position: relative;

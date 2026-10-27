@@ -15,6 +15,13 @@ never from the page). All four actions run through the wizard, which asks you
 to confirm before anything runs. When an action finishes, the result is a
 desktop notification: no completion dialog is shown.
 
+On the catalog page (index.html), each card's "Copy install command" button
+is kept and gains a single icon-only button directly to its left: a green
+**Install** icon when the plugin is not installed, a red **Uninstall** icon
+when it is (tooltips "Install directly"/"Uninstall directly", same icons,
+tones, and actions as the plugin page). The no-action "Manual" badges are
+never touched.
+
 ## Architecture
 
 ```
@@ -25,8 +32,12 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
 ```
 
 - **`extension/`** — MV3 WebExtension for Chrome, Chromium, Brave (Firefox MV3
-  compatible). Content script matches `plugins.omarchy.org/plugin.html?id=...`
-  and injects buttons **only when**:
+  compatible; the manifest pins a stable Chrome extension ID via `"key"`,
+  `ojmmnnlphgmhjlmcfmanmnfialliaehj`, so unpacked, zipped, and store installs
+  keep one ID). Content scripts match `plugins.omarchy.org/plugin.html?id=...`
+  (`content.js`, button groups) and the catalog `index.html` (`catalog.js`,
+  icon-only Install/Uninstall button beside each card's "Copy install command")
+  and inject buttons **only when**:
   1. the marketplace's own rule passes for the plugin
      (`installAvailable && upstreamCheckStatus !== "failed" && installCommand`), and
   2. a ping to the local native messaging host succeeds.
@@ -35,7 +46,8 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
   Manual-setup pages (like `bramvanoploo.omaguake`) and machines without this
   plugin show no buttons — the site renders untouched.
 - **`bin/omarchy-plugin-install-host`** — native messaging host. Message types:
-  `ping`, `status` (local install state), `install`, `uninstall`, `enable`,
+  `ping`, `status` (local install state), `status_all` (batch report for the
+  catalog page), `install`, `uninstall`, `enable`,
   `disable`. Each action is re-validated against a **fresh** `catalog.json`
   fetch (id, repo match) and live local state (`not-installed`,
   `already-enabled`, `already-disabled`, `already-installed`). It summons the
@@ -52,8 +64,10 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
 
 1. **Browser** shows its own "open in app?" style gate when relevant; the
    extension is scoped to `plugins.omarchy.org` only.
-2. **Native host manifest** pins the allowed origin to the extension ID
-   (Chrome family) / add-on ID (Firefox) — no other extension can talk to it.
+2. **Native host manifest** pins the allowed origins to the extension IDs
+   (Chrome family: the path-derived unpacked ID *and* the key-pinned stable
+   ID) / add-on ID (Firefox) — no other extension can talk to it. Chrome also
+   requires the host manifest's `description` field (the setup script sets it).
 3. **Host** re-validates against the live catalog; forged payloads for
    manual-setup or compatibility-failed plugins are rejected.
 4. **Wizard** is the consent gate: it re-validates the request (fresh catalog
@@ -81,11 +95,18 @@ bin/plugin-installer-setup
 #   Firefox: about:debugging#/runtime/this-firefox -> Load Temporary Add-on -> extension/manifest.json
 ```
 
+The manifest's `"key"` pins the Chrome extension ID
+(`ojmmnnlphgmhjlmcfmanmnfialliaehj`) so it survives packing and a future
+Chrome Web Store listing. The private key lives in `chrome-key.pem`
+(gitignored, mode 600) — back it up: losing it means losing that ID. The
+setup script registers both this ID and the path-derived unpacked ID.
+
 Verify without a browser:
 
 ```bash
 printf '\x10\x00\x00\x00{"type":"ping"}' | bin/omarchy-plugin-install-host | tail -c +5; echo
-# expect: {"ok":true,"host":"dev.bram.plugininstall","version":"0.1.0"}
+# expect: {"ok":true,"host":"dev.bram.plugininstall","version":"0.1.3"}
+# (host version tracks releases; bump with each signed extension release)
 ```
 
 ## Uninstall

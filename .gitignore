@@ -2,3 +2,4 @@ dist/
 dist/signed/
 extension/.amo-upload-uuid
 .env
+chrome-key.pem

@@ -5,6 +5,7 @@
 # Messages from the extension:
 #   {"type":"ping"}
 #   {"type":"status","id":"acme.weather"}
+#   {"type":"status_all"}
 #   {"type":"install","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
 #   {"type":"uninstall","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
 #   {"type":"enable","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
@@ -18,7 +19,7 @@
 set -euo pipefail
 
 HOST_NAME="dev_bram_plugininstall"
-HOST_VERSION="0.1.0"
+HOST_VERSION="0.1.3"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="dev.bram.plugin-installer"
 
@@ -206,6 +207,16 @@ main() {
       status)
         local_status=$(plugin_status "$(jq -r '.id // ""' <<<"$payload")")
         send_frame "$(jq -c '. + {ok:true}' <<<"$local_status")"
+        ;;
+      status_all)
+        # Batch report for the catalog page: every installed user (non
+        # first-party) plugin in one host launch. Plugins missing from the
+        # list are not installed.
+        all_status=$(omarchy plugin list --json 2>/dev/null | jq -c \
+          '[ .[]? | select(.firstParty | not) | {id: .id, installed: true, enabled: (.enabled // false)} ]' \
+          2>/dev/null)
+        [[ ${all_status:-} == "["* ]] || all_status="[]"
+        send_frame "$(jq -cn --argjson plugins "$all_status" '{ok:true, plugins:$plugins}')"
         ;;
       install)
         if reason=$(validate_install "$payload"); then
