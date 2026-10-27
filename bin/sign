@@ -14,7 +14,7 @@
 #
 # Output:
 #   dist/signed/plugin-installer-<version>-signed.xpi
-# Its add-on ID stays bramvanoploo.omarchy-browser-plugin-manager (from manifest.json
+# Its add-on ID stays bramvanoploo.omarchy-browser-plugin-manager@bram.dev (from manifest.json
 # browser_specific_settings), which the native messaging host allowlists.
 
 set -euo pipefail

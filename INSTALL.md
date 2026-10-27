@@ -36,7 +36,7 @@ the ID cannot be reproduced.
 
 Release Firefox permanently installs only AMO-signed add-ons, and the
 native-messaging allowlist matches the stable add-on ID
-`bramvanoploo.omarchy-browser-plugin-manager` — which only a permanent install gives:
+`bramvanoploo.omarchy-browser-plugin-manager@bram.dev` — which only a permanent install gives:
 
 1. Obtain `plugin-installer-<version>-signed.xpi` — the maintainer signs it
    with AMO *unlisted* signing (`bin/sign`; a free AMO developer account, no
