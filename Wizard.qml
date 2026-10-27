@@ -43,6 +43,7 @@ Item {
   property bool isBarWidget: false
   property string defaultSection: "center"
   property string enabledSection: ""
+  property int enableTries: 0
 
   readonly property var manifestKinds: pluginManifest && pluginManifest.kinds
     ? pluginManifest.kinds : []
@@ -77,6 +78,7 @@ Item {
     isBarWidget = false
     defaultSection = "center"
     enabledSection = ""
+    enableTries = 0
 
     opened = true
 
@@ -316,12 +318,57 @@ Item {
         root.fail("omarchy plugin enable exited with code " + exitCode)
         return
       }
-      var where = root.enabledSection
-        ? " on the bar (" + root.enabledSection + " section)"
-        : root.isBarWidget ? " on the bar (" + root.defaultSection + " section)" : ""
-      root.notify(root.mode === "install" ? "Plugin installed" : "Plugin enabled",
-                  root.pluginName + " is enabled" + where)
-      root.close()
+      // Confirm the state is live: the shell's plugin-file watcher (150ms
+      // debounce, storming during a clone) can persist shell.json from a
+      // snapshot that predates the enable IPC and revert the flag.
+      root.runVerify()
+    }
+  }
+
+  // Poll the live plugin list; on divergence re-run the enable (the shell
+  // IPC is idempotent), up to enableTries times, then fail loudly.
+  function runVerify() {
+    verifyProc.running = true
+  }
+
+  Timer {
+    id: enableRetryTimer
+    interval: 700
+    onTriggered: enableProc.running = true
+  }
+
+  Process {
+    id: verifyProc
+    command: ["omarchy", "plugin", "list", "--json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var entry = null
+        try {
+          var plugins = JSON.parse(String(text || "[]"))
+          entry = plugins.filter(function (item) {
+            return item && String(item.id) === root.pluginId
+          })[0] || null
+        } catch (e) {
+          entry = null
+        }
+        if (entry && entry.enabled) {
+          var where = root.enabledSection
+            ? " on the bar (" + root.enabledSection + " section)"
+            : root.isBarWidget ? " on the bar (" + root.defaultSection + " section)" : ""
+          root.notify(root.mode === "install" ? "Plugin installed" : "Plugin enabled",
+                      root.pluginName + " is enabled" + where)
+          root.close()
+        } else if (root.enableTries >= 5) {
+          root.fail("plugin is not enabled after repeated enable attempts (the shell config reverted it)")
+        } else {
+          root.enableTries++
+          enableRetryTimer.restart()
+        }
+      }
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) root.fail("omarchy plugin list exited with code " + exitCode)
     }
   }
 
