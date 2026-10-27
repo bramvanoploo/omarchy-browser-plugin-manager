@@ -44,6 +44,7 @@ Item {
   property string defaultSection: "center"
   property string enabledSection: ""
   property int enableTries: 0
+  property bool finalCheck: false
 
   readonly property var manifestKinds: pluginManifest && pluginManifest.kinds
     ? pluginManifest.kinds : []
@@ -79,6 +80,7 @@ Item {
     defaultSection = "center"
     enabledSection = ""
     enableTries = 0
+    finalCheck = false
 
     opened = true
 
@@ -326,7 +328,11 @@ Item {
   }
 
   // Poll the live plugin list; on divergence re-run the enable (the shell
-  // IPC is idempotent), up to enableTries times, then fail loudly.
+  // IPC is idempotent), up to enableTries times, then fail loudly. Once the
+  // state reads enabled, re-check once after 2.5s: the shell's plugin scan
+  // finishes seconds after a clone and its sync sweep persists shell.json
+  // from the registry snapshot, which can drop the fresh entry — the final
+  // check lands after that sweep and re-enables if it did.
   function runVerify() {
     verifyProc.running = true
   }
@@ -335,6 +341,12 @@ Item {
     id: enableRetryTimer
     interval: 700
     onTriggered: enableProc.running = true
+  }
+
+  Timer {
+    id: finalVerifyTimer
+    interval: 2500
+    onTriggered: verifyProc.running = true
   }
 
   Process {
@@ -353,15 +365,21 @@ Item {
           entry = null
         }
         if (entry && entry.enabled) {
+          if (!root.finalCheck) {
+            root.finalCheck = true
+            finalVerifyTimer.restart()
+            return
+          }
           var where = root.enabledSection
             ? " on the bar (" + root.enabledSection + " section)"
             : root.isBarWidget ? " on the bar (" + root.defaultSection + " section)" : ""
           root.notify(root.mode === "install" ? "Plugin installed" : "Plugin enabled",
                       root.pluginName + " is enabled" + where)
           root.close()
-        } else if (root.enableTries >= 5) {
+        } else if (root.enableTries >= 8) {
           root.fail("plugin is not enabled after repeated enable attempts (the shell config reverted it)")
         } else {
+          root.finalCheck = false
           root.enableTries++
           enableRetryTimer.restart()
         }
