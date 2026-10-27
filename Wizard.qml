@@ -40,6 +40,9 @@ Item {
   property string manifestError: ""
 
   property string installOutput: ""
+  // enableProc's own output, reset per attempt, so a discovery-race failure
+  // is detected from this run rather than from accumulated install text.
+  property string enableOutput: ""
   property bool isBarWidget: false
   property string defaultSection: "center"
   property string enabledSection: ""
@@ -76,6 +79,7 @@ Item {
     catalogError = ""
     manifestError = ""
     installOutput = ""
+    enableOutput = ""
     isBarWidget = false
     defaultSection = "center"
     enabledSection = ""
@@ -144,6 +148,7 @@ Item {
 
   function enable(section) {
     root.enabledSection = section
+    root.enableOutput = ""
     console.log("pi: enable start", root.pluginId, "tries", root.enableTries, "finalCheck", root.finalCheck)
     root.stage = "enabling"
     var args = ["omarchy", "plugin", "enable", root.pluginId]
@@ -301,6 +306,18 @@ Item {
     stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
     onExited: function (exitCode) {
       if (exitCode !== 0) {
+        // A clone that landed ("Added <id> into ...") plus "is not known"
+        // means only the add's internal enable lost the discovery race: the
+        // clone storm triggers a shell-wide plugin rescan that outlives the
+        // add's 2-second discovery window. The wizard's own enable/verify
+        // loop retries discovery, so continue there instead of failing.
+        var idPattern = root.pluginId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        if (new RegExp("Added " + idPattern + " into\\b").test(root.installOutput)
+            && /is not known/.test(root.installOutput)) {
+          console.log("pi: add enable raced, continuing with wizard enable")
+          root.enable("")
+          return
+        }
         root.fail("omarchy plugin add exited with code " + exitCode)
         return
       }
@@ -314,11 +331,20 @@ Item {
 
   Process {
     id: enableProc
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || ""); root.enableOutput += "\n" + String(text || "") }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || ""); root.enableOutput += "\n" + String(text || "") }
     onExited: function (exitCode) {
       console.log("pi: enableProc exit", exitCode)
       if (exitCode !== 0) {
+        // Same discovery race as the add's internal enable: the shell's
+        // registry scan may not have reached the fresh clone yet. Retry
+        // within the shared enableTries budget; the enable IPC is idempotent.
+        if (root.enableTries < 8 && /is not known/.test(root.enableOutput)) {
+          root.enableTries++
+          console.log("pi: enable not known, retry", root.enableTries)
+          enableRetryTimer.restart()
+          return
+        }
         root.fail("omarchy plugin enable exited with code " + exitCode)
         return
       }
