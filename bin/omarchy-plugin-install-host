@@ -21,7 +21,7 @@ set -euo pipefail
 HOST_NAME="dev_bram_plugininstall"
 HOST_VERSION="0.1.3"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
-WIZARD_ID="dev.bram.plugin-installer"
+WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
 
 send_frame() {
   local payload="$1"
@@ -223,7 +223,7 @@ main() {
           if summon_wizard "$payload" "install"; then
             reply_ok
           else
-            reply_err "wizard-not-available (is dev.bram.plugin-installer enabled in the shell?)"
+            reply_err "wizard-not-available (is bramvanoploo.omarchy-browser-plugin-manager enabled in the shell?)"
           fi
         else
           reply_err "$reason"
@@ -234,7 +234,7 @@ main() {
           if summon_wizard "$payload" "uninstall"; then
             reply_ok
           else
-            reply_err "wizard-not-available (is dev.bram.plugin-installer enabled in the shell?)"
+            reply_err "wizard-not-available (is bramvanoploo.omarchy-browser-plugin-manager enabled in the shell?)"
           fi
         else
           reply_err "$reason"
@@ -245,7 +245,7 @@ main() {
           if summon_wizard "$payload" "enable"; then
             reply_ok
           else
-            reply_err "wizard-not-available (is dev.bram.plugin-installer enabled in the shell?)"
+            reply_err "wizard-not-available (is bramvanoploo.omarchy-browser-plugin-manager enabled in the shell?)"
           fi
         else
           reply_err "$reason"
@@ -256,7 +256,7 @@ main() {
           if summon_wizard "$payload" "disable"; then
             reply_ok
           else
-            reply_err "wizard-not-available (is dev.bram.plugin-installer enabled in the shell?)"
+            reply_err "wizard-not-available (is bramvanoploo.omarchy-browser-plugin-manager enabled in the shell?)"
           fi
         else
           reply_err "$reason"

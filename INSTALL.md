@@ -85,4 +85,4 @@ notification.
 
 Then remove the extension from the browser (chrome://extensions /
 about:addons), and remove the shell plugin with
-`omarchy plugin remove dev.bram.plugin-installer`.
+`omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager`.

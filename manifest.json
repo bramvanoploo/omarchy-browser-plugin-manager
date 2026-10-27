@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "dev.bram.plugin-installer",
+  "id": "bramvanoploo.omarchy-browser-plugin-manager",
   "name": "Plugin Installer",
   "version": "0.1.0",
   "author": "Bram van Oploo",

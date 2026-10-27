@@ -55,7 +55,7 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
 - **`bin/plugin-installer-setup`** — registers the native host manifest for
   Chrome, Chromium, Brave, and Firefox, and prints extension-loading steps.
 - **`Wizard.qml` + `manifest.json`** — the Omarchy shell overlay plugin
-  (`dev.bram.plugin-installer`). It re-fetches catalog + repo manifest (payload
+  (`bramvanoploo.omarchy-browser-plugin-manager`). It re-fetches catalog + repo manifest (payload
   is never trusted for display), re-checks local state for destructive/toggle
   flows, refuses to uninstall itself, and drives
   install / enable / disable / remove via the official `omarchy plugin` CLI.
@@ -86,7 +86,7 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
 # 1. Shell plugin (the wizard) — from your clone of this repo:
 git init . && git add -A && git commit -m "init"   # if not already a repo
 omarchy plugin add file://$PWD --yes
-omarchy plugin enable dev.bram.plugin-installer
+omarchy plugin enable bramvanoploo.omarchy-browser-plugin-manager
 
 # 2. Browser integration (registers the native messaging host):
 bin/plugin-installer-setup
@@ -113,8 +113,8 @@ printf '\x10\x00\x00\x00{"type":"ping"}' | bin/omarchy-plugin-install-host | tai
 
 ```bash
 bin/plugin-installer-setup --uninstall
-omarchy plugin disable dev.bram.plugin-installer
-omarchy plugin remove dev.bram.plugin-installer --yes
+omarchy plugin disable bramvanoploo.omarchy-browser-plugin-manager
+omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager --yes
 ```
 
 ## Roadmap

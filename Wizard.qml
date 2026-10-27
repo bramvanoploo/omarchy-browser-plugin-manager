@@ -101,7 +101,7 @@ Item {
     if (!root.opened) return
     root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "dev.bram.plugin-installer")
+      root.shell.hide((root.manifest && root.manifest.id) || "bramvanoploo.omarchy-browser-plugin-manager")
   }
 
   // github.com/<owner>/<repo>[.git] -> owner/repo (empty when not parseable)
@@ -277,7 +277,7 @@ Item {
           root.catalogError = "Plugin is already disabled"
         } else if (root.mode === "uninstall"
                    && root.manifest && String(root.manifest.id) === root.pluginId) {
-          root.catalogError = "The installer cannot uninstall itself. Remove it in a terminal: omarchy plugin remove dev.bram.plugin-installer --yes"
+          root.catalogError = "The installer cannot uninstall itself. Remove it in a terminal: omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager --yes"
         } else if (root.mode === "enable") {
           root.stage = "enable-confirm"
         } else if (root.mode === "disable") {
