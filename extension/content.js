@@ -45,7 +45,7 @@
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
-  text-transform: uppercase;
+  text-transform: none;
   appearance: none !important;
   -moz-appearance: none !important;
 }
@@ -66,7 +66,6 @@
 }
 .pi-button > [data-label] {
   letter-spacing: 0.06em !important;
-  text-transform: uppercase !important;
 }
 .pi-button.pi-button-danger {
   color: var(--accent, #ffcead) !important;
