@@ -22,7 +22,7 @@ Item {
 
   property bool opened: false
   // review | enable-confirm | disable-confirm | uninstall-confirm
-  // | installing | enabling | placement | removing | disabling
+  // | enabling | placement | disabling
   property string stage: "review"
 
   property string pluginId: ""
@@ -39,10 +39,12 @@ Item {
   property string catalogError: ""
   property string manifestError: ""
 
-  property string installOutput: ""
   // enableProc's own output, reset per attempt, so a discovery-race failure
-  // is detected from this run rather than from accumulated install text.
+  // is detected from this run rather than from accumulated output.
   property string enableOutput: ""
+  // Detached worker for install/uninstall (see spawnWorker).
+  property string workerFile: ""
+  property string workerContent: ""
   property bool isBarWidget: false
   property string defaultSection: "center"
   property string enabledSection: ""
@@ -78,7 +80,6 @@ Item {
     pluginManifest = null
     catalogError = ""
     manifestError = ""
-    installOutput = ""
     enableOutput = ""
     isBarWidget = false
     defaultSection = "center"
@@ -141,9 +142,7 @@ Item {
 
   function install() {
     if (!root.canInstall) return
-    root.stage = "installing"
-    addProc.command = ["omarchy", "plugin", "add", root.pluginRepo, "--enable", "--yes"]
-    addProc.running = true
+    root.spawnWorker("install")
   }
 
   function enable(section) {
@@ -159,9 +158,7 @@ Item {
 
   function runUninstall() {
     if (root.catalogError.length > 0) return
-    root.stage = "removing"
-    removeProc.command = ["omarchy", "plugin", "remove", root.pluginId, "--yes"]
-    removeProc.running = true
+    root.spawnWorker("uninstall")
   }
 
   function confirmEnable() {
@@ -297,35 +294,114 @@ Item {
     }
   }
 
-  // ---- install / enable / disable / uninstall -------------------------------
-  // Every action ends in a notification + close; there is no completion stage.
+  // Every action ends in a notification + close; there is no completion
+  // stage. ---- install / uninstall (detached workers) ----------------------
+  // Install/uninstall touch the watched plugins directory: the clone (or
+  // removal) event makes the shell reload all plugins, which destroys this
+  // wizard overlay and kills the Processes it owns mid-action. These two
+  // actions therefore run as a detached bash worker that outlives the
+  // wizard: it performs the CLI work, retries the enable through the
+  // shell's post-clone discovery race ("is not known"), verifies the end
+  // state, and finishes with the usual desktop notification.
+
+  function shellQuote(value) {
+    return "'" + String(value).replace(/'/g, "'\\''") + "'"
+  }
+
+  function runtimeDir() {
+    var base = Quickshell.env("XDG_RUNTIME_DIR")
+    if (!base) base = "/tmp"
+    return base + "/omarchy-plugin-installer"
+  }
+
+  function buildWorkerScript(kind) {
+    var q = root.shellQuote
+    var s = [
+      "#!/usr/bin/env bash",
+      "set -u",
+      "ID=" + q(root.pluginId),
+      "NAME=" + q(root.pluginName),
+      "REPO=" + q(root.pluginRepo),
+      "trap 'rm -f \"$0\"' EXIT",
+      "notify() {",
+      "  omarchy-notification-send --app-name omarchy-plugin-installer --expire-time 8000 \"$1\" \"$2\"",
+      "}",
+      "list() { omarchy plugin list --json 2>/dev/null; }",
+      "enabled() { list | jq -e --arg id \"$ID\" 'any(.[]; .id == $id and .enabled == true)' >/dev/null 2>&1; }",
+      "OUT=''"
+    ]
+    if (kind === "install") {
+      s = s.concat([
+        "if ! OUT=\"$(omarchy plugin add \"$REPO\" --enable --yes 2>&1)\"; then",
+        "  # The clone can land while the add's internal enable fails; only",
+        "  # re-add when the plugin directory did not arrive.",
+        "  if [ ! -d \"$HOME/.config/omarchy/plugins/$ID\" ]; then",
+        "    if ! OUT=\"$(omarchy plugin add \"$REPO\" --yes 2>&1)\"; then",
+        "      notify \"Plugin install failed\" \"$NAME: $OUT\"",
+        "      exit 1",
+        "    fi",
+        "  fi",
+        "fi",
+        "# The clone storm triggers a shell-wide rescan that can keep the",
+        "# fresh plugin unknown (\"is not known\") well past the add's 2s",
+        "# discovery window; wait for discovery, then enable (the shell IPC",
+        "# is idempotent) until the state reads enabled.",
+        "for _ in $(seq 1 15); do enabled && break; sleep 1; done",
+        "for _ in $(seq 1 10); do",
+        "  enabled && break",
+        "  OUT=\"$(omarchy plugin enable \"$ID\" 2>&1)\"",
+        "  sleep 1",
+        "done",
+        "if enabled; then",
+        "  # The scan's config sweep re-persists shell.json from the",
+        "  # registry snapshot seconds later and can revert the fresh",
+        "  # enable; re-check after the sweep and re-enable once if it did.",
+        "  sleep 3",
+        "  if ! enabled; then",
+        "    omarchy plugin enable \"$ID\" >/dev/null 2>&1",
+        "    sleep 2",
+        "  fi",
+        "fi",
+        "if enabled; then",
+        "  notify \"Plugin installed\" \"$NAME is installed and enabled.\"",
+        "else",
+        "  notify \"Plugin install incomplete\" \"$NAME was installed but failed to enable. Retry: omarchy plugin enable $ID\"",
+        "fi"
+      ])
+    } else {
+      s = s.concat([
+        "if ! OUT=\"$(omarchy plugin remove \"$ID\" --yes 2>&1)\"; then",
+        "  notify \"Plugin uninstall failed\" \"$NAME: $OUT\"",
+        "  exit 1",
+        "fi",
+        "notify \"Plugin uninstalled\" \"$NAME has been removed.\""
+      ])
+    }
+    return s.join("\n") + "\n"
+  }
+
+  function spawnWorker(kind) {
+    var dir = root.runtimeDir()
+    var safeId = root.pluginId.replace(/[^A-Za-z0-9._-]/g, "-")
+    root.workerFile = dir + "/worker-" + kind + "-" + safeId
+      + "-" + Math.floor(Date.now() / 1000) + ".sh"
+    root.workerContent = root.buildWorkerScript(kind)
+    writeProc.command = ["bash", "-c",
+      "mkdir -p " + root.shellQuote(dir)
+      + " && cat > " + root.shellQuote(root.workerFile)]
+    writeProc.running = true
+  }
 
   Process {
-    id: addProc
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput = String(text || "") }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
+    id: writeProc
+    stdin: DataDescriptor { content: root.workerContent; waitForEnd: true }
     onExited: function (exitCode) {
       if (exitCode !== 0) {
-        // A clone that landed ("Added <id> into ...") plus "is not known"
-        // means only the add's internal enable lost the discovery race: the
-        // clone storm triggers a shell-wide plugin rescan that outlives the
-        // add's 2-second discovery window. The wizard's own enable/verify
-        // loop retries discovery, so continue there instead of failing.
-        var idPattern = root.pluginId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-        if (new RegExp("Added " + idPattern + " into\\b").test(root.installOutput)
-            && /is not known/.test(root.installOutput)) {
-          console.log("pi: add enable raced, continuing with wizard enable")
-          root.enable("")
-          return
-        }
-        root.fail("omarchy plugin add exited with code " + exitCode)
+        root.fail("worker script could not be written (exit " + exitCode + ")")
         return
       }
-      // The add's internal enable races the shell's watcher-driven plugin
-      // rescan (clone writes trigger reloads that can revert the flag). Run a
-      // final enable: the shell IPC is idempotent, so this is a no-op when
-      // --enable already stuck and repairs the state when it did not.
-      root.enable("")
+      Quickshell.execDetached(["bash", root.workerFile])
+      root.close()
     }
   }
 
@@ -333,17 +409,11 @@ Item {
     id: enableProc
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: {
-        root.installOutput += "\n" + String(text || "")
-        root.enableOutput += "\n" + String(text || "")
-      }
+      onStreamFinished: root.enableOutput += "\n" + String(text || "")
     }
     stderr: StdioCollector {
       waitForEnd: true
-      onStreamFinished: {
-        root.installOutput += "\n" + String(text || "")
-        root.enableOutput += "\n" + String(text || "")
-      }
+      onStreamFinished: root.enableOutput += "\n" + String(text || "")
     }
     onExited: function (exitCode) {
       console.log("pi: enableProc exit", exitCode)
@@ -432,23 +502,9 @@ Item {
   }
 
   Process {
-    id: removeProc
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
-    onExited: function (exitCode) {
-      if (exitCode !== 0) {
-        root.fail("omarchy plugin remove exited with code " + exitCode)
-        return
-      }
-      root.notify("Plugin uninstalled", root.pluginName + " was removed and disabled")
-      root.close()
-    }
-  }
-
-  Process {
     id: disableProc
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.enableOutput += "\n" + String(text || "") }
+    stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.enableOutput += "\n" + String(text || "") }
     onExited: function (exitCode) {
       if (exitCode !== 0) {
         root.fail("omarchy plugin disable exited with code " + exitCode)
@@ -650,17 +706,9 @@ Item {
 
         // ---- stages: in progress ----
         PiLine {
-          visible: root.stage === "installing"
-          text: "Cloning and validating the plugin\u2026"
-        }
-        PiLine {
           visible: root.stage === "enabling"
           text: "Enabling the plugin\u2026"
           + (root.enabledSection ? " (bar section: " + root.enabledSection + ")" : "")
-        }
-        PiLine {
-          visible: root.stage === "removing"
-          text: "Removing the plugin\u2026"
         }
         PiLine {
           visible: root.stage === "disabling"
