@@ -144,6 +144,7 @@ Item {
 
   function enable(section) {
     root.enabledSection = section
+    console.log("pi: enable start", root.pluginId, "tries", root.enableTries, "finalCheck", root.finalCheck)
     root.stage = "enabling"
     var args = ["omarchy", "plugin", "enable", root.pluginId]
     if (section) args = args.concat(["--section", section])
@@ -316,6 +317,7 @@ Item {
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
     stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.installOutput += "\n" + String(text || "") }
     onExited: function (exitCode) {
+      console.log("pi: enableProc exit", exitCode)
       if (exitCode !== 0) {
         root.fail("omarchy plugin enable exited with code " + exitCode)
         return
@@ -364,6 +366,7 @@ Item {
         } catch (e) {
           entry = null
         }
+        console.log("pi: verify enabled", entry ? entry.enabled : "no-entry", "finalCheck", root.finalCheck, "tries", root.enableTries)
         if (entry && entry.enabled) {
           if (!root.finalCheck) {
             root.finalCheck = true
