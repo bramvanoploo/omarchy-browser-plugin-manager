@@ -1,4 +1,4 @@
-// Omarchy Plugin Installer - background service worker (MV3).
+// Omarchy Browser Plugin Manager - background service worker (MV3).
 // Content scripts cannot open native messaging ports, so the extension
 // relays ping/install requests to the registered native host here.
 

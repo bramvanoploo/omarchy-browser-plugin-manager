@@ -1,4 +1,4 @@
-// Omarchy Plugin Installer - content script.
+// Omarchy Browser Plugin Manager - content script.
 // Adds action buttons to plugin detail pages, driven entirely by live local
 // state reported by the native messaging host (never by the page):
 //   not installed            -> "Install with Omarchy"

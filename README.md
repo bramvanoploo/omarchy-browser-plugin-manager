@@ -105,7 +105,7 @@ Verify without a browser:
 
 ```bash
 printf '\x10\x00\x00\x00{"type":"ping"}' | bin/omarchy-plugin-install-host | tail -c +5; echo
-# expect: {"ok":true,"host":"dev.bram.plugininstall","version":"0.1.3"}
+# expect: {"ok":true,"host":"dev_bram_plugininstall","version":"0.1.5"}
 # (host version tracks releases; bump with each signed extension release)
 ```
 
