@@ -71,11 +71,16 @@ chrome_extension_id() {
 }
 
 # Stable Chrome extension ID derived from the manifest's "key" (public key):
-# used by packed/zip installs and Chrome Web Store installs. Empty when the
-# manifest pins no key.
+# used by packed/zip installs and Chrome Web Store installs. The source
+# manifest carries no key (Firefox warns about it), so fall back to the
+# repo's chrome-key.pem, which bin/package injects into the Chrome zip.
+# Empty when neither exists.
 chrome_key_id() {
-  local key
-  key=$(jq -r '.key // ""' "$1" 2>/dev/null) || return 0
+  local key=""
+  key=$(jq -r '.key // ""' "$1" 2>/dev/null) || true
+  if [[ -z $key && -f "$REPO_DIR/chrome-key.pem" ]]; then
+    key=$(openssl ec -in "$REPO_DIR/chrome-key.pem" -pubout -outform DER 2>/dev/null | base64 -w0)
+  fi
   [[ -n $key ]] || return 0
   printf '%s' "$key" | base64 -d | sha256sum | cut -c1-32 \
     | tr '0123456789abcdef' 'abcdefghijklmnop'

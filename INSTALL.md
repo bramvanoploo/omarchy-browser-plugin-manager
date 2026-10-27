@@ -25,10 +25,11 @@ otherwise the native host will reject its connection.
 2. Enable **Developer mode** (top right)
 3. **Load unpacked** -> select the `extension/` directory from this archive
 
-The manifest pins a stable extension ID (`nbngempephjmagmlfbfdodboeimfoibp`)
-via its `"key"` field, so zipped installs (and a future Chrome Web Store
-listing — upload `plugin-installer-<version>-chrome.zip`) keep the same ID;
-the setup script registers both this ID and the path-derived unpacked ID, so
+Load unpacked gets the path-derived ID. The store artifact
+`plugin-installer-<version>-chrome.zip` (built by `bin/package`) carries a
+Chrome-only `"key"` field pinning the stable ID
+`nbngempephjmagmlfbfdodboeimfoibp` for zipped installs and a future Chrome
+Web Store listing. The setup script registers both IDs, so
 native messaging works for either. Keep `chrome-key.pem` safe — without it
 the ID cannot be reproduced.
 
