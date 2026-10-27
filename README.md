@@ -33,7 +33,7 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
 
 - **`extension/`** — MV3 WebExtension for Chrome, Chromium, Brave (Firefox MV3
   compatible; the manifest pins a stable Chrome extension ID via `"key"`,
-  `ojmmnnlphgmhjlmcfmanmnfialliaehj`, so unpacked, zipped, and store installs
+  `nbngempephjmagmlfbfdodboeimfoibp`, so unpacked, zipped, and store installs
   keep one ID). Content scripts match `plugins.omarchy.org/plugin.html?id=...`
   (`content.js`, button groups) and the catalog `index.html` (`catalog.js`,
   icon-only Install/Uninstall button beside each card's "Copy install command")
@@ -96,16 +96,19 @@ bin/plugin-installer-setup
 ```
 
 The manifest's `"key"` pins the Chrome extension ID
-(`ojmmnnlphgmhjlmcfmanmnfialliaehj`) so it survives packing and a future
+(`nbngempephjmagmlfbfdodboeimfoibp`) so it survives packing and a future
 Chrome Web Store listing. The private key lives in `chrome-key.pem`
 (gitignored, mode 600) — back it up: losing it means losing that ID. The
 setup script registers both this ID and the path-derived unpacked ID.
+(The 2026-10-27 identity rename rotated this key; the superseded keypair is
+kept as `chrome-key-2026-10-27.pem.bak`, its ID
+`ojmmnnlphgmhjlmcfmanmnfialliaehj` is unused.)
 
 Verify without a browser:
 
 ```bash
 printf '\x10\x00\x00\x00{"type":"ping"}' | bin/omarchy-plugin-install-host | tail -c +5; echo
-# expect: {"ok":true,"host":"dev_bram_plugininstall","version":"0.1.5"}
+# expect: {"ok":true,"host":"bramvanoploo_omarchy_browser_plugin_manager","version":"0.1.5"}
 # (host version tracks releases; bump with each signed extension release)
 ```
 

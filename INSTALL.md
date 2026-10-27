@@ -25,7 +25,7 @@ otherwise the native host will reject its connection.
 2. Enable **Developer mode** (top right)
 3. **Load unpacked** -> select the `extension/` directory from this archive
 
-The manifest pins a stable extension ID (`ojmmnnlphgmhjlmcfmanmnfialliaehj`)
+The manifest pins a stable extension ID (`nbngempephjmagmlfbfdodboeimfoibp`)
 via its `"key"` field, so zipped installs (and a future Chrome Web Store
 listing — upload `plugin-installer-<version>-chrome.zip`) keep the same ID;
 the setup script registers both this ID and the path-derived unpacked ID, so
@@ -36,7 +36,7 @@ the ID cannot be reproduced.
 
 Release Firefox permanently installs only AMO-signed add-ons, and the
 native-messaging allowlist matches the stable add-on ID
-`plugin-installer@bram.dev` — which only a permanent install gives:
+`bramvanoploo.omarchy-browser-plugin-manager` — which only a permanent install gives:
 
 1. Obtain `plugin-installer-<version>-signed.xpi` — the maintainer signs it
    with AMO *unlisted* signing (`bin/sign`; a free AMO developer account, no

@@ -4,7 +4,7 @@
 
 const api = typeof browser !== "undefined" ? browser : chrome;
 
-const HOST_NAME = "dev_bram_plugininstall";
+const HOST_NAME = "bramvanoploo_omarchy_browser_plugin_manager";
 const HOST_TIMEOUT_MS = 12000; // install validation fetches the catalog remotely
 
 function talkToHost(message) {

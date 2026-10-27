@@ -40,9 +40,9 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "plugin-installer@bram.dev",
+      "id": "bramvanoploo.omarchy-browser-plugin-manager",
       "strict_min_version": "121.0"
     }
   },
-  "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAENelce0T/dvYxAR2owdxa6hs8WdSe4majKiTuyYBeDll3RAgycGn2/9nFwjBqp9qmY3gxG/MTbupc/lSPIlV0mA=="
+  "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEzG4pwGSaKJSa5HKyJdf1ELPhhGm7AHEvejw0RA26RzH5diri/+URoERFN1+g3p4/MrALZi27mq33F75pQ3nyKQ=="
 }
