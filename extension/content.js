@@ -278,29 +278,24 @@
     const confirmTip = "on this machine \u2014 the Omarchy wizard will ask you to confirm";
     const buttons = [];
     if (!state.installed) {
-      const install = makeButton("Install with Omarchy", "Install this plugin " + confirmTip, "pi-button-install", "pi-icon-install");
+      const install = makeButton("Install", "Install this plugin " + confirmTip, "pi-button-install", "pi-icon-install");
       wireAction(install, plugin, "install");
       buttons.push(install);
     } else {
-      // Toggle flips its own label, icon and tooltip between Enable/Disable
-      // after the wizard was opened; the authoritative state is re-checked
-      // live by the host.
-      let enabled = Boolean(state.enabled);
-      const toggle = makeButton("", "", "", "pi-icon-disable");
-      const applyToggle = () => {
-        const verb = enabled ? "Disable" : "Enable";
-        const tip = verb + " this plugin " + confirmTip;
-        toggle.querySelector("[data-label]").textContent = verb;
-        toggle.querySelector(".pi-icon").className =
-          "pi-icon " + (enabled ? "pi-icon-disable" : "pi-icon-enable");
-        toggle.setAttribute("aria-label", tip);
-        toggle.querySelector(".pi-tooltip").textContent = tip;
-      };
-      applyToggle();
-      wireAction(toggle, plugin, () => (enabled ? "disable" : "enable"), () => {
-        enabled = !enabled;
-        applyToggle();
-      });
+      // Label, icon and tone come from the live state; the state-sync poll
+      // (1s) rebuilds the buttons when the host's answer changes, so the
+      // wizard, the desktop, and the page can never drift apart.
+      const enabled = Boolean(state.enabled);
+      const verb = enabled ? "Disable" : "Enable";
+      const tip = verb + " this plugin " + confirmTip;
+      const toggle = makeButton(
+        verb, tip,
+        enabled ? "pi-button-danger" : "pi-button-install",
+        enabled ? "pi-icon-disable" : "pi-icon-enable"
+      );
+      // Empty afterOpen keeps the toggle usable after a successful summon:
+      // the wizard may be cancelled, and the poll keeps the label honest.
+      wireAction(toggle, plugin, () => (enabled ? "disable" : "enable"), () => {});
       const uninstall = makeButton("Uninstall", "Uninstall this plugin " + confirmTip, "pi-button-danger", "pi-icon-uninstall");
       wireAction(uninstall, plugin, "uninstall");
       buttons.push(toggle, uninstall);
@@ -309,6 +304,38 @@
     head.insertBefore(group, copy);
     group.append(...buttons, copy);
     mounted = true;
+    lastState = state;
+  }
+
+  // Real-time sync: poll the host's live state every second. When it
+  // diverges from the mounted buttons (wizard confirmed/cancelled, plugin
+  // enabled/disabled/removed on the desktop), rebuild the group. The Copy
+  // button node is restored to the head first, so the page's own listener
+  // survives every rebuild.
+  let pollTimer = null;
+  let lastState = null;
+
+  function remountButtons(plugin, state) {
+    const group = document.querySelector(".pi-group");
+    const copy = document.querySelector("#detail-content [data-install-copy]");
+    if (!group || !copy) return;
+    group.parentElement.insertBefore(copy, group);
+    group.remove();
+    mounted = false;
+    mountButtons(plugin, state);
+  }
+
+  function startStateSync(plugin) {
+    if (pollTimer) return;
+    pollTimer = setInterval(async () => {
+      if (document.hidden) return;
+      const state = await talkToHost({ type: "status", id: PLUGIN_ID });
+      if (!state || !state.ok || !lastState) return;
+      if (state.installed !== lastState.installed || state.enabled !== lastState.enabled) {
+        lastState = state;
+        remountButtons(plugin, state);
+      }
+    }, 1000);
   }
 
   async function init() {
@@ -337,11 +364,13 @@
 
     // The detail section renders async after the page's own catalog fetch.
     mountButtons(plugin, state);
+    if (mounted) startStateSync(plugin);
     const target = document.querySelector("#detail-content");
     if (!target || mounted) return;
     const observer = new MutationObserver(() => {
       if (document.querySelector("#detail-content [data-install-copy]")) {
         mountButtons(plugin, state);
+        if (mounted) startStateSync(plugin);
         observer.disconnect();
       }
     });
