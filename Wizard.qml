@@ -386,15 +386,15 @@ Item {
     root.workerFile = dir + "/worker-" + kind + "-" + safeId
       + "-" + Math.floor(Date.now() / 1000) + ".sh"
     root.workerContent = root.buildWorkerScript(kind)
+    // Content travels as a positional argument: no shell quoting needed.
     writeProc.command = ["bash", "-c",
-      "mkdir -p " + root.shellQuote(dir)
-      + " && cat > " + root.shellQuote(root.workerFile)]
+      'mkdir -p "$0" && printf %s "$1" > "$2"',
+      dir, root.workerContent, root.workerFile]
     writeProc.running = true
   }
 
   Process {
     id: writeProc
-    stdin: Quickshell.Io.DataDescriptor { content: root.workerContent; waitForEnd: true }
     onExited: function (exitCode) {
       if (exitCode !== 0) {
         root.fail("worker script could not be written (exit " + exitCode + ")")
