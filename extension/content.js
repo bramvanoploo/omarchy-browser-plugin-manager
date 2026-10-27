@@ -29,7 +29,6 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-left: 5px;
 }
 .pi-button {
   display: inline-flex;
@@ -56,6 +55,18 @@
 }
 .pi-button:disabled {
   opacity: 0.55;
+}
+/* The page's ".command-panel-head > span span" rule (margin-left: 8px,
+ * muted color, no uppercase) leaks into every span nested in our group.
+ * Neutralize it on icon + label so both inherit the button's tone
+ * (border color == text color == icon color via currentColor). */
+.pi-button > span:not(.pi-tooltip) {
+  margin-left: 0 !important;
+  color: inherit !important;
+}
+.pi-button > [data-label] {
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
 }
 .pi-button.pi-button-danger {
   color: var(--accent, #ffcead) !important;
