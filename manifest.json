@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "bramvanoploo.omarchy-browser-plugin-manager",
-  "name": "Plugin Installer",
+  "name": "Omarchy Browser Plugin Manager",
   "version": "0.1.0",
   "author": "Bram van Oploo",
   "description": "Installation wizard for Omarchy plugins, summoned from the browser extension's Install button",

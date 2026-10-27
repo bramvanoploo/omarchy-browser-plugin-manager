@@ -5,7 +5,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// Plugin Installer wizard overlay.
+// Omarchy Browser Plugin Manager wizard overlay.
 // Summoned by the native messaging host (browser button click) with payload
 // {mode, id, repo, name}. The payload is treated as a hint only: the catalog
 // entry and the repository manifest are re-fetched and cross-checked before
