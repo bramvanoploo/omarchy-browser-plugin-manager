@@ -46,10 +46,6 @@ Item {
 
   readonly property var manifestKinds: pluginManifest && pluginManifest.kinds
     ? pluginManifest.kinds : []
-  readonly property bool summonable:
-    manifestKinds.indexOf("overlay") !== -1
-    || manifestKinds.indexOf("panel") !== -1
-    || manifestKinds.indexOf("menu") !== -1
 
   readonly property string reviewBlocked: {
     if (catalogError.length > 0) return catalogError
@@ -138,7 +134,7 @@ Item {
   function install() {
     if (!root.canInstall) return
     root.stage = "installing"
-    addProc.command = ["omarchy", "plugin", "add", root.pluginRepo, "--yes"]
+    addProc.command = ["omarchy", "plugin", "add", root.pluginRepo, "--enable", "--yes"]
     addProc.running = true
   }
 
@@ -169,12 +165,6 @@ Item {
     root.stage = "disabling"
     disableProc.command = ["omarchy", "plugin", "disable", root.pluginId]
     disableProc.running = true
-  }
-
-  function leaveDisabled() {
-    root.notify("Plugin not enabled",
-      root.pluginName + " was installed disabled. Enable with: omarchy plugin enable " + root.pluginId)
-    root.close()
   }
 
   // ---- data fetching ------------------------------------------------------
@@ -309,8 +299,11 @@ Item {
         root.fail("omarchy plugin add exited with code " + exitCode)
         return
       }
-      if (root.isBarWidget) root.stage = "placement"
-      else root.enable("")
+      // --enable: the plugin is installed and enabled in one step (bar
+      // widgets land in the manifest's default section).
+      var where = root.isBarWidget ? " on the bar (" + root.defaultSection + " section)" : ""
+      root.notify("Plugin installed", root.pluginName + " is enabled" + where)
+      root.close()
     }
   }
 
@@ -566,15 +559,13 @@ Item {
           text: "Disabling the plugin\u2026"
         }
 
-        // ---- stage: placement ----
+        // ---- stage: placement (enable mode, bar widgets) ----
         Column {
           visible: root.stage === "placement"
           width: cardColumn.width
           spacing: Style.spacing.rowGap
           PiLine {
-            text: root.mode === "install"
-              ? "Installed (disabled). Where should the bar icon go?"
-              : "Where should the bar icon go?"
+            text: "Where should the bar icon go?"
           }
           Row {
             spacing: Style.spacing.controlGap
@@ -621,11 +612,6 @@ Item {
             primary: true
             label: "Disable plugin"
             onClickedPi: root.runDisable()
-          }
-          PiButton {
-            visible: root.mode === "install" && root.stage === "placement"
-            label: "Keep disabled"
-            onClickedPi: root.leaveDisabled()
           }
           PiButton {
             visible: root.stage === "review" || root.stage === "uninstall-confirm"

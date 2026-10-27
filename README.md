@@ -5,8 +5,9 @@ One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org
 Clicking **Install** on a plugin page opens a wizard overlay on the desktop
 that validates the request (live catalog entry + repository manifest), shows
 what will be installed, and installs only after you confirm, via the official
-`omarchy plugin add` (clone + manifest validation, no code execution) — for
-bar widgets you pick the bar section before enabling.
+`omarchy plugin add --enable` (clone + manifest validation, no code
+execution): the plugin lands enabled immediately, bar widgets in their
+manifest's default bar section.
 
 Once a plugin is installed, the page swaps the Install button for
 **Enable/Disable** and **Uninstall** buttons (state read live from the host,
