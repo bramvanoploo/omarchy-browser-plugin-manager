@@ -49,10 +49,10 @@ fi
 export WEB_EXT_API_KEY="$AMO_API_KEY" WEB_EXT_API_SECRET="$AMO_API_SECRET"
 AMO_API_KEY= AMO_API_SECRET=
 
-# Firefox AMO lint requires the MV2 "background.scripts" fallback next to
-# "service_worker"; the shared source manifest omits it so Chrome stays
-# warning-free. Sign a staged copy with the fallback injected (same trick as
-# bin/package uses for the .xpi).
+# Firefox AMO lint requires "background.scripts" and warns that
+# "service_worker" is unsupported; the shared source manifest keeps only
+# "service_worker" for Chrome, so the staged copy REPLACES the background
+# block with "scripts" (same transform as bin/package for the .xpi).
 STAGE="$(mktemp -d)"
 cleanup() {
   if [[ -f "$STAGE/extension/.amo-upload-uuid" ]]; then
@@ -63,7 +63,7 @@ cleanup() {
 trap cleanup EXIT
 
 cp -r "$EXT_DIR" "$STAGE/extension"
-jq '.background += {scripts: ["background.js"]}' "$STAGE/extension/manifest.json" > "$STAGE/extension/manifest.json.tmp" \
+jq '.background = {scripts: ["background.js"]}' "$STAGE/extension/manifest.json" > "$STAGE/extension/manifest.json.tmp" \
   && mv "$STAGE/extension/manifest.json.tmp" "$STAGE/extension/manifest.json"
 
 mkdir -p "$STAGE/artifacts" "$OUT_DIR"
