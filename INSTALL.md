@@ -1,6 +1,6 @@
 # Install without the browser stores
 
-This archive contains everything needed to run the Omarchy Plugin Installer
+This archive contains everything needed to run the Omarchy Browser Plugin Manager
 without publishing to the Chrome Web Store or AMO.
 
 Unpack this archive wherever you want to keep it, e.g. `~/apps/`. All paths
