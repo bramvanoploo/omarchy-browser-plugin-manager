@@ -116,7 +116,7 @@ Verify without a browser:
 
 ```bash
 printf '\x10\x00\x00\x00{"type":"ping"}' | bin/omarchy-plugin-install-host | tail -c +5; echo
-# expect: {"ok":true,"host":"bramvanoploo_omarchy_browser_plugin_manager","version":"0.3.1"}
+# expect: {"ok":true,"host":"bramvanoploo_omarchy_browser_plugin_manager","version":"0.3.2"}
 # (host version tracks releases; bump with each signed extension release)
 ```
 
