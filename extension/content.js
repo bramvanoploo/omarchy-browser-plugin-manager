@@ -45,6 +45,8 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  appearance: none;
+  -moz-appearance: none;
 }
 .pi-button:hover {
   background: var(--panel-2, rgba(127, 127, 127, 0.12));
