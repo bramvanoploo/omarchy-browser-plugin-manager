@@ -1,9 +1,9 @@
 // Omarchy Browser Plugin Manager - content script.
 // Adds action buttons to plugin detail pages, driven entirely by live local
 // state reported by the native messaging host (never by the page):
-//   not installed            -> "Install with Omarchy"
-//   installed, enabled       -> "Disable" + "Uninstall from Omarchy"
-//   installed, not enabled   -> "Enable" + "Uninstall from Omarchy"
+//   not installed            -> "Install"
+//   installed, enabled       -> "Disable" + "Uninstall"
+//   installed, not enabled   -> "Enable" + "Uninstall"
 // Gated on:
 //   1. the marketplace's own availability rule for this plugin (catalog.json),
 //   2. a live ping to the local native messaging host.
@@ -15,6 +15,9 @@
   const api = typeof browser !== "undefined" ? browser : chrome;
   const PLUGIN_ID = new URLSearchParams(window.location.search).get("id");
   const HOST_PING_TIMEOUT_MS = 2500;
+  const HOST_STATUS_TIMEOUT_MS = 4000;
+  const HOST_ACTION_TIMEOUT_MS = 12000;
+  const POLL_MS = 1000;
 
   let hostAvailable = false;
   let mounted = false;
@@ -171,7 +174,7 @@
 `;
 
   function injectStyles() {
-    if (document.getElementById("pi-styles")) return;
+    if (document.getElementById("pi-styles") || !document.head) return;
     const style = document.createElement("style");
     style.id = "pi-styles";
     style.textContent = STYLES;
@@ -197,29 +200,35 @@
     return response.json();
   }
 
-  function talkToHost(message) {
+  function talkToHost(message, timeoutMs = HOST_ACTION_TIMEOUT_MS) {
     return new Promise((resolve) => {
       let settled = false;
       const done = (value) => {
         if (!settled) {
           settled = true;
+          clearTimeout(timer);
           resolve(value);
         }
       };
-      setTimeout(() => done({ ok: false, reason: "host-timeout" }), 12000);
+      const timer = setTimeout(() => done({ ok: false, reason: "host-timeout" }), timeoutMs);
       try {
-        api.runtime.sendMessage(message, (response) => {
+        const sent = api.runtime.sendMessage(message, (response) => {
+          void api.runtime.lastError;
           done(response || { ok: false, reason: "no-response" });
         });
-      } catch (e) {
+        // Firefox's promise-style browser namespace ignores the callback:
+        // settle from the returned promise too (done() settles once).
+        if (sent && typeof sent.then === "function") {
+          sent.then(done).catch(() => done({ ok: false, reason: "no-response" }));
+        }
+      } catch (_e) {
         done({ ok: false, reason: "extension-error" });
       }
     });
   }
 
   async function pingHost() {
-    const response = await talkToHost({ type: "ping" });
-    console.debug("[plugin-installer] ping response:", JSON.stringify(response));
+    const response = await talkToHost({ type: "ping" }, HOST_PING_TIMEOUT_MS);
     return Boolean(response && response.ok);
   }
 
@@ -245,30 +254,40 @@
     return button;
   }
 
-  // One request per button: send the action and let the wizard on the
-  // desktop be the feedback; run the optional after-action update (the
-  // Enable/Disable toggle relabels itself).
-  function wireAction(button, plugin, type, afterOpen) {
+  // Send the action and let the wizard on the desktop be the feedback.
+  // Re-enable the button once the summon completes so that if the user cancels
+  // the wizard, it can be reopened without reloading the page; when confirmed,
+  // the state-sync poll rebuilds the buttons as soon as the live state changes.
+  //
+  // A one-click install is the intent behind copying the install command, so
+  // the page's own copy button is clicked too: its listener writes the command
+  // to the clipboard and registers the "copies" engagement event. The dispatch
+  // must stay synchronous inside the user gesture: the site's clipboard write
+  // needs the transient activation. The site dedupes copies per session.
+  function registerSiteCopy() {
+    const copy = document.querySelector("#detail-content [data-install-copy]");
+    if (copy) copy.click();
+  }
+
+  function wireAction(button, plugin, type) {
     let busy = false;
     button.addEventListener("click", async () => {
       if (busy) return;
       busy = true;
       button.disabled = true;
-      const response = await talkToHost({
-        type: typeof type === "function" ? type() : type,
-        id: plugin.id,
-        repo: plugin.repo,
-        name: plugin.name,
-      });
-      if (response.ok && afterOpen) {
-        // Toggle buttons stay usable: the host re-checks live state on every
-        // click, so a cancelled wizard can simply be reopened.
-        afterOpen();
+      const action = typeof type === "function" ? type() : type;
+      if (action === "install") registerSiteCopy();
+      try {
+        await talkToHost({
+          type: action,
+          id: plugin.id,
+          repo: plugin.repo,
+          name: plugin.name,
+        }, HOST_ACTION_TIMEOUT_MS);
+      } finally {
+        button.disabled = false;
+        busy = false;
       }
-      // Keep toggle buttons enabled after a successful summon (the wizard may
-      // be cancelled); one-shot buttons stay spent.
-      button.disabled = !(response.ok && afterOpen);
-      busy = false;
     });
   }
 
@@ -301,9 +320,7 @@
         enabled ? "pi-button-danger" : "pi-button-install",
         enabled ? "pi-icon-disable" : "pi-icon-enable"
       );
-      // Empty afterOpen keeps the toggle usable after a successful summon:
-      // the wizard may be cancelled, and the poll keeps the label honest.
-      wireAction(toggle, plugin, () => (enabled ? "disable" : "enable"), () => {});
+      wireAction(toggle, plugin, () => (enabled ? "disable" : "enable"));
       const uninstall = makeButton("Uninstall", "Uninstall this plugin", "pi-button-danger", "pi-icon-uninstall");
       wireAction(uninstall, plugin, "uninstall");
       buttons.push(toggle, uninstall);
@@ -321,29 +338,42 @@
   // button node is restored to the head first, so the page's own listener
   // survives every rebuild.
   let pollTimer = null;
+  let polling = false;
   let lastState = null;
 
   function remountButtons(plugin, state) {
     const group = document.querySelector(".pi-group");
     const copy = document.querySelector("#detail-content [data-install-copy]");
-    if (!group || !copy) return;
-    group.parentElement.insertBefore(copy, group);
-    group.remove();
+    if (!copy) return;
+    if (group && group.parentElement) {
+      group.parentElement.insertBefore(copy, group);
+      group.remove();
+    }
     mounted = false;
     mountButtons(plugin, state);
   }
 
-  function startStateSync(plugin) {
-    if (pollTimer) return;
-    pollTimer = setInterval(async () => {
-      if (document.hidden) return;
-      const state = await talkToHost({ type: "status", id: PLUGIN_ID });
+  async function syncOnce(plugin) {
+    if (polling || document.hidden) return;
+    polling = true;
+    try {
+      const state = await talkToHost({ type: "status", id: PLUGIN_ID }, HOST_STATUS_TIMEOUT_MS);
       if (!state || !state.ok || !lastState) return;
       if (state.installed !== lastState.installed || state.enabled !== lastState.enabled) {
         lastState = state;
         remountButtons(plugin, state);
       }
-    }, 1000);
+    } finally {
+      polling = false;
+    }
+  }
+
+  function startStateSync(plugin) {
+    if (pollTimer) return;
+    pollTimer = setInterval(() => syncOnce(plugin), POLL_MS);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) syncOnce(plugin);
+    });
   }
 
   async function init() {
@@ -351,24 +381,19 @@
     injectStyles();
     // Ping first: buttons only ever exist on machines that can act on them.
     hostAvailable = await pingHost();
-    console.debug("[plugin-installer] ping:", hostAvailable);
     if (!hostAvailable) return;
 
     let plugin = null;
     try {
       const catalog = await loadCatalog();
       plugin = (catalog.plugins || []).find((item) => item && item.id === PLUGIN_ID);
-    } catch (e) {
-      console.debug("[plugin-installer] catalog load failed:", e);
+    } catch (_e) {
       return;
     }
-    if (!installable(plugin)) {
-      console.debug("[plugin-installer] not installable per catalog:", Boolean(plugin));
-      return;
-    }
+    if (!installable(plugin)) return;
 
-    const state = await talkToHost({ type: "status", id: PLUGIN_ID });
-    console.debug("[plugin-installer] status:", state);
+    const state = await talkToHost({ type: "status", id: PLUGIN_ID }, HOST_STATUS_TIMEOUT_MS);
+    if (!state || !state.ok || state.firstParty) return;
 
     // The detail section renders async after the page's own catalog fetch.
     mountButtons(plugin, state);

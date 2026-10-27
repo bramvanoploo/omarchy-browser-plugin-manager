@@ -17,156 +17,160 @@
 # command. The outcome is a desktop notification; no completion dialog shows.
 
 set -euo pipefail
+# Qt (used by omarchy-shell / omarchy plugin list) writes a warning to stdout
+# if the locale is non-UTF-8 ("C" / "POSIX"). Force C.UTF-8 for child processes
+# and scope LC_ALL=C locally when measuring exact byte lengths.
+export LC_ALL=C.UTF-8
 
 HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
-HOST_VERSION="0.2.0"
+HOST_VERSION="0.2.1"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
+MAX_FRAME_BYTES=65536
+
+byte_length() {
+  local LC_ALL=C
+  printf '%s' "${#1}"
+}
 
 send_frame() {
-  local payload="$1"
-  local length=${#payload}
-  printf "$(printf '%08x' "$length" | sed 's/\(..\)\(..\)\(..\)\(..\)/\\x\4\\x\3\\x\2\\x\1/')"
-  printf '%s' "$payload"
+  local LC_ALL=C payload="$1"
+  local len=${#payload}
+  printf "\\x$(printf '%02x' $(( len & 0xff )))\\x$(printf '%02x' $(( (len >> 8) & 0xff )))\\x$(printf '%02x' $(( (len >> 16) & 0xff )))\\x$(printf '%02x' $(( (len >> 24) & 0xff )))%s" "$payload"
 }
 
 reply() { send_frame "$(jq -cn "$@")"; }
 
-reply_ok() { reply '{"ok":true}'; }
+reply_ok() { send_frame '{"ok":true}'; }
 
 reply_err() {
   local reason="$1"
   reply --arg reason "$reason" '{ok:false, reason:$reason}'
 }
 
-# Validate one install request; exit 0 when the request is trustworthy enough
-# to summon the wizard for. Prints a machine-readable reason on failure.
-validate_install() {
-  local payload="$1" id repo catalog catalog_repo norm_a norm_b
-
-  id=$(jq -r '.id // ""' <<<"$payload")
-  repo=$(jq -r '.repo // ""' <<<"$payload")
-
-  [[ $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ ]] || { echo "invalid-plugin-id"; return 1; }
-  [[ $repo =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?/?$ ]] || {
-    echo "invalid-repo-url"
-    return 1
-  }
-
-  catalog=$(curl -fsS --max-time 12 "$CATALOG_URL" 2>/dev/null) || {
-    echo "catalog-unreachable"
-    return 1
-  }
-
-  catalog_repo=$(jq -r --arg id "$id" '
-    (.plugins // []) | map(select(.id == $id)) | first | .repo // ""
-  ' <<<"$catalog")
-  [[ -n $catalog_repo ]] || { echo "unknown-plugin-id"; return 1; }
-
-  # The catalog is the source of truth: same repo, one-click installable.
-  norm_a=$(sed -E 's/\.git$//; s#/$##' <<<"$repo")
-  norm_b=$(sed -E 's/\.git$//; s#/$##' <<<"$catalog_repo")
-  [[ $norm_a == "$norm_b" ]] || { echo "repo-mismatch"; return 1; }
-
-  jq -e --arg id "$id" '
-    (.plugins // []) | map(select(.id == $id)) | first
-    | (.installAvailable == true)
-      and (.upstreamCheckStatus != "failed")
-      and ((.installCommand // "") | length > 0)
-      and ((.builtIn // false) | not)
-  ' >/dev/null <<<"$catalog" || { echo "not-one-click-installable"; return 1; }
-
-  jq -e '.installed == false' >/dev/null <<<"$(plugin_status "$id")" || {
-    echo "already-installed"
-    return 1
-  }
-
-  return 0
-}
-
 # Is this plugin installed as a user (non-first-party) plugin? Prints
-# "installed enabled" fields as JSON.
+# {installed, enabled, firstParty} as compact JSON. Always succeeds with valid JSON.
 plugin_status() {
-  local id="$1"
-  omarchy plugin list --json 2>/dev/null | jq -c --arg id "$id" '
-    (. // []) | map(select(.id == $id))
-    | if length > 0 then .[0]
-      | {installed: (.firstParty | not), enabled: (.enabled // false), firstParty: .firstParty}
-      else {installed:false, enabled:false}
-      end
-  '
-}
-
-# Validate an uninstall request: the plugin must be installed as a user
-# plugin, and the id/repo must match the live catalog entry (so a page
-# cannot ask to remove arbitrary local plugins).
-validate_uninstall() {
-  local payload="$1" id repo catalog catalog_repo status norm_a norm_b
-
-  id=$(jq -r '.id // ""' <<<"$payload")
-  repo=$(jq -r '.repo // ""' <<<"$payload")
-
-  [[ $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ ]] || { echo "invalid-plugin-id"; return 1; }
-  [[ $repo =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?/?$ ]] || {
-    echo "invalid-repo-url"
-    return 1
-  }
-
-  status=$(plugin_status "$id")
-  jq -e '.installed == true' >/dev/null <<<"$status" || { echo "not-installed"; return 1; }
-
-  catalog=$(curl -fsS --max-time 12 "$CATALOG_URL" 2>/dev/null) || {
-    echo "catalog-unreachable"
-    return 1
-  }
-  catalog_repo=$(jq -r --arg id "$id" '
-    (.plugins // []) | map(select(.id == $id)) | first | .repo // ""
-  ' <<<"$catalog")
-  [[ -n $catalog_repo ]] || { echo "unknown-plugin-id"; return 1; }
-
-  norm_a=$(sed -E 's/\.git$//; s#/$##' <<<"$repo")
-  norm_b=$(sed -E 's/\.git$//; s#/$##' <<<"$catalog_repo")
-  [[ $norm_a == "$norm_b" ]] || { echo "repo-mismatch"; return 1; }
-
-  return 0
-}
-
-# Validate an enable/disable request: the plugin must be installed as a user
-# plugin, the id/repo must match the live catalog entry, and the current
-# enabled state must make the requested toggle meaningful.
-validate_toggle() {
-  local payload="$1" mode="$2" id repo catalog catalog_repo status norm_a norm_b
-
-  id=$(jq -r '.id // ""' <<<"$payload")
-  repo=$(jq -r '.repo // ""' <<<"$payload")
-
-  [[ $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ ]] || { echo "invalid-plugin-id"; return 1; }
-  [[ $repo =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?/?$ ]] || {
-    echo "invalid-repo-url"
-    return 1
-  }
-
-  status=$(plugin_status "$id")
-  jq -e '.installed == true' >/dev/null <<<"$status" || { echo "not-installed"; return 1; }
-
-  if [[ $mode == enable ]]; then
-    jq -e '.enabled == true' >/dev/null <<<"$status" && { echo "already-enabled"; return 1; }
-  else
-    jq -e '.enabled == true' >/dev/null <<<"$status" || { echo "already-disabled"; return 1; }
+  local id="$1" raw out
+  if [[ ! $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ || $id == *..* ]]; then
+    printf '%s\n' '{"installed":false,"enabled":false,"firstParty":false}'
+    return 0
   fi
+  raw=$(omarchy plugin list --json 2>/dev/null) || raw="[]"
+  [[ -n $raw ]] || raw="[]"
+  out=$(jq -c --arg id "$id" '
+    (if type == "array" then . else [] end)
+    | map(select(type == "object" and .id == $id))
+    | if length > 0 then .[0]
+      | {installed: ((.firstParty // false) | not), enabled: (.enabled == true), firstParty: (.firstParty == true)}
+      else {installed:false, enabled:false, firstParty:false}
+      end
+  ' <<<"$raw" 2>/dev/null) || out='{"installed":false,"enabled":false,"firstParty":false}'
+  [[ -n $out ]] || out='{"installed":false,"enabled":false,"firstParty":false}'
+  printf '%s\n' "$out"
+}
 
-  catalog=$(curl -fsS --max-time 12 "$CATALOG_URL" 2>/dev/null) || {
+# Validate an install/uninstall/enable/disable request against local state and
+# a fresh fetch of the marketplace catalog. Prints a machine-readable reason on
+# failure and returns 1; returns 0 when trustworthy enough to summon the wizard.
+validate_action() {
+  local payload="$1" mode="$2"
+  local id="" repo="" owner="" repo_name="" norm_repo="" status="" catalog="" catalog_check=""
+
+  IFS=$'\t' read -r id repo < <(
+    jq -r '[
+      (if type == "object" and (.id | type) == "string" then .id else "" end),
+      (if type == "object" and (.repo | type) == "string" then .repo else "" end)
+    ] | @tsv' <<<"$payload" 2>/dev/null || echo ""
+  )
+
+  [[ $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ && $id != *..* ]] || {
+    echo "invalid-plugin-id"
+    return 1
+  }
+  if [[ ! $repo =~ ^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)(\.git)?/?$ ]]; then
+    echo "invalid-repo-url"
+    return 1
+  fi
+  owner="${BASH_REMATCH[1]}"
+  repo_name="${BASH_REMATCH[2]%.git}"
+  if [[ $owner == "." || $owner == ".." || $repo_name == "." || $repo_name == ".." || -z $repo_name ]]; then
+    echo "invalid-repo-url"
+    return 1
+  fi
+  norm_repo="https://github.com/$owner/$repo_name"
+
+  # Check local plugin status first before making a network request.
+  status=$(plugin_status "$id")
+  case "$mode" in
+    install)
+      jq -e '.installed == false and .firstParty == false' >/dev/null <<<"$status" || {
+        echo "already-installed"
+        return 1
+      }
+      ;;
+    uninstall)
+      jq -e '.installed == true' >/dev/null <<<"$status" || {
+        echo "not-installed"
+        return 1
+      }
+      ;;
+    enable)
+      jq -e '.installed == true' >/dev/null <<<"$status" || {
+        echo "not-installed"
+        return 1
+      }
+      jq -e '.enabled == false' >/dev/null <<<"$status" || {
+        echo "already-enabled"
+        return 1
+      }
+      ;;
+    disable)
+      jq -e '.installed == true' >/dev/null <<<"$status" || {
+        echo "not-installed"
+        return 1
+      }
+      jq -e '.enabled == true' >/dev/null <<<"$status" || {
+        echo "already-disabled"
+        return 1
+      }
+      ;;
+    *)
+      echo "unknown-message-type"
+      return 1
+      ;;
+  esac
+
+  catalog=$(curl -fsSL --proto '=https' --max-time 10 "$CATALOG_URL" 2>/dev/null) || {
     echo "catalog-unreachable"
     return 1
   }
-  catalog_repo=$(jq -r --arg id "$id" '
-    (.plugins // []) | map(select(.id == $id)) | first | .repo // ""
-  ' <<<"$catalog")
-  [[ -n $catalog_repo ]] || { echo "unknown-plugin-id"; return 1; }
 
-  norm_a=$(sed -E 's/\.git$//; s#/$##' <<<"$repo")
-  norm_b=$(sed -E 's/\.git$//; s#/$##' <<<"$catalog_repo")
-  [[ $norm_a == "$norm_b" ]] || { echo "repo-mismatch"; return 1; }
+  catalog_check=$(jq -r --arg id "$id" --arg repo "$norm_repo" --arg mode "$mode" '
+    ((.plugins // []) | map(select(type == "object" and .id == $id)) | first) as $entry
+    | if $entry == null then
+        "unknown-plugin-id"
+      elif (($entry.repo // "" | sub("/+$"; "") | sub("\\.git$"; "")) != $repo) then
+        "repo-mismatch"
+      elif $mode == "install" and (
+        (($entry.installAvailable == true)
+          and ($entry.upstreamCheckStatus != "failed")
+          and (($entry.installCommand // "") | length > 0)
+          and (($entry.builtIn // false) | not)) | not
+      ) then
+        "not-one-click-installable"
+      else
+        "ok"
+      end
+  ' <<<"$catalog" 2>/dev/null) || {
+    echo "catalog-unreachable"
+    return 1
+  }
+
+  [[ $catalog_check == "ok" ]] || {
+    echo "${catalog_check:-catalog-unreachable}"
+    return 1
+  }
 
   return 0
 }
@@ -176,84 +180,56 @@ summon_wizard() {
   json=$(jq -c --arg mode "$mode" '{
     source: "browser",
     mode: $mode,
-    id: .id,
-    repo: .repo,
-    name: .name
-  }' <<<"$payload")
-  omarchy-shell shell summon "$WIZARD_ID" "$json" >/dev/null
+    id: (if (.id | type) == "string" then .id else "" end),
+    repo: (if (.repo | type) == "string" then .repo else "" end),
+    name: (if (.name | type) == "string" then .name[0:128] else "" end)
+  }' <<<"$payload" 2>/dev/null) || return 1
+  omarchy-shell shell summon "$WIZARD_ID" "$json" >/dev/null 2>&1
 }
 
 main() {
-  local length payload type reason
-  # Debugging aid (Firefox connection investigation): per-launch trace.
-  PI_TRACE="${PI_NATIVE_TRACE:-/tmp/opencode/native-host-trace.log}"
-  if mkdir -p "$(dirname "$PI_TRACE")" 2>/dev/null; then
-    printf '%s launch pid=%s argv=%s\n' "$(date +%T)" "$$" "$*" >> "$PI_TRACE"
-    trap 'printf "%s exit pid=%s rc=%s\n" "$(date +%T)" "$$" "$?" >> "$PI_TRACE"' EXIT
+  local length payload type id local_status all_status reason
+  local trace="${PI_NATIVE_TRACE:-}"
+  if [[ -n $trace ]] && mkdir -p "$(dirname -- "$trace")" 2>/dev/null; then
+    printf '%s launch pid=%s argv=%s\n' "$(date +%T)" "$$" "$*" >> "$trace" 2>/dev/null || true
+    trap 'printf "%s exit pid=%s rc=%s\n" "$(date +%T)" "$$" "$?" >> "$trace" 2>/dev/null || true' EXIT
+  else
+    trace=""
   fi
 
   while :; do
-    length=$(head -c4 | od -An -v -tu4 --endian=little | tr -d ' ')
-    [[ -n ${length:-} ]] && (( length > 0 )) || exit 0
+    length=$(head -c4 | od -An -v -tu4 --endian=little | tr -d ' \n')
+    [[ -n ${length:-} ]] && (( length > 0 && length <= MAX_FRAME_BYTES )) || exit 0
     payload=$(head -c "$length")
+    (( $(byte_length "$payload") == length )) || exit 0
 
-    type=$(jq -r '.type // ""' <<<"$payload" 2>/dev/null || true)
-    printf '%s recv pid=%s bytes=%s type=%s\n' "$(date +%T)" "$$" "$length" "${type:-?}" >> "$PI_TRACE" 2>/dev/null || true
+    type=$(jq -r 'if type == "object" and (.type | type) == "string" then .type else "" end' <<<"$payload" 2>/dev/null || true)
+    if [[ -n $trace ]]; then
+      printf '%s recv pid=%s bytes=%s type=%s\n' "$(date +%T)" "$$" "$length" "${type:-?}" >> "$trace" 2>/dev/null || true
+    fi
+
     case "$type" in
       ping)
-        reply --arg version "$HOST_VERSION" --arg host "$HOST_NAME" \
-          '{ok:true, host:$host, version:$version}'
+        send_frame "{\"ok\":true,\"host\":\"$HOST_NAME\",\"version\":\"$HOST_VERSION\"}"
         ;;
       status)
-        local_status=$(plugin_status "$(jq -r '.id // ""' <<<"$payload")")
+        id=$(jq -r 'if type == "object" and (.id | type) == "string" then .id else "" end' <<<"$payload" 2>/dev/null || true)
+        local_status=$(plugin_status "$id")
         send_frame "$(jq -c '. + {ok:true}' <<<"$local_status")"
         ;;
       status_all)
         # Batch report for the catalog page: every installed user (non
-        # first-party) plugin in one host launch. Plugins missing from the
-        # list are not installed.
+        # first-party) plugin in one call. Plugins missing from the list
+        # are not installed.
         all_status=$(omarchy plugin list --json 2>/dev/null | jq -c \
-          '[ .[]? | select(.firstParty | not) | {id: .id, installed: true, enabled: (.enabled // false)} ]' \
-          2>/dev/null)
+          '[ (if type == "array" then . else [] end)[] | select(type == "object" and ((.firstParty // false) | not)) | {id: .id, installed: true, enabled: (.enabled == true)} ]' \
+          2>/dev/null) || all_status="[]"
         [[ ${all_status:-} == "["* ]] || all_status="[]"
-        send_frame "$(jq -cn --argjson plugins "$all_status" '{ok:true, plugins:$plugins}')"
+        send_frame "{\"ok\":true,\"plugins\":$all_status}"
         ;;
-      install)
-        if reason=$(validate_install "$payload"); then
-          if summon_wizard "$payload" "install"; then
-            reply_ok
-          else
-            reply_err "wizard-not-available (is bramvanoploo.omarchy-browser-plugin-manager enabled in the shell?)"
-          fi
-        else
-          reply_err "$reason"
-        fi
-        ;;
-      uninstall)
-        if reason=$(validate_uninstall "$payload"); then
-          if summon_wizard "$payload" "uninstall"; then
-            reply_ok
-          else
-            reply_err "wizard-not-available (is bramvanoploo.omarchy-browser-plugin-manager enabled in the shell?)"
-          fi
-        else
-          reply_err "$reason"
-        fi
-        ;;
-      enable)
-        if reason=$(validate_toggle "$payload" enable); then
-          if summon_wizard "$payload" "enable"; then
-            reply_ok
-          else
-            reply_err "wizard-not-available (is bramvanoploo.omarchy-browser-plugin-manager enabled in the shell?)"
-          fi
-        else
-          reply_err "$reason"
-        fi
-        ;;
-      disable)
-        if reason=$(validate_toggle "$payload" disable); then
-          if summon_wizard "$payload" "disable"; then
+      install|uninstall|enable|disable)
+        if reason=$(validate_action "$payload" "$type"); then
+          if summon_wizard "$payload" "$type"; then
             reply_ok
           else
             reply_err "wizard-not-available (is bramvanoploo.omarchy-browser-plugin-manager enabled in the shell?)"

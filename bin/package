@@ -7,13 +7,13 @@
 #   dist/<slug>-<version>.xpi         Firefox add-on (permanent install on
 #                                     ESR / Developer Edition / Nightly,
 #                                     which allow unsigned add-ons).
-#   dist/<slug>-<version>.zip         Full source archive; the Chrome /
+#   dist/<slug>-<version>-chrome.zip  Chrome Web Store / packed extension zip.
+#   dist/<slug>-<version>-<date>.zip  Full source archive; the Chrome /
 #                                     Chromium / Brave path (Load unpacked)
 #                                     and the Firefox temporary-add-on path.
-#
-# No Chrome Web Store or AMO publishing is involved.
 
 set -euo pipefail
+export LC_ALL=C
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
@@ -27,6 +27,11 @@ NAME="$(jq -r .name "$EXT_DIR/manifest.json" | tr '[:upper:]' '[:lower:]' \
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
+mkdir -p "$DIST_DIR"
+rm -f "$DIST_DIR/$NAME-$VERSION.xpi" \
+      "$DIST_DIR/$NAME-$VERSION-chrome.zip" \
+      "$DIST_DIR/$NAME-$VERSION-"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].zip
+
 # --- Firefox .xpi: zip of the extension/ contents at the archive root. ---
 # Firefox's AMO lint REQUIRES the legacy MV2 "background.scripts" array as a
 # compatibility fallback next to "service_worker" (hard error; signing fails),
@@ -35,10 +40,9 @@ trap 'rm -rf "$STAGE"' EXIT
 # artifacts only (mirrors how the Chrome-only "key" is injected for chrome.zip).
 mkdir -p "$STAGE/xpi"
 cp -r "$EXT_DIR/." "$STAGE/xpi/"
+rm -f "$STAGE/xpi/.amo-upload-uuid"
 jq '.background += {scripts: ["background.js"]}' "$STAGE/xpi/manifest.json" > "$STAGE/xpi/manifest.json.tmp" \
   && mv "$STAGE/xpi/manifest.json.tmp" "$STAGE/xpi/manifest.json"
-rm -rf "$DIST_DIR"
-mkdir -p "$DIST_DIR"
 # manifest.json first, no extra zip fields: Firefox signing-service layout.
 ( cd "$STAGE/xpi" && \
   zip -qX "$DIST_DIR/$NAME-$VERSION.xpi" manifest.json && \
@@ -51,8 +55,9 @@ mkdir -p "$DIST_DIR"
 # directly and gets the path-derived ID; setup registers both IDs.
 mkdir -p "$STAGE/chrome"
 cp -r "$EXT_DIR/." "$STAGE/chrome/"
+rm -f "$STAGE/chrome/.amo-upload-uuid"
 if [[ -f "$REPO_DIR/chrome-key.pem" ]]; then
-  KEY_B64=$(openssl ec -in "$REPO_DIR/chrome-key.pem" -pubout -outform DER 2>/dev/null | base64 -w0)
+  KEY_B64=$(openssl pkey -in "$REPO_DIR/chrome-key.pem" -pubout -outform DER 2>/dev/null | base64 -w0)
   jq --arg key "$KEY_B64" '. + {key:$key}' "$EXT_DIR/manifest.json" > "$STAGE/chrome/manifest.json"
 else
   echo "NOTE: chrome-key.pem not found; chrome.zip has no pinned extension ID." >&2
@@ -67,7 +72,7 @@ STAGE_SRC="$STAGE/src/$NAME"
 mkdir -p "$STAGE_SRC"
 git -C "$REPO_DIR" ls-files -z | xargs -0 -I{} cp -a --parents {} "$STAGE_SRC"/ 2>/dev/null \
   || cp -a "$REPO_DIR"/. "$STAGE_SRC"/
-rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist"
+rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist" "$STAGE_SRC/chrome-key.pem" "$STAGE_SRC"/chrome-key-*.pem.bak "$STAGE_SRC/.env"
 ( cd "$STAGE/src" && zip -qr "$DIST_DIR/$NAME-$VERSION-$STAMP.zip" . )
 
 cat <<EOF

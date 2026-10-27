@@ -28,8 +28,8 @@ Item {
   property string pluginId: ""
   property string pluginRepo: ""
   property string pluginName: ""
-  // "install" (default) | "uninstall" — decided by the native host from live
-  // local state, never by the page.
+  // "install" (default) | "uninstall" | "enable" | "disable" — decided by the
+  // native host from live local state, never by the page.
   property string mode: "install"
 
   property bool catalogLoaded: false
@@ -42,9 +42,6 @@ Item {
   // enableProc's own output, reset per attempt, so a discovery-race failure
   // is detected from this run rather than from accumulated output.
   property string enableOutput: ""
-  // Detached worker for install/uninstall (see spawnWorker).
-  property string workerFile: ""
-  property string workerContent: ""
   property bool isBarWidget: false
   property string defaultSection: "center"
   property string enabledSection: ""
@@ -54,16 +51,34 @@ Item {
   readonly property var manifestKinds: pluginManifest && pluginManifest.kinds
     ? pluginManifest.kinds : []
 
+  readonly property bool needsManifest: root.mode === "install" || root.mode === "enable"
+
   readonly property string reviewBlocked: {
     if (catalogError.length > 0) return catalogError
-    if (root.mode === "install" && manifestError.length > 0) return manifestError
+    if (needsManifest && manifestError.length > 0) return manifestError
     if (!catalogLoaded) return "Loading marketplace data\u2026"
-    if (root.mode === "install" && !manifestLoaded) return "Loading marketplace data\u2026"
+    if (needsManifest && !manifestLoaded) return "Loading marketplace data\u2026"
     return ""
   }
-  readonly property bool canInstall: reviewBlocked.length === 0 && stage === "review"
+  readonly property bool canAct: reviewBlocked.length === 0
+  readonly property bool canInstall: canAct && stage === "review"
+
+  function stopPending() {
+    enableRetryTimer.stop()
+    finalVerifyTimer.stop()
+    catalogProc.running = false
+    manifestProc.running = false
+    listProc.running = false
+    verifyProc.running = false
+  }
+
+  function validPluginId(id) {
+    return /^[a-z0-9][a-z0-9.-]{0,127}$/.test(id || "") && String(id).indexOf("..") === -1
+  }
 
   function open(payloadJson) {
+    stopPending()
+
     var payload = {}
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
 
@@ -89,9 +104,28 @@ Item {
 
     opened = true
 
+    if (!validPluginId(pluginId)) {
+      catalogError = "Invalid plugin identifier"
+      catalogLoaded = true
+      manifestLoaded = true
+      return
+    }
+
+    var mUrl = manifestUrl()
+    if (!mUrl) {
+      catalogError = "Invalid plugin repository URL"
+      catalogLoaded = true
+      manifestLoaded = true
+      return
+    }
+
     catalogProc.running = true
-    manifestProc.command = ["curl", "-fsS", "--max-time", "15", manifestUrl()]
-    manifestProc.running = true
+    if (needsManifest) {
+      manifestProc.command = ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--", mUrl]
+      manifestProc.running = true
+    } else {
+      manifestLoaded = true
+    }
     if (mode !== "install") listProc.running = true
   }
 
@@ -100,6 +134,7 @@ Item {
     // turn calls close(). Clearing `opened` first makes that re-entry a no-op.
     if (!root.opened) return
     root.opened = false
+    root.stopPending()
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide((root.manifest && root.manifest.id) || "bramvanoploo.omarchy-browser-plugin-manager")
   }
@@ -107,7 +142,11 @@ Item {
   // github.com/<owner>/<repo>[.git] -> owner/repo (empty when not parseable)
   function ownerRepo(url) {
     var match = /^https:\/\/github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(\.git)?\/?$/.exec(url || "")
-    return match ? match[1] + "/" + match[2] : ""
+    if (!match) return ""
+    var owner = match[1]
+    var repo = match[2]
+    if (owner === "." || owner === ".." || repo === "." || repo === "..") return ""
+    return owner + "/" + repo
   }
 
   function manifestUrl() {
@@ -117,8 +156,8 @@ Item {
   }
 
   function sameRepo(a, b) {
-    var na = String(a || "").replace(/\.git$/, "").replace(/\/$/, "")
-    var nb = String(b || "").replace(/\.git$/, "").replace(/\/$/, "")
+    var na = String(a || "").replace(/\/+$/, "").replace(/\.git$/, "")
+    var nb = String(b || "").replace(/\/+$/, "").replace(/\.git$/, "")
     return na.length > 0 && na === nb
   }
 
@@ -127,8 +166,18 @@ Item {
   }
 
   function notify(title, body) {
+    var cmd = root.omarchyPath
+      ? root.omarchyPath + "/bin/omarchy-notification-send"
+      : "omarchy-notification-send"
+    // No "--" separator: omarchy-notification-send has no end-of-options
+    // marker; a literal "--" becomes the headline and pushes the real text
+    // into an invalid trailing-argument position (exit 1, no notification).
     Quickshell.execDetached([
-      root.omarchyPath + "/bin/omarchy-notification-send", title, body
+      cmd,
+      "--app-name", "omarchy-browser-plugin-manager",
+      "--expire-time", "8000",
+      String(title || ""),
+      String(body || "")
     ])
   }
 
@@ -148,7 +197,6 @@ Item {
   function enable(section) {
     root.enabledSection = section
     root.enableOutput = ""
-    console.log("pi: enable start", root.pluginId, "tries", root.enableTries, "finalCheck", root.finalCheck)
     root.stage = "enabling"
     var args = ["omarchy", "plugin", "enable", root.pluginId]
     if (section) args = args.concat(["--section", section])
@@ -157,18 +205,19 @@ Item {
   }
 
   function runUninstall() {
-    if (root.catalogError.length > 0) return
+    if (!root.canAct) return
     root.spawnWorker("uninstall")
   }
 
   function confirmEnable() {
-    if (root.catalogError.length > 0) return
+    if (!root.canAct) return
     if (root.isBarWidget) root.stage = "placement"
     else root.enable("")
   }
 
   function runDisable() {
-    if (root.catalogError.length > 0) return
+    if (!root.canAct) return
+    root.enableOutput = ""
     root.stage = "disabling"
     disableProc.command = ["omarchy", "plugin", "disable", root.pluginId]
     disableProc.running = true
@@ -178,7 +227,7 @@ Item {
 
   Process {
     id: catalogProc
-    command: ["curl", "-fsS", "--max-time", "15", "https://plugins.omarchy.org/catalog.json"]
+    command: ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--", "https://plugins.omarchy.org/catalog.json"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -197,16 +246,21 @@ Item {
           }
           if (!entry) {
             root.catalogError = "Plugin not found in the marketplace catalog"
-          } else if (!entry.installAvailable
-                     || entry.upstreamCheckStatus === "failed"
-                     || entry.builtIn
-                     || !(entry.installCommand || "")) {
+          } else if (root.mode === "install"
+                     && (!entry.installAvailable
+                         || entry.upstreamCheckStatus === "failed"
+                         || entry.builtIn
+                         || !(entry.installCommand || ""))) {
             root.catalogError = "This plugin is not one-click installable ("
               + (entry.status || "unavailable") + ")"
           } else if (!root.sameRepo(root.pluginRepo, entry.repo)) {
             root.catalogError = "Repository mismatch between the request and the catalog; aborting"
           } else {
+            // Clear first: a killed previous-run process can deliver a
+            // stale onExited that sets catalogError after open() reset it.
+            root.catalogError = ""
             root.catalogEntry = entry
+            if (entry.name) root.pluginName = String(entry.name)
           }
         }
         root.catalogLoaded = true
@@ -236,6 +290,9 @@ Item {
           } else if (String(m.id) !== root.pluginId) {
             root.manifestError = "Manifest id mismatch (" + String(m.id) + ")"
           } else {
+            // Clear first: a killed previous-run process can deliver a
+            // stale onExited that sets manifestError after open() reset it.
+            root.manifestError = ""
             root.pluginManifest = m
             root.isBarWidget = (m.kinds || []).indexOf("bar-widget") !== -1
             root.defaultSection = (m.barWidget && m.barWidget.defaultSection) || "center"
@@ -279,10 +336,13 @@ Item {
                    && root.manifest && String(root.manifest.id) === root.pluginId) {
           root.catalogError = "The installer cannot uninstall itself. Remove it in a terminal: omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager --yes"
         } else if (root.mode === "enable") {
+          root.catalogError = ""
           root.stage = "enable-confirm"
         } else if (root.mode === "disable") {
+          root.catalogError = ""
           root.stage = "disable-confirm"
         } else {
+          root.catalogError = ""
           root.stage = "uninstall-confirm"
         }
       }
@@ -303,28 +363,17 @@ Item {
   // wizard: it performs the CLI work, retries the enable through the
   // shell's post-clone discovery race ("is not known"), verifies the end
   // state, and finishes with the usual desktop notification.
-
-  function shellQuote(value) {
-    return "'" + String(value).replace(/'/g, "'\\''") + "'"
-  }
-
-  function runtimeDir() {
-    var base = Quickshell.env("XDG_RUNTIME_DIR")
-    if (!base) base = "/tmp"
-    return base + "/omarchy-plugin-installer"
-  }
+  // Positional parameters ($1=id, $2=name, $3=repo) are passed directly via
+  // execve argv, avoiding temporary script files and shell interpolation.
 
   function buildWorkerScript(kind) {
-    var q = root.shellQuote
     var s = [
-      "#!/usr/bin/env bash",
       "set -u",
-      "ID=" + q(root.pluginId),
-      "NAME=" + q(root.pluginName),
-      "REPO=" + q(root.pluginRepo),
-      "trap 'rm -f \"$0\"' EXIT",
+      "ID=\"$1\"",
+      "NAME=\"$2\"",
+      "REPO=\"$3\"",
       "notify() {",
-      "  omarchy-notification-send --app-name omarchy-plugin-installer --expire-time 8000 \"$1\" \"$2\"",
+      "  omarchy-notification-send --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
       "}",
       "list() { omarchy plugin list --json 2>/dev/null; }",
       "enabled() { list | jq -e --arg id \"$ID\" 'any(.[]; .id == $id and .enabled == true)' >/dev/null 2>&1; }",
@@ -381,28 +430,14 @@ Item {
   }
 
   function spawnWorker(kind) {
-    var dir = root.runtimeDir()
-    var safeId = root.pluginId.replace(/[^A-Za-z0-9._-]/g, "-")
-    root.workerFile = dir + "/worker-" + kind + "-" + safeId
-      + "-" + Math.floor(Date.now() / 1000) + ".sh"
-    root.workerContent = root.buildWorkerScript(kind)
-    // Content travels as a positional argument: no shell quoting needed.
-    writeProc.command = ["bash", "-c",
-      'mkdir -p "$0" && printf %s "$1" > "$2"',
-      dir, root.workerContent, root.workerFile]
-    writeProc.running = true
-  }
-
-  Process {
-    id: writeProc
-    onExited: function (exitCode) {
-      if (exitCode !== 0) {
-        root.fail("worker script could not be written (exit " + exitCode + ")")
-        return
-      }
-      Quickshell.execDetached(["bash", root.workerFile])
-      root.close()
-    }
+    Quickshell.execDetached([
+      "bash", "-c", root.buildWorkerScript(kind),
+      "omarchy-plugin-worker",
+      root.pluginId,
+      root.pluginName,
+      root.pluginRepo
+    ])
+    root.close()
   }
 
   Process {
@@ -416,14 +451,12 @@ Item {
       onStreamFinished: root.enableOutput += "\n" + String(text || "")
     }
     onExited: function (exitCode) {
-      console.log("pi: enableProc exit", exitCode)
       if (exitCode !== 0) {
         // Same discovery race as the add's internal enable: the shell's
         // registry scan may not have reached the fresh clone yet. Retry
         // within the shared enableTries budget; the enable IPC is idempotent.
         if (root.enableTries < 8 && /is not known/.test(root.enableOutput)) {
           root.enableTries++
-          console.log("pi: enable not known, retry", root.enableTries)
           enableRetryTimer.restart()
           return
         }
@@ -474,7 +507,6 @@ Item {
         } catch (e) {
           entry = null
         }
-        console.log("pi: verify enabled", entry ? entry.enabled : "no-entry", "finalCheck", root.finalCheck, "tries", root.enableTries)
         if (entry && entry.enabled) {
           if (!root.finalCheck) {
             root.finalCheck = true
@@ -643,7 +675,7 @@ Item {
 
         // ---- stage: review (install confirmation) ----
         Column {
-          visible: root.stage === "review"
+          visible: root.stage === "review" && root.mode === "install"
           width: cardColumn.width
           spacing: Style.spacing.lg
           PiLine {
@@ -679,11 +711,6 @@ Item {
             color: Color.accent
             text: "Installs the repository's current HEAD, which may differ from the verified snapshot."
           }
-          PiLine {
-            visible: root.reviewBlocked.length > 0
-            color: Color.urgent
-            text: root.reviewBlocked
-          }
         }
 
         // ---- stages: mode confirmations ----
@@ -702,6 +729,15 @@ Item {
           visible: root.stage === "disable-confirm"
           text: "Installed and enabled. Disabling unloads it from the shell; "
             + "the plugin files stay installed."
+        }
+
+        // ---- blocking / loading / validation errors across all confirm stages ----
+        PiLine {
+          visible: root.reviewBlocked.length > 0
+            && (root.stage === "review" || root.stage === "uninstall-confirm"
+                || root.stage === "enable-confirm" || root.stage === "disable-confirm")
+          color: Color.urgent
+          text: root.reviewBlocked
         }
 
         // ---- stages: in progress ----
@@ -749,7 +785,7 @@ Item {
           }
           PiButton {
             visible: root.mode === "uninstall" && root.stage === "uninstall-confirm"
-            enabled: root.catalogError.length === 0
+            enabled: root.canAct
             danger: true
             primary: true
             label: "Uninstall plugin"
@@ -757,14 +793,14 @@ Item {
           }
           PiButton {
             visible: root.mode === "enable" && root.stage === "enable-confirm"
-            enabled: root.catalogError.length === 0
+            enabled: root.canAct
             primary: true
             label: "Enable plugin"
             onClickedPi: root.confirmEnable()
           }
           PiButton {
             visible: root.mode === "disable" && root.stage === "disable-confirm"
-            enabled: root.catalogError.length === 0
+            enabled: root.canAct
             primary: true
             label: "Disable plugin"
             onClickedPi: root.runDisable()

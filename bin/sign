@@ -14,11 +14,12 @@
 #
 # Output:
 #   dist/signed/<slug>-<version>-signed.xpi  ("slug" = manifest name, as in
-#   bin/package; AMO's own UUID-named file is kept next to it)
+#   bin/package; AMO's own file is kept next to it)
 # Its add-on ID stays bramvanoploo.omarchy-browser-plugin-manager@bram.dev (from manifest.json
 # browser_specific_settings), which the native messaging host allowlists.
 
 set -euo pipefail
+export LC_ALL=C
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
@@ -45,27 +46,40 @@ fi
 # warning-free. Sign a staged copy with the fallback injected (same trick as
 # bin/package uses for the .xpi).
 STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
+cleanup() {
+  if [[ -f "$STAGE/extension/.amo-upload-uuid" ]]; then
+    cp -f "$STAGE/extension/.amo-upload-uuid" "$EXT_DIR/.amo-upload-uuid" 2>/dev/null || true
+  fi
+  rm -rf "$STAGE"
+}
+trap cleanup EXIT
+
 cp -r "$EXT_DIR" "$STAGE/extension"
 jq '.background += {scripts: ["background.js"]}' "$STAGE/extension/manifest.json" > "$STAGE/extension/manifest.json.tmp" \
   && mv "$STAGE/extension/manifest.json.tmp" "$STAGE/extension/manifest.json"
 
-mkdir -p "$OUT_DIR"
+mkdir -p "$STAGE/artifacts" "$OUT_DIR"
 cd "$STAGE/extension"
 "${WEB_EXT[@]}" sign \
   --channel=unlisted \
   --api-key="$AMO_API_KEY" \
   --api-secret="$AMO_API_SECRET" \
-  --artifacts-dir "$OUT_DIR"
+  --artifacts-dir "$STAGE/artifacts"
 
-signed=$(ls -t "$OUT_DIR"/*-signed.xpi 2>/dev/null | head -1)
-[[ -n "$signed" ]] || { echo "signing produced no *-signed.xpi" >&2; exit 1; }
-# Normalize the AMO UUID-based filename to the canonical "<slug>-<version>-signed.xpi"
+shopt -s nullglob
+xpi_files=("$STAGE/artifacts"/*.xpi)
+shopt -u nullglob
+(( ${#xpi_files[@]} > 0 )) || { echo "signing produced no .xpi artifact" >&2; exit 1; }
+signed="${xpi_files[0]}"
+
+# Normalize the AMO filename to the canonical "<slug>-<version>-signed.xpi"
 # (same slug derivation as bin/package).
 VERSION="$(jq -r .version "$STAGE/extension/manifest.json")"
 NAME="$(jq -r .name "$STAGE/extension/manifest.json" | tr '[:upper:]' '[:lower:]' \
   | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-\{1,\}//; s/-\{1,\}$//')"
 canonical="$OUT_DIR/$NAME-$VERSION-signed.xpi"
+amo_copy="$OUT_DIR/$(basename -- "$signed")"
+cp -f -- "$signed" "$amo_copy"
 cp -f -- "$signed" "$canonical"
-echo "Signed add-on: $canonical (AMO copy: $signed)"
+echo "Signed add-on: $canonical (AMO copy: $amo_copy)"
 echo "Install on release Firefox: about:addons -> gear -> Install Add-on From File"

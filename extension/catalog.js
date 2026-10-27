@@ -18,6 +18,9 @@
   const api = typeof browser !== "undefined" ? browser : chrome;
   const POLL_MS = 3000;
   const SCAN_DEBOUNCE_MS = 300;
+  const HOST_PING_TIMEOUT_MS = 2500;
+  const HOST_STATUS_TIMEOUT_MS = 4000;
+  const HOST_ACTION_TIMEOUT_MS = 12000;
 
   // Icon line-art copied verbatim from content.js (plugin pages). Geometry
   // stays the site's own .card-install rule; we only square the button
@@ -43,7 +46,7 @@
 `;
 
   function injectStyles() {
-    if (document.getElementById("pi-catalog-styles")) return;
+    if (document.getElementById("pi-catalog-styles") || !document.head) return;
     const style = document.createElement("style");
     style.id = "pi-catalog-styles";
     style.textContent = STYLES;
@@ -70,29 +73,35 @@
     return response.json();
   }
 
-  function talkToHost(message) {
+  function talkToHost(message, timeoutMs = HOST_ACTION_TIMEOUT_MS) {
     return new Promise((resolve) => {
       let settled = false;
       const done = (value) => {
         if (!settled) {
           settled = true;
+          clearTimeout(timer);
           resolve(value);
         }
       };
-      setTimeout(() => done({ ok: false, reason: "host-timeout" }), 12000);
+      const timer = setTimeout(() => done({ ok: false, reason: "host-timeout" }), timeoutMs);
       try {
-        api.runtime.sendMessage(message, (response) => {
+        const sent = api.runtime.sendMessage(message, (response) => {
+          void api.runtime.lastError;
           done(response || { ok: false, reason: "no-response" });
         });
-      } catch (e) {
+        // Firefox's promise-style browser namespace ignores the callback:
+        // settle from the returned promise too (done() settles once).
+        if (sent && typeof sent.then === "function") {
+          sent.then(done).catch(() => done({ ok: false, reason: "no-response" }));
+        }
+      } catch (_e) {
         done({ ok: false, reason: "extension-error" });
       }
     });
   }
 
   async function pingHost() {
-    const response = await talkToHost({ type: "ping" });
-    console.debug("[plugin-installer] catalog ping response:", JSON.stringify(response));
+    const response = await talkToHost({ type: "ping" }, HOST_PING_TIMEOUT_MS);
     return Boolean(response && response.ok);
   }
 
@@ -103,7 +112,7 @@
   const legacyStatuses = new Map();
 
   async function refreshStatuses() {
-    const response = await talkToHost({ type: "status_all" });
+    const response = await talkToHost({ type: "status_all" }, HOST_STATUS_TIMEOUT_MS);
     if (response && response.ok && Array.isArray(response.plugins)) {
       statuses = new Map(response.plugins.map((p) => [p.id, p]));
       return true;
@@ -118,17 +127,27 @@
       return Boolean(status && status.installed);
     }
     if (!legacyStatuses.has(plugin.id)) {
-      const status = await talkToHost({ type: "status", id: plugin.id });
+      const status = await talkToHost({ type: "status", id: plugin.id }, HOST_STATUS_TIMEOUT_MS);
       legacyStatuses.set(plugin.id, Boolean(status && status.ok && status.installed));
     }
     return legacyStatuses.get(plugin.id);
   }
 
-  // One request per button: send the action and let the wizard on the
-  // desktop be the feedback. Mirrors content.js wireAction: a successful
-  // summon spends the button (the wizard may be cancelled; the state-sync
-  // poll swaps the button as soon as the live state changes), a failed
-  // summon leaves it usable.
+  // Send the action and let the wizard on the desktop be the feedback.
+  // Re-enable the button once the summon finishes so a cancelled wizard can
+  // be reopened without refreshing the page; when confirmed, the state-sync
+  // poll swaps the button as soon as the live state changes.
+  //
+  // Install clicks also click the card's own copy button (our button is
+  // inserted directly before it), so the page copies the command and
+  // registers the "copies" engagement event. The synchronous dispatch inside
+  // the user gesture keeps the activation the site's clipboard write needs.
+  // The site dedupes copies per session.
+  function registerSiteCopy(button) {
+    const copy = button.nextElementSibling;
+    if (copy && copy.matches("button[data-copy-command]")) copy.click();
+  }
+
   function wireCardAction(button, plugin) {
     let busy = false;
     button.addEventListener("click", async () => {
@@ -136,14 +155,18 @@
       busy = true;
       const type = button.dataset.piState;
       button.disabled = true;
-      const response = await talkToHost({
-        type,
-        id: plugin.id,
-        repo: plugin.repo,
-        name: plugin.name,
-      });
-      button.disabled = !(response && response.ok);
-      busy = false;
+      if (type === "install") registerSiteCopy(button);
+      try {
+        await talkToHost({
+          type,
+          id: plugin.id,
+          repo: plugin.repo,
+          name: plugin.name,
+        }, HOST_ACTION_TIMEOUT_MS);
+      } finally {
+        button.disabled = false;
+        busy = false;
+      }
     });
   }
 
@@ -176,9 +199,13 @@
   // wins, exactly like on the plugin pages).
   let pluginsById = null;
   let scanning = false;
+  let scanPending = false;
 
   async function scan() {
-    if (scanning) return;
+    if (scanning) {
+      scanPending = true;
+      return;
+    }
     scanning = true;
     try {
       if (!pluginsById) {
@@ -194,13 +221,18 @@
         copy.dataset.piSeen = "1";
         const plugin = pluginsById.get(copy.dataset.pluginId);
         if (!installable(plugin)) continue;
-        copy.parentElement.insertBefore(makeCardButton(plugin, await isInstalled(plugin)), copy);
+        const installed = await isInstalled(plugin);
+        if (!copy.parentElement) continue;
+        copy.parentElement.insertBefore(makeCardButton(plugin, installed), copy);
       }
-    } catch (e) {
-      console.debug("[plugin-installer] catalog scan failed:", e);
+    } catch (_e) {
       pluginsById = null;
     } finally {
       scanning = false;
+      if (scanPending) {
+        scanPending = false;
+        scheduleScan();
+      }
     }
   }
 
@@ -222,7 +254,7 @@
   // plugin installed/removed on the desktop), swap the button. Mirrors the
   // plugin pages' state sync at a catalog-friendly interval.
   function syncRendered() {
-    if (!statuses) return;
+    if (!statuses || !pluginsById) return;
     const buttons = document.querySelectorAll(
       'button.card-install[data-pi-state="install"], button.card-install[data-pi-state="uninstall"]'
     );
@@ -236,26 +268,34 @@
     }
   }
 
-  function startStateSync() {
-    setInterval(async () => {
-      if (document.hidden) return;
+  let syncing = false;
+  async function syncOnce() {
+    if (syncing || document.hidden) return;
+    syncing = true;
+    try {
       if (await refreshStatuses()) syncRendered();
-    }, POLL_MS);
+    } finally {
+      syncing = false;
+    }
+  }
+
+  function startStateSync() {
+    setInterval(syncOnce, POLL_MS);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) syncOnce();
+    });
   }
 
   async function init() {
     // Buttons only ever exist on machines that can act on them.
-    if (!(await pingHost())) {
-      console.debug("[plugin-installer] catalog: no host, page untouched");
-      return;
-    }
+    if (!(await pingHost())) return;
     injectStyles();
-    if (!(await refreshStatuses())) {
-      console.debug("[plugin-installer] catalog: host without status_all, per-plugin status fallback");
-    }
+    await refreshStatuses();
     await scan();
-    const observer = new MutationObserver(scheduleScan);
-    observer.observe(document.body, { childList: true, subtree: true });
+    if (document.body) {
+      const observer = new MutationObserver(scheduleScan);
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
     startStateSync();
   }
 
