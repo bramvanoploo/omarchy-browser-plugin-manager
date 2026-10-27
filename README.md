@@ -4,10 +4,15 @@ One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org
 
 Clicking **Install** on a plugin page opens a wizard overlay on the desktop
 that validates the request (live catalog entry + repository manifest), shows
-what will be installed, and installs only after you confirm, via the official
-`omarchy plugin add --enable` (clone + manifest validation, no code
-execution): the plugin lands enabled immediately, bar widgets in their
-manifest's default bar section.
+what will be installed, and for bar widgets asks where the bar icon goes
+(left, center, or right); the plugin manifest's default section is labelled
+"(default)" and all four choices are styled the same. Nothing is installed
+before that choice, so Cancel there is a plain close.
+It installs only after you confirm, via the
+official `omarchy plugin add` + `omarchy plugin enable --section` (clone +
+manifest validation, no code execution). The install verifies the result by
+checking both the enabled flag and the bar layout entry, re-applying the
+section if the shell's post-install config sweep reverts it.
 
 Once a plugin is installed, the page swaps the Install button for
 **Enable/Disable** and **Uninstall** buttons (state read live from the host,

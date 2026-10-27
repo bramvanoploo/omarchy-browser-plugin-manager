@@ -10,6 +10,11 @@ import qs.Ui
 // {mode, id, repo, name}. The payload is treated as a hint only: the catalog
 // entry and the repository manifest are re-fetched and cross-checked before
 // anything is displayed, and the user confirms the action in this overlay.
+// Installing a bar widget adds a placement step: the user picks the bar
+// section (left/center/right); the manifest's default section is labelled
+// "(default)" but nothing is preselected, and the install worker enables the
+// plugin with the section chosen. Nothing is installed yet at that point, so
+// Cancel is a plain close.
 // When the action finishes, the result is a desktop notification only: no
 // completion dialog is shown and the overlay closes itself.
 
@@ -191,7 +196,19 @@ Item {
 
   function install() {
     if (!root.canInstall) return
-    root.spawnWorker("install")
+    // Bar widgets get a placement step first; the chosen section is applied
+    // by the worker via `omarchy plugin enable --section`.
+    if (root.isBarWidget) root.stage = "placement"
+    else root.spawnWorker("install", "")
+  }
+
+  // Called from the placement step in install mode with an explicit section
+  // ("left"/"center"/"right"); the manifest default is marked "(default)" on
+  // its own button, so there is no separate "keep default" path.
+  function installWithSection(section) {
+    if (root.mode !== "install" || root.stage !== "placement") return
+    if (!/^(left|center|right)$/.test(section)) return
+    root.spawnWorker("install", section)
   }
 
   function enable(section) {
@@ -363,8 +380,9 @@ Item {
   // wizard: it performs the CLI work, retries the enable through the
   // shell's post-clone discovery race ("is not known"), verifies the end
   // state, and finishes with the usual desktop notification.
-  // Positional parameters ($1=id, $2=name, $3=repo) are passed directly via
-  // execve argv, avoiding temporary script files and shell interpolation.
+  // Positional parameters ($1=id, $2=name, $3=repo, $4=bar section) are
+  // passed directly via execve argv, avoiding temporary script files and
+  // shell interpolation.
 
   function buildWorkerScript(kind) {
     var s = [
@@ -372,25 +390,36 @@ Item {
       "ID=\"$1\"",
       "NAME=\"$2\"",
       "REPO=\"$3\"",
+      "SECTION=\"$4\"",
       "notify() {",
       "  omarchy-notification-send --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
       "}",
       "list() { omarchy plugin list --json 2>/dev/null; }",
       "enabled() { list | jq -e --arg id \"$ID\" 'any(.[]; .id == $id and .enabled == true)' >/dev/null 2>&1; }",
+      // The bar layout entry is the real placement record; a missing
+      // user config means defaults are in use and nothing verifies it.
+      "placed() {",
+      "  local f=\"$HOME/.config/omarchy/shell.json\"",
+      "  [ -n \"$SECTION\" ] || return 0",
+      "  [ -f \"$f\" ] || return 0",
+      "  jq -e --arg id \"$ID\" --arg s \"$SECTION\" '(.bar.layout[$s] // []) | any(.[]; .id == $id)' \"$f\" >/dev/null 2>&1",
+      "}",
       "OUT=''"
     ]
     if (kind === "install") {
       s = s.concat([
-        "if ! OUT=\"$(omarchy plugin add \"$REPO\" --enable --yes 2>&1)\"; then",
-        "  # The clone can land while the add's internal enable fails; only",
-        "  # re-add when the plugin directory did not arrive.",
+        "# The chosen bar section cannot ride on add's --enable, so clone",
+        "# first and let the enable loop below apply --section.",
+        "if ! OUT=\"$(omarchy plugin add \"$REPO\" --yes 2>&1)\"; then",
+        "  # The clone can land while add fails on its own enable attempt;",
+        "  # only re-add when the plugin directory did not arrive.",
         "  if [ ! -d \"$HOME/.config/omarchy/plugins/$ID\" ]; then",
-        "    if ! OUT=\"$(omarchy plugin add \"$REPO\" --yes 2>&1)\"; then",
-        "      notify \"Plugin install failed\" \"$NAME: $OUT\"",
-        "      exit 1",
-        "    fi",
+        "    notify \"Plugin install failed\" \"$NAME: $OUT\"",
+        "    exit 1",
         "  fi",
         "fi",
+        "EN=(omarchy plugin enable \"$ID\")",
+        "[ -n \"$SECTION\" ] && EN+=(--section \"$SECTION\")",
         "# The clone storm triggers a shell-wide rescan that can keep the",
         "# fresh plugin unknown (\"is not known\") well past the add's 2s",
         "# discovery window; wait for discovery, then enable (the shell IPC",
@@ -398,23 +427,31 @@ Item {
         "for _ in $(seq 1 15); do enabled && break; sleep 1; done",
         "for _ in $(seq 1 10); do",
         "  enabled && break",
-        "  OUT=\"$(omarchy plugin enable \"$ID\" 2>&1)\"",
+        "  OUT=\"$(\"${EN[@]}\" 2>&1)\"",
         "  sleep 1",
         "done",
         "if enabled; then",
-        "  # The scan's config sweep re-persists shell.json from the",
-        "  # registry snapshot seconds later and can revert the fresh",
-        "  # enable; re-check after the sweep and re-enable once if it did.",
-        "  sleep 3",
-        "  if ! enabled; then",
-        "    omarchy plugin enable \"$ID\" >/dev/null 2>&1",
+        "  # Land the placement through the scan's config sweep: the sweep",
+        "  # re-persists shell.json from the registry snapshot and can revert",
+        "  # the flag and drop the bar layout entry, so re-check both -- the",
+        "  # layout entry, not just the flag -- and re-run the enable",
+        "  # (idempotent, and it re-applies the section) while either lags.",
+        "  for _ in $(seq 1 4); do",
         "    sleep 2",
-        "  fi",
+        "    enabled && placed && break",
+        "    \"${EN[@]}\" >/dev/null 2>&1",
+        "  done",
         "fi",
-        "if enabled; then",
-        "  notify \"Plugin installed\" \"$NAME is installed and enabled.\"",
+        "if enabled && placed; then",
+        "  if [ -n \"$SECTION\" ]; then",
+        "    notify \"Plugin installed\" \"$NAME is installed and enabled on the bar ($SECTION section).\"",
+        "  else",
+        "    notify \"Plugin installed\" \"$NAME is installed and enabled.\"",
+        "  fi",
+        "elif enabled; then",
+        "  notify \"Plugin installed\" \"$NAME is enabled, but its bar icon placement did not stick. Retry: omarchy plugin enable $ID --section $SECTION\"",
         "else",
-        "  notify \"Plugin install incomplete\" \"$NAME was installed but failed to enable. Retry: omarchy plugin enable $ID\"",
+        "  notify \"Plugin install incomplete\" \"$NAME was installed but failed to enable. Retry: omarchy plugin enable $ID --section $SECTION\"",
         "fi"
       ])
     } else {
@@ -429,13 +466,14 @@ Item {
     return s.join("\n") + "\n"
   }
 
-  function spawnWorker(kind) {
+  function spawnWorker(kind, section) {
     Quickshell.execDetached([
       "bash", "-c", root.buildWorkerScript(kind),
       "omarchy-plugin-worker",
       root.pluginId,
       root.pluginName,
-      root.pluginRepo
+      root.pluginRepo,
+      String(section || "")
     ])
     root.close()
   }
@@ -751,7 +789,7 @@ Item {
           text: "Disabling the plugin\u2026"
         }
 
-        // ---- stage: placement (enable mode, bar widgets) ----
+        // ---- stage: placement (install/enable modes, bar widgets) ----
         Column {
           visible: root.stage === "placement"
           width: cardColumn.width
@@ -761,12 +799,23 @@ Item {
           }
           Row {
             spacing: Style.spacing.controlGap
-            PiButton { label: "Left"; onClickedPi: root.enable("left") }
-            PiButton { label: "Center"; onClickedPi: root.enable("center") }
-            PiButton { label: "Right"; onClickedPi: root.enable("right") }
             PiButton {
-              label: "Keep default (" + root.defaultSection + ")"
-              onClickedPi: root.enable("")
+              label: "Left" + (root.defaultSection === "left" ? " (default)" : "")
+              onClickedPi: root.mode === "install"
+                ? root.installWithSection("left")
+                : root.enable("left")
+            }
+            PiButton {
+              label: "Center" + (root.defaultSection === "center" ? " (default)" : "")
+              onClickedPi: root.mode === "install"
+                ? root.installWithSection("center")
+                : root.enable("center")
+            }
+            PiButton {
+              label: "Right" + (root.defaultSection === "right" ? " (default)" : "")
+              onClickedPi: root.mode === "install"
+                ? root.installWithSection("right")
+                : root.enable("right")
             }
           }
         }
@@ -808,6 +857,11 @@ Item {
           PiButton {
             visible: root.stage === "review" || root.stage === "uninstall-confirm"
               || root.stage === "enable-confirm" || root.stage === "disable-confirm"
+            label: "Cancel"
+            onClickedPi: root.close()
+          }
+          PiButton {
+            visible: root.stage === "placement"
             label: "Cancel"
             onClickedPi: root.close()
           }
