@@ -28,7 +28,7 @@
 .pi-group {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 7px;
 }
 .pi-button {
   display: inline-flex;
