@@ -26,7 +26,7 @@ otherwise the native host will reject its connection.
 3. **Load unpacked** -> select the `extension/` directory from this archive
 
 Load unpacked gets the path-derived ID. The store artifact
-`plugin-installer-<version>-chrome.zip` (built by `bin/package`) carries a
+`omarchy-browser-plugin-manager-<version>-chrome.zip` (built by `bin/package`) carries a
 Chrome-only `"key"` field pinning the stable ID
 `nbngempephjmagmlfbfdodboeimfoibp` for zipped installs and a future Chrome
 Web Store listing. The setup script registers both IDs, so
@@ -39,7 +39,7 @@ Release Firefox permanently installs only AMO-signed add-ons, and the
 native-messaging allowlist matches the stable add-on ID
 `bramvanoploo.omarchy-browser-plugin-manager@bram.dev` — which only a permanent install gives:
 
-1. Obtain `plugin-installer-<version>-signed.xpi` — the maintainer signs it
+1. Obtain `omarchy-browser-plugin-manager-<version>-signed.xpi` — the maintainer signs it
    with AMO *unlisted* signing (`bin/sign`; a free AMO developer account, no
    store listing), or sign it yourself the same way.
 2. `about:addons` -> gear icon -> **Install Add-on From File...** -> the

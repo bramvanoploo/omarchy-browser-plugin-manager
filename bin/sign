@@ -13,7 +13,8 @@
 #   AMO_API_KEY=... AMO_API_SECRET=... bin/sign
 #
 # Output:
-#   dist/signed/plugin-installer-<version>-signed.xpi
+#   dist/signed/<slug>-<version>-signed.xpi  ("slug" = manifest name, as in
+#   bin/package; AMO's own UUID-named file is kept next to it)
 # Its add-on ID stays bramvanoploo.omarchy-browser-plugin-manager@bram.dev (from manifest.json
 # browser_specific_settings), which the native messaging host allowlists.
 
@@ -59,5 +60,12 @@ cd "$STAGE/extension"
 
 signed=$(ls -t "$OUT_DIR"/*-signed.xpi 2>/dev/null | head -1)
 [[ -n "$signed" ]] || { echo "signing produced no *-signed.xpi" >&2; exit 1; }
-echo "Signed add-on: $signed"
+# Normalize the AMO UUID-based filename to the canonical "<slug>-<version>-signed.xpi"
+# (same slug derivation as bin/package).
+VERSION="$(jq -r .version "$STAGE/extension/manifest.json")"
+NAME="$(jq -r .name "$STAGE/extension/manifest.json" | tr '[:upper:]' '[:lower:]' \
+  | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-\{1,\}//; s/-\{1,\}$//')"
+canonical="$OUT_DIR/$NAME-$VERSION-signed.xpi"
+cp -f -- "$signed" "$canonical"
+echo "Signed add-on: $canonical (AMO copy: $signed)"
 echo "Install on release Firefox: about:addons -> gear -> Install Add-on From File"

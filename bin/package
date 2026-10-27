@@ -1,12 +1,15 @@
 #!/bin/bash
 # Builds downloadable, store-free browser-extension artifacts into dist/.
+# Artifact names are always "<slug>-<version>[-suffix].*", where <slug> is
+# derived from the extension manifest "name" (lowercased, non-alnum -> "-"),
+# so names stay consistent with the plugin identity automatically.
 #
-#   dist/plugin-installer-<version>.xpi   Firefox add-on (permanent install on
-#                                         ESR / Developer Edition / Nightly,
-#                                         which allow unsigned add-ons).
-#   dist/plugin-installer-<version>.zip   Full source archive; the Chrome /
-#                                         Chromium / Brave path (Load unpacked)
-#                                         and the Firefox temporary-add-on path.
+#   dist/<slug>-<version>.xpi         Firefox add-on (permanent install on
+#                                     ESR / Developer Edition / Nightly,
+#                                     which allow unsigned add-ons).
+#   dist/<slug>-<version>.zip         Full source archive; the Chrome /
+#                                     Chromium / Brave path (Load unpacked)
+#                                     and the Firefox temporary-add-on path.
 #
 # No Chrome Web Store or AMO publishing is involved.
 
@@ -19,6 +22,8 @@ EXT_DIR="$REPO_DIR/extension"
 DIST_DIR="$REPO_DIR/dist"
 
 VERSION="$(jq -r .version "$EXT_DIR/manifest.json")"
+NAME="$(jq -r .name "$EXT_DIR/manifest.json" | tr '[:upper:]' '[:lower:]' \
+  | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-\{1,\}//; s/-\{1,\}$//')"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
@@ -36,8 +41,8 @@ rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 # manifest.json first, no extra zip fields: Firefox signing-service layout.
 ( cd "$STAGE/xpi" && \
-  zip -qX "$DIST_DIR/plugin-installer-$VERSION.xpi" manifest.json && \
-  zip -qrX "$DIST_DIR/plugin-installer-$VERSION.xpi" . -x manifest.json )
+  zip -qX "$DIST_DIR/$NAME-$VERSION.xpi" manifest.json && \
+  zip -qrX "$DIST_DIR/$NAME-$VERSION.xpi" . -x manifest.json )
 
 # --- Chrome / Chromium / Brave zip: same root-level zip layout, the Chrome
 # Web Store upload format. The Chrome-only "key" (stable extension ID) is
@@ -53,23 +58,23 @@ else
   echo "NOTE: chrome-key.pem not found; chrome.zip has no pinned extension ID." >&2
 fi
 ( cd "$STAGE/chrome" && \
-  zip -qX "$DIST_DIR/plugin-installer-$VERSION-chrome.zip" manifest.json && \
-  zip -qrX "$DIST_DIR/plugin-installer-$VERSION-chrome.zip" . -x manifest.json )
+  zip -qX "$DIST_DIR/$NAME-$VERSION-chrome.zip" manifest.json && \
+  zip -qrX "$DIST_DIR/$NAME-$VERSION-chrome.zip" . -x manifest.json )
 
 # --- Source zip: whole project (setup + host + extension + docs). ---
 STAMP="$(date -u +%Y%m%d)"
-STAGE_SRC="$STAGE/src/omarchy-plugin-installation-helper"
+STAGE_SRC="$STAGE/src/$NAME"
 mkdir -p "$STAGE_SRC"
 git -C "$REPO_DIR" ls-files -z | xargs -0 -I{} cp -a --parents {} "$STAGE_SRC"/ 2>/dev/null \
   || cp -a "$REPO_DIR"/. "$STAGE_SRC"/
 rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist"
-( cd "$STAGE/src" && zip -qr "$DIST_DIR/omarchy-plugin-installation-helper-$VERSION-$STAMP.zip" . )
+( cd "$STAGE/src" && zip -qr "$DIST_DIR/$NAME-$VERSION-$STAMP.zip" . )
 
 cat <<EOF
 Built in dist/:
-  plugin-installer-$VERSION.xpi                                  (Firefox add-on)
-  plugin-installer-$VERSION-chrome.zip                           (Chrome Web Store upload)
-  omarchy-plugin-installation-helper-$VERSION-$STAMP.zip         (Chrome family / source)
+  $NAME-$VERSION.xpi                                  (Firefox add-on)
+  $NAME-$VERSION-chrome.zip                           (Chrome Web Store upload)
+  $NAME-$VERSION-$STAMP.zip                           (Chrome family / source)
 
 Store-free install (see INSTALL.md):
   Chrome/Chromium/Brave: unzip, ./bin/plugin-installer-setup --extension-dir ./extension,
