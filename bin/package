@@ -23,8 +23,15 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
 # --- Firefox .xpi: zip of the extension/ contents at the archive root. ---
+# Firefox's AMO lint REQUIRES the legacy MV2 "background.scripts" array as a
+# compatibility fallback next to "service_worker" (hard error; signing fails),
+# while Chrome warns about the same key in MV3. So the shared source manifest
+# keeps only "service_worker" and the fallback is injected HERE, for Firefox
+# artifacts only (mirrors how the Chrome-only "key" is injected for chrome.zip).
 mkdir -p "$STAGE/xpi"
 cp -r "$EXT_DIR/." "$STAGE/xpi/"
+jq '.background += {scripts: ["background.js"]}' "$STAGE/xpi/manifest.json" > "$STAGE/xpi/manifest.json.tmp" \
+  && mv "$STAGE/xpi/manifest.json.tmp" "$STAGE/xpi/manifest.json"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 # manifest.json first, no extra zip fields: Firefox signing-service layout.

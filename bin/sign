@@ -39,8 +39,18 @@ else
   exit 1
 fi
 
+# Firefox AMO lint requires the MV2 "background.scripts" fallback next to
+# "service_worker"; the shared source manifest omits it so Chrome stays
+# warning-free. Sign a staged copy with the fallback injected (same trick as
+# bin/package uses for the .xpi).
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+cp -r "$EXT_DIR" "$STAGE/extension"
+jq '.background += {scripts: ["background.js"]}' "$STAGE/extension/manifest.json" > "$STAGE/extension/manifest.json.tmp" \
+  && mv "$STAGE/extension/manifest.json.tmp" "$STAGE/extension/manifest.json"
+
 mkdir -p "$OUT_DIR"
-cd "$EXT_DIR"
+cd "$STAGE/extension"
 "${WEB_EXT[@]}" sign \
   --channel=unlisted \
   --api-key="$AMO_API_KEY" \
