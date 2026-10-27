@@ -59,6 +59,13 @@
 }
 .pi-button.pi-button-danger {
   color: var(--accent, #ffcead) !important;
+  border-color: var(--accent, #ffcead) !important;
+}
+/* Install action: the marketplace's own stable tone. Text, border and icon
+ * (icons draw with currentColor). */
+.pi-button.pi-button-install {
+  color: var(--stable, #b4c96f) !important;
+  border-color: var(--stable, #b4c96f) !important;
 }
 .pi-icon {
   position: relative;
@@ -123,7 +130,7 @@
  * focus of the button, anchored above its right edge. */
 .pi-tooltip {
   position: absolute;
-  z-index: 6;
+  z-index: 1000;
   right: 0;
   bottom: calc(100% + 8px);
   left: auto;
@@ -147,9 +154,9 @@
   pointer-events: none;
 }
 .pi-button:hover .pi-tooltip,
-.pi-button:focus-visible .pi-tooltip {
-  opacity: 1;
-  visibility: visible;
+.pi-button:focus .pi-tooltip {
+  opacity: 1 !important;
+  visibility: visible !important;
   pointer-events: auto;
 }
 `;
@@ -271,7 +278,7 @@
     const confirmTip = "on this machine \u2014 the Omarchy wizard will ask you to confirm";
     const buttons = [];
     if (!state.installed) {
-      const install = makeButton("Install with Omarchy", "Install this plugin " + confirmTip, "", "pi-icon-install");
+      const install = makeButton("Install with Omarchy", "Install this plugin " + confirmTip, "pi-button-install", "pi-icon-install");
       wireAction(install, plugin, "install");
       buttons.push(install);
     } else {
