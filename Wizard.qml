@@ -394,7 +394,7 @@ Item {
 
   Process {
     id: writeProc
-    stdin: DataDescriptor { content: root.workerContent; waitForEnd: true }
+    stdin: Quickshell.Io.DataDescriptor { content: root.workerContent; waitForEnd: true }
     onExited: function (exitCode) {
       if (exitCode !== 0) {
         root.fail("worker script could not be written (exit " + exitCode + ")")
