@@ -64,12 +64,20 @@
     return Boolean(response && response.ok);
   }
 
-  // Reuse the marketplace's own Copy button styling: class .copy-button.
-  function makeButton(label, extraClass) {
+  // Icon + label markup mirroring the marketplace Copy button (its icon is
+  // a 13px CSS line-art span); visuals come from .pi-button in content.css,
+  // which mirrors the marketplace .copy-button rule.
+  function makeButton(label, extraClass, iconClass) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "copy-button pi-button" + (extraClass ? " " + extraClass : "");
-    button.textContent = label;
+    const icon = document.createElement("span");
+    icon.className = "pi-icon " + iconClass;
+    icon.setAttribute("aria-hidden", "true");
+    const labelEl = document.createElement("span");
+    labelEl.dataset.label = "";
+    labelEl.textContent = label;
+    button.append(icon, labelEl);
     return button;
   }
 
@@ -130,23 +138,26 @@
 
     const buttons = [];
     if (!state.installed) {
-      const install = makeButton("Install with Omarchy", "pi-button");
+      const install = makeButton("Install with Omarchy", "", "pi-icon-install");
       wireAction(install, plugin, "install", status);
       buttons.push(install);
     } else {
-      // Toggle flips its own label between Enable/Disable after the wizard
-      // was opened; the authoritative state is re-checked live by the host.
+      // Toggle flips its own label and icon between Enable/Disable after the
+      // wizard was opened; the authoritative state is re-checked live by the
+      // host.
       let enabled = Boolean(state.enabled);
-      const toggle = makeButton("", "pi-button");
+      const toggle = makeButton("", "", "pi-icon-disable");
       const applyToggle = () => {
-        toggle.textContent = enabled ? "Disable" : "Enable";
+        toggle.querySelector("[data-label]").textContent = enabled ? "Disable" : "Enable";
+        toggle.querySelector(".pi-icon").className =
+          "pi-icon " + (enabled ? "pi-icon-disable" : "pi-icon-enable");
       };
       applyToggle();
       wireAction(toggle, plugin, () => (enabled ? "disable" : "enable"), status, () => {
         enabled = !enabled;
         applyToggle();
       });
-      const uninstall = makeButton("Uninstall", "pi-button pi-button-danger");
+      const uninstall = makeButton("Uninstall", "pi-button-danger", "pi-icon-uninstall");
       wireAction(uninstall, plugin, "uninstall", status);
       buttons.push(toggle, uninstall);
     }
