@@ -36,6 +36,7 @@
   min-height: 25px;
   padding: 0 8px !important;
   border: 1px solid var(--line-strong, #666666) !important;
+  border-radius: 0 !important;
   background: transparent !important;
   align-items: center;
   gap: 6px;
