@@ -41,6 +41,14 @@ else
   exit 1
 fi
 
+# web-ext's yargs layer reads WEB_EXT_API_KEY / WEB_EXT_API_SECRET, so the
+# credentials are passed by environment instead of argv: command-line arguments
+# are world-readable through ps and land in shell traces (bash -x), which is
+# how a signing key can leak. The AMO_* names stay the documented interface and
+# are cleared from the child environment as soon as they are mapped.
+export WEB_EXT_API_KEY="$AMO_API_KEY" WEB_EXT_API_SECRET="$AMO_API_SECRET"
+AMO_API_KEY= AMO_API_SECRET=
+
 # Firefox AMO lint requires the MV2 "background.scripts" fallback next to
 # "service_worker"; the shared source manifest omits it so Chrome stays
 # warning-free. Sign a staged copy with the fallback injected (same trick as
@@ -62,8 +70,6 @@ mkdir -p "$STAGE/artifacts" "$OUT_DIR"
 cd "$STAGE/extension"
 "${WEB_EXT[@]}" sign \
   --channel=unlisted \
-  --api-key="$AMO_API_KEY" \
-  --api-secret="$AMO_API_SECRET" \
   --artifacts-dir "$STAGE/artifacts"
 
 shopt -s nullglob
