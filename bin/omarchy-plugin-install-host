@@ -10,9 +10,10 @@
 #   {"type":"enable","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
 #   {"type":"disable","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
 #
-# This host NEVER installs anything. It validates the request against a fresh
-# fetch of the marketplace catalog, then summons the wizard overlay. The user
-# must confirm inside the wizard for anything to happen.
+# This host NEVER installs anything itself. It validates the request against a
+# fresh fetch of the marketplace catalog, then summons the wizard overlay,
+# which re-validates and runs the omarchy plugin command. The result is
+# reported as a desktop notification; there is no confirmation dialog.
 
 set -euo pipefail
 

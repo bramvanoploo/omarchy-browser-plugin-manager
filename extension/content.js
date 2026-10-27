@@ -285,10 +285,10 @@
     const group = document.createElement("span");
     group.className = "pi-group";
 
-    const confirmTip = "on this machine \u2014 the Omarchy wizard will ask you to confirm";
+    const suffixTip = "on this machine";
     const buttons = [];
     if (!state.installed) {
-      const install = makeButton("Install", "Install this plugin " + confirmTip, "pi-button-install", "pi-icon-install");
+      const install = makeButton("Install", "Install this plugin " + suffixTip, "pi-button-install", "pi-icon-install");
       wireAction(install, plugin, "install");
       buttons.push(install);
     } else {
@@ -297,7 +297,7 @@
       // wizard, the desktop, and the page can never drift apart.
       const enabled = Boolean(state.enabled);
       const verb = enabled ? "Disable" : "Enable";
-      const tip = verb + " this plugin " + confirmTip;
+      const tip = verb + " this plugin " + suffixTip;
       const toggle = makeButton(
         verb, tip,
         enabled ? "pi-button-danger" : "pi-button-install",
@@ -306,7 +306,7 @@
       // Empty afterOpen keeps the toggle usable after a successful summon:
       // the wizard may be cancelled, and the poll keeps the label honest.
       wireAction(toggle, plugin, () => (enabled ? "disable" : "enable"), () => {});
-      const uninstall = makeButton("Uninstall", "Uninstall this plugin " + confirmTip, "pi-button-danger", "pi-icon-uninstall");
+      const uninstall = makeButton("Uninstall", "Uninstall this plugin " + suffixTip, "pi-button-danger", "pi-icon-uninstall");
       wireAction(uninstall, plugin, "uninstall");
       buttons.push(toggle, uninstall);
     }

@@ -2,23 +2,25 @@
 
 One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org).
 
-Clicking **Install with Omarchy** on a plugin page opens a wizard overlay on the
-desktop. The wizard shows the plugin's marketplace verification state, installs
-via the official `omarchy plugin add` (clone + manifest validation, no code
-execution), and — for bar widgets — lets you pick the bar section (left /
-center / right) before enabling. Non-bar plugins finish in one step.
+Clicking **Install** on a plugin page opens a wizard overlay on the desktop,
+which validates the request (live catalog entry + repository manifest) and
+installs via the official `omarchy plugin add` (clone + manifest validation,
+no code execution), then enables the plugin (bar widgets land in their
+manifest's default bar section). The result arrives as a desktop notification.
 
 Once a plugin is installed, the page swaps the Install button for
 **Enable/Disable** and **Uninstall** buttons (state read live from the host,
-never from the page). All four actions run through the wizard, which is always
-the consent gate.
+never from the page). All four actions run through the wizard, which
+re-validates and executes immediately, reporting the result as a desktop
+notification.
 
 ## Architecture
 
 ```
 browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overlay
                          validates vs catalog.json     omarchy plugin add/enable/
-                         never installs                disable/remove; user confirms
+                         never installs                disable/remove; result via
+                                                       desktop notification
 ```
 
 - **`extension/`** — MV3 WebExtension for Chrome, Chromium, Brave (Firefox MV3
@@ -53,14 +55,15 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
    (Chrome family) / add-on ID (Firefox) — no other extension can talk to it.
 3. **Host** re-validates against the live catalog; forged payloads for
    manual-setup or compatibility-failed plugins are rejected.
-4. **Wizard** is the only consent gate. It installs disabled-first
-   (`omarchy plugin add` without `--enable`), shows what will be installed,
-   and runs the official installer path. Enablement is a user click. Uninstall
-   and disable get their own confirmation stage, re-checked against live local
-   state at open time; the wizard refuses to uninstall itself, and the host
-   rejects toggles for plugins that are not in the marketplace catalog.
+4. **Wizard** executes without a confirmation dialog: it re-validates the
+   request (fresh catalog entry, repository manifest, live local plugin list)
+   and then runs the official installer path
+   (`omarchy plugin add/enable/disable/remove`), reporting the result as a
+   desktop notification. Nothing runs on a failed validation; the wizard
+   refuses to uninstall itself, and the host rejects toggles for plugins that
+   are not in the marketplace catalog.
 5. Installs the repo's current HEAD, which may differ from the marketplace's
-   verified snapshot — the wizard says so.
+   verified snapshot.
 
 ## Install (developer machine)
 
