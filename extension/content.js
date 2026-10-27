@@ -34,29 +34,29 @@
 .pi-button {
   display: inline-flex;
   min-height: 25px;
-  padding: 0 8px;
-  border: 1px solid var(--line-strong, #666666);
-  background: transparent;
+  padding: 0 8px !important;
+  border: 1px solid var(--line-strong, #666666) !important;
+  background: transparent !important;
   align-items: center;
   gap: 6px;
-  color: var(--text, #dddddd);
+  color: var(--text, #dddddd) !important;
   font-family: var(--mono, monospace);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  appearance: none;
-  -moz-appearance: none;
+  appearance: none !important;
+  -moz-appearance: none !important;
 }
 .pi-button:hover {
-  background: var(--panel-2, rgba(127, 127, 127, 0.12));
-  color: var(--text, #dddddd);
+  background: var(--panel-2, rgba(127, 127, 127, 0.12)) !important;
+  color: var(--text, #dddddd) !important;
 }
 .pi-button:disabled {
   opacity: 0.55;
 }
 .pi-button.pi-button-danger {
-  color: var(--accent, #ffcead);
+  color: var(--accent, #ffcead) !important;
 }
 .pi-icon {
   position: relative;
