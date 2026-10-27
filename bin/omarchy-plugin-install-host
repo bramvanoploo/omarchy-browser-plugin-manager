@@ -12,8 +12,8 @@
 #
 # This host NEVER installs anything itself. It validates the request against a
 # fresh fetch of the marketplace catalog, then summons the wizard overlay,
-# which re-validates and runs the omarchy plugin command. The result is
-# reported as a desktop notification; there is no confirmation dialog.
+# which re-validates, asks the user to confirm, and runs the omarchy plugin
+# command. The outcome is a desktop notification; no completion dialog shows.
 
 set -euo pipefail
 

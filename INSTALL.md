@@ -66,8 +66,9 @@ Open a one-click-installable plugin page on
 [plugins.omarchy.org](https://plugins.omarchy.org) — an **Install** button
 appears below the install command (Enable/Disable/Uninstall once the plugin
 is installed). Clicking it opens the Omarchy shell wizard, which validates the
-request and runs the actual `omarchy plugin add/enable/disable/remove`,
-reporting the result as a desktop notification.
+request, asks you to confirm, and then runs the actual
+`omarchy plugin add/enable/disable/remove`. The outcome is a desktop
+notification.
 
 ## Uninstall
 
