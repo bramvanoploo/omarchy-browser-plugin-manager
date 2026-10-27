@@ -299,11 +299,11 @@ Item {
         root.fail("omarchy plugin add exited with code " + exitCode)
         return
       }
-      // --enable: the plugin is installed and enabled in one step (bar
-      // widgets land in the manifest's default section).
-      var where = root.isBarWidget ? " on the bar (" + root.defaultSection + " section)" : ""
-      root.notify("Plugin installed", root.pluginName + " is enabled" + where)
-      root.close()
+      // The add's internal enable races the shell's watcher-driven plugin
+      // rescan (clone writes trigger reloads that can revert the flag). Run a
+      // final enable: the shell IPC is idempotent, so this is a no-op when
+      // --enable already stuck and repairs the state when it did not.
+      root.enable("")
     }
   }
 
@@ -316,7 +316,9 @@ Item {
         root.fail("omarchy plugin enable exited with code " + exitCode)
         return
       }
-      var where = root.enabledSection ? " on the bar (" + root.enabledSection + " section)" : ""
+      var where = root.enabledSection
+        ? " on the bar (" + root.enabledSection + " section)"
+        : root.isBarWidget ? " on the bar (" + root.defaultSection + " section)" : ""
       root.notify(root.mode === "install" ? "Plugin installed" : "Plugin enabled",
                   root.pluginName + " is enabled" + where)
       root.close()
