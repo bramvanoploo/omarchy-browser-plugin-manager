@@ -1,60 +1,37 @@
-/* "Install with Omarchy" row, prepended inside the marketplace command panel. */
-.pi-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px 0 14px;
-}
+/* Buttons live inside the marketplace's .command-panel-head, grouped
+ * directly left of its Copy button. They reuse the marketplace's own
+ * .copy-button class for all visuals; this file only adds the layout
+ * wrapper, the status text, and one marketplace-token-based accent for
+ * the destructive action. No bespoke colors. */
 
-.pi-button {
-  appearance: none;
-  border: 0;
-  border-radius: 8px;
-  padding: 9px 16px;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  background: #b7ef51;
-  color: #16161d;
+.pi-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .pi-button:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: default;
 }
 
-.pi-button:not(:disabled):hover {
-  filter: brightness(1.08);
+/* Destructive action: the marketplace's own warning tone. */
+.pi-button.pi-button-danger {
+  color: var(--accent);
 }
 
-.pi-button-secondary {
-  background: transparent;
-  color: #b7ef51;
-  border: 1px solid #b7ef51;
+.pi-status {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
   font-weight: 500;
-}
-
-.pi-button-secondary:not(:disabled):hover {
-  background: rgba(183, 239, 81, 0.12);
-  filter: none;
-}
-
-.pi-button-danger {
-  background: #e05260;
-  color: #fff;
-}
-
-.pi-button-danger:not(:disabled):hover {
-  background: #f18c75;
-  filter: none;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40vw;
 }
 
 .pi-status[data-state="hidden"] {
   display: none;
-}
-
-.pi-status {
-  font-size: 0.85em;
-  opacity: 0.75;
 }

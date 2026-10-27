@@ -64,10 +64,11 @@
     return Boolean(response && response.ok);
   }
 
-  function makeButton(label, className) {
+  // Reuse the marketplace's own Copy button styling: class .copy-button.
+  function makeButton(label, extraClass) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = className;
+    button.className = "copy-button pi-button" + (extraClass ? " " + extraClass : "");
     button.textContent = label;
     return button;
   }
@@ -112,25 +113,31 @@
   }
 
   function mountButtons(plugin, state) {
-    const panel = document.querySelector("#detail-content .command-panel");
-    if (!panel || panel.querySelector(".pi-row")) return;
+    // The marketplace renders a Copy button in the command panel head; we
+    // group our buttons directly left of it and let it keep its own node
+    // (the page's click listener survives the move).
+    const copy = document.querySelector("#detail-content [data-install-copy]");
+    if (!copy) return;
+    const head = copy.closest(".command-panel-head") || copy.parentElement;
+    if (!head || copy.closest(".pi-group")) return;
 
-    const row = document.createElement("div");
-    row.className = "pi-row";
+    const group = document.createElement("span");
+    group.className = "pi-group";
 
     const status = document.createElement("span");
     status.className = "pi-status";
     status.dataset.state = "hidden";
 
+    const buttons = [];
     if (!state.installed) {
       const install = makeButton("Install with Omarchy", "pi-button");
       wireAction(install, plugin, "install", status);
-      row.append(install, status);
+      buttons.push(install);
     } else {
       // Toggle flips its own label between Enable/Disable after the wizard
       // was opened; the authoritative state is re-checked live by the host.
       let enabled = Boolean(state.enabled);
-      const toggle = makeButton("", "pi-button pi-button-secondary");
+      const toggle = makeButton("", "pi-button");
       const applyToggle = () => {
         toggle.textContent = enabled ? "Disable" : "Enable";
       };
@@ -139,12 +146,13 @@
         enabled = !enabled;
         applyToggle();
       });
-      const uninstall = makeButton("Uninstall from Omarchy", "pi-button pi-button-danger");
+      const uninstall = makeButton("Uninstall", "pi-button pi-button-danger");
       wireAction(uninstall, plugin, "uninstall", status);
-      row.append(toggle, uninstall, status);
+      buttons.push(toggle, uninstall);
     }
 
-    panel.prepend(row);
+    head.insertBefore(group, copy);
+    group.append(...buttons, status, copy);
     mounted = true;
   }
 
@@ -176,7 +184,7 @@
     const target = document.querySelector("#detail-content");
     if (!target || mounted) return;
     const observer = new MutationObserver(() => {
-      if (document.querySelector("#detail-content .command-panel")) {
+      if (document.querySelector("#detail-content [data-install-copy]")) {
         mountButtons(plugin, state);
         observer.disconnect();
       }
