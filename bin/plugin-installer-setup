@@ -1,0 +1,172 @@
+#!/bin/bash
+# Registers the Plugin Installer's native messaging host with the browsers,
+# and prints the (manual) browser-extension loading steps.
+#
+# Browsers covered: Google Chrome, Chromium, Brave, Firefox.
+# The host manifest is written per browser family:
+#   - Chromium family: allowed_origins pinned to the extension ID derived from
+#     the extension directory path (stable for "Load unpacked" at that path).
+#   - Firefox: allowed_extensions pinned to the add-on ID from the extension
+#     manifest's browser_specific_settings.
+
+set -euo pipefail
+
+HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
+FIREFOX_ADDON_ID="bramvanoploo.omarchy-browser-plugin-manager@bram.dev"
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
+REPO_DIR="$(dirname -- "$BIN_DIR")"
+HOST_PATH="$BIN_DIR/omarchy-plugin-install-host"
+EXT_DIR="${PLUGIN_INSTALLER_EXT_DIR:-$REPO_DIR/extension}"
+
+CHROME_DIRS=(
+  "$HOME/.config/google-chrome"
+  "$HOME/.config/chromium"
+  "$HOME/.config/BraveSoftware/Brave-Browser"
+)
+# Firefox (Linux) scans native messaging manifests in the XDG location
+# (~/.config/mozilla/... since Firefox 133) and the legacy ~/.mozilla one.
+# Register in both; older Firefox builds only read the legacy path.
+FIREFOX_DIRS=(
+  "${XDG_CONFIG_HOME:-$HOME/.config}/mozilla/native-messaging-hosts"
+  "$HOME/.mozilla/native-messaging-hosts"
+)
+
+usage() {
+  cat <<EOF
+Usage: plugin-installer-setup [--extension-dir PATH] [--uninstall]
+
+  --extension-dir PATH  Directory that will be loaded as the unpacked
+                        extension (default: $REPO_DIR/extension).
+                        The Chrome/Chromium/Brave native-messaging origin is
+                        derived from this path, so the extension must be
+                        loaded from exactly this directory.
+  --uninstall           Remove the registered native messaging manifests.
+EOF
+}
+
+uninstall() {
+  local removed=0 dir
+  for dir in "${CHROME_DIRS[@]}"; do
+    if [[ -f "$dir/NativeMessagingHosts/$HOST_NAME.json" ]]; then
+      rm -f "$dir/NativeMessagingHosts/$HOST_NAME.json"
+      removed=1
+    fi
+  done
+  for dir in "${FIREFOX_DIRS[@]}"; do
+    if [[ -f "$dir/$HOST_NAME.json" ]]; then
+      rm -f "$dir/$HOST_NAME.json"
+      removed=1
+    fi
+  done
+  echo "Native messaging manifests removed$([[ $removed == 1 ]] && echo ' (at least one)' || echo ' (none were present)')."
+}
+
+# Chrome extension ID for an unpacked extension = first 16 bytes of the
+# SHA-256 of the absolute path, each nibble mapped 0->a ... f->p.
+chrome_extension_id() {
+  realpath "$1" | tr -d '\n' | sha256sum | cut -c1-32 \
+    | tr '0123456789abcdef' 'abcdefghijklmnop'
+}
+
+# Stable Chrome extension ID derived from the manifest's "key" (public key):
+# used by packed/zip installs and Chrome Web Store installs. The source
+# manifest carries no key (Firefox warns about it), so fall back to the
+# repo's chrome-key.pem, which bin/package injects into the Chrome zip.
+# Empty when neither exists.
+chrome_key_id() {
+  local key=""
+  key=$(jq -r '.key // ""' "$1" 2>/dev/null) || true
+  if [[ -z $key && -f "$REPO_DIR/chrome-key.pem" ]]; then
+    key=$(openssl ec -in "$REPO_DIR/chrome-key.pem" -pubout -outform DER 2>/dev/null | base64 -w0)
+  fi
+  [[ -n $key ]] || return 0
+  printf '%s' "$key" | base64 -d | sha256sum | cut -c1-32 \
+    | tr '0123456789abcdef' 'abcdefghijklmnop'
+}
+
+main() {
+  local ext_dir="$EXT_DIR"
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --extension-dir) ext_dir="${2:?--extension-dir requires a path}"; shift 2 ;;
+      --uninstall) uninstall; exit 0 ;;
+      -h|--help) usage; exit 0 ;;
+      *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
+    esac
+  done
+
+  [[ -x $HOST_PATH ]] || chmod +x "$HOST_PATH"
+  [[ -f "$ext_dir/manifest.json" ]] || {
+    echo "Extension manifest not found at: $ext_dir/manifest.json" >&2
+    exit 1
+  }
+
+  local chromium_id key_id chromium_manifest firefox_manifest dir ext_abs origins
+  ext_abs=$(realpath "$ext_dir")
+  chromium_id=$(chrome_extension_id "$ext_dir")
+  key_id=$(chrome_key_id "$ext_dir/manifest.json")
+
+  # Pin both the path-derived unpacked ID and the key-pinned stable ID so
+  # Load unpacked, zipped dev installs, and store installs all reach the host.
+  origins="chrome-extension://$chromium_id/"
+  [[ -n $key_id && $key_id != "$chromium_id" ]] && origins+=" chrome-extension://$key_id/"
+
+  local chromium_manifest firefox_manifest dir ext_abs origins
+  chromium_manifest=$(jq -cn \
+    --arg name "$HOST_NAME" \
+    --arg path "$HOST_PATH" \
+    '{name:$name, path:$path, type:"stdio",
+      description:"Native messaging host for the Omarchy Browser Plugin Manager browser extension.",
+      allowed_origins:($ARGS.positional)}' \
+    --args $origins)
+
+  # Firefox REQUIRES "description" in the app manifest (Chrome ignores it):
+  # without it NativeManifests.sys.mjs rejects the whole file and Firefox
+  # reports "No such native application".
+  firefox_manifest=$(jq -cn \
+    --arg name "$HOST_NAME" \
+    --arg path "$HOST_PATH" \
+    --arg addon "$FIREFOX_ADDON_ID" \
+    '{name:$name, path:$path, type:"stdio",
+      description:"Native messaging host for the Omarchy Browser Plugin Manager browser extension.",
+      allowed_extensions:[$addon]}')
+
+  for dir in "${CHROME_DIRS[@]}"; do
+    mkdir -p "$dir/NativeMessagingHosts"
+    printf '%s\n' "$chromium_manifest" >"$dir/NativeMessagingHosts/$HOST_NAME.json"
+  done
+  for dir in "${FIREFOX_DIRS[@]}"; do
+    mkdir -p "$dir"
+    printf '%s\n' "$firefox_manifest" >"$dir/$HOST_NAME.json"
+  done
+
+  cat <<EOF
+Native messaging host registered:
+  host:  $HOST_NAME
+  path:  $HOST_PATH
+  chrome/chromium/brave origins: $origins
+  firefox add-on:               $FIREFOX_ADDON_ID
+
+Next steps (browser extensions must be loaded manually):
+
+  Chrome / Chromium / Brave
+    1. Open chrome://extensions (brave://extensions)
+    2. Enable Developer mode
+    3. Load unpacked -> select: $ext_abs
+    (Load from exactly that path; the native host origin above is derived from it.)
+
+  Firefox (>= 121, until the add-on is signed via AMO)
+    1. Open about:debugging#/runtime/this-firefox
+    2. Load Temporary Add-on -> select: $ext_dir/manifest.json
+    (Temporary add-ons reset at every Firefox restart; reload them after restarts
+     or ship a signed build via https://addons.mozilla.org.)
+
+Verify the host answers the browser:
+  printf '\\x10\\x00\\x00\\x00{"type":"ping"}' | $HOST_PATH | tail -c +5 ; echo
+EOF
+}
+
+main "$@"

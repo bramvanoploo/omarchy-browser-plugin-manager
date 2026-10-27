@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "Omarchy Browser Plugin Manager",
+  "version": "0.1.6",
+  "description": "Adds Install/Uninstall buttons to one-click-installable plugins on plugins.omarchy.org catalog and plugin pages. Requires the Omarchy Browser Plugin Manager shell plugin and its native messaging host.",
+  "permissions": [
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://plugins.omarchy.org/plugin.html*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://plugins.omarchy.org/",
+        "https://plugins.omarchy.org/index.html*"
+      ],
+      "js": [
+        "catalog.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon.png",
+    "48": "icons/icon.png",
+    "128": "icons/icon.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "bramvanoploo.omarchy-browser-plugin-manager@bram.dev",
+      "strict_min_version": "121.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  }
+}
