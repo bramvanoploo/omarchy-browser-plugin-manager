@@ -98,11 +98,16 @@ main() {
     --arg origin "chrome-extension://$chromium_id/" \
     '{name:$name, path:$path, type:"stdio", allowed_origins:[$origin]}')
 
+  # Firefox REQUIRES "description" in the app manifest (Chrome ignores it):
+  # without it NativeManifests.sys.mjs rejects the whole file and Firefox
+  # reports "No such native application".
   firefox_manifest=$(jq -cn \
     --arg name "$HOST_NAME" \
     --arg path "$HOST_PATH" \
     --arg addon "$FIREFOX_ADDON_ID" \
-    '{name:$name, path:$path, type:"stdio", allowed_extensions:[$addon]}')
+    '{name:$name, path:$path, type:"stdio",
+      description:"Native messaging host for the Omarchy Plugin Installer browser extension.",
+      allowed_extensions:[$addon]}')
 
   for dir in "${CHROME_DIRS[@]}"; do
     mkdir -p "$dir/NativeMessagingHosts"
