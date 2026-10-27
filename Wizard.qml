@@ -331,8 +331,20 @@ Item {
 
   Process {
     id: enableProc
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: { root.installOutput += "\n" + String(text || ""); root.enableOutput += "\n" + String(text || "") } }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: { root.installOutput += "\n" + String(text || ""); root.enableOutput += "\n" + String(text || "") } }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.installOutput += "\n" + String(text || "")
+        root.enableOutput += "\n" + String(text || "")
+      }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.installOutput += "\n" + String(text || "")
+        root.enableOutput += "\n" + String(text || "")
+      }
+    }
     onExited: function (exitCode) {
       console.log("pi: enableProc exit", exitCode)
       if (exitCode !== 0) {
