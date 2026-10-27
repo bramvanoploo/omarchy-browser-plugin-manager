@@ -19,6 +19,126 @@
   let hostAvailable = false;
   let mounted = false;
 
+  // Styles are injected as a <style> node by this script instead of the
+  // manifest's content_css pipeline: in Firefox the manifest CSS injection
+  // demonstrably does not reach the page, leaving buttons unstyled.
+  // Declarations mirror the marketplace's .copy-button rule and .copy-icon
+  // line-art idiom exactly, using the page's own CSS tokens.
+  const STYLES = `
+.pi-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 10px;
+}
+.pi-button {
+  display: inline-flex;
+  min-height: 25px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong, #666666);
+  background: transparent;
+  align-items: center;
+  gap: 6px;
+  color: var(--text, #dddddd);
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pi-button:hover {
+  background: var(--panel-2, rgba(127, 127, 127, 0.12));
+  color: var(--text, #dddddd);
+}
+.pi-button:disabled {
+  opacity: 0.55;
+}
+.pi-button.pi-button-danger {
+  color: var(--accent, #ffcead);
+}
+.pi-icon {
+  position: relative;
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+.pi-icon::before,
+.pi-icon::after {
+  position: absolute;
+  content: "";
+}
+.pi-icon-install::before {
+  left: 6px;
+  top: 0;
+  width: 1px;
+  height: 7px;
+  background: currentColor;
+}
+.pi-icon-install::after {
+  left: 1px;
+  right: 1px;
+  bottom: 1px;
+  height: 5px;
+  border: 1px solid currentColor;
+  border-top: 0;
+}
+.pi-icon-enable::before {
+  inset: 3px;
+  border: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+.pi-icon-disable::before,
+.pi-icon-disable::after {
+  top: 2px;
+  width: 1px;
+  height: 9px;
+  background: currentColor;
+}
+.pi-icon-disable::before {
+  left: 4px;
+}
+.pi-icon-disable::after {
+  right: 4px;
+}
+.pi-icon-uninstall::before,
+.pi-icon-uninstall::after {
+  left: 2px;
+  right: 2px;
+  top: 6px;
+  height: 1px;
+  background: currentColor;
+}
+.pi-icon-uninstall::before {
+  transform: rotate(45deg);
+}
+.pi-icon-uninstall::after {
+  transform: rotate(-45deg);
+}
+.pi-status {
+  color: var(--muted, #aaaaaa);
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 30vw;
+}
+.pi-status[data-state="hidden"] {
+  display: none;
+}
+`;
+
+  function injectStyles() {
+    if (document.getElementById("pi-styles")) return;
+    const style = document.createElement("style");
+    style.id = "pi-styles";
+    style.textContent = STYLES;
+    document.head.append(style);
+  }
+
   // Mirrors the marketplace's marketplaceInstallAvailable() in plugin.js.
   function installable(plugin) {
     return Boolean(
@@ -169,6 +289,7 @@
 
   async function init() {
     if (!PLUGIN_ID) return;
+    injectStyles();
     // Ping first: buttons only ever exist on machines that can act on them.
     hostAvailable = await pingHost();
     console.debug("[plugin-installer] ping:", hostAvailable);
