@@ -28,18 +28,19 @@
 .pi-group {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  margin-left: 10px;
+  gap: 5px;
+  margin-left: 5px;
 }
 .pi-button {
   display: inline-flex;
+  position: relative;
   min-height: 25px;
   padding: 0 8px !important;
   border: 1px solid var(--line-strong, #666666) !important;
   border-radius: 0 !important;
   background: transparent !important;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   color: var(--text, #dddddd) !important;
   font-family: var(--mono, monospace);
   font-size: 11px;
@@ -118,19 +119,38 @@
 .pi-icon-uninstall::after {
   transform: rotate(-45deg);
 }
-.pi-status {
-  color: var(--muted, #aaaaaa);
-  font-family: var(--mono, monospace);
+/* Tooltip mirroring the marketplace's .control-tooltip: shown on hover/
+ * focus of the button, anchored above its right edge. */
+.pi-tooltip {
+  position: absolute;
+  z-index: 6;
+  right: 0;
+  bottom: calc(100% + 8px);
+  left: auto;
+  width: max-content;
+  max-width: min(300px, calc(100vw - 56px));
+  padding: 5px 7px;
+  border: 1px solid var(--line-strong, #666666);
+  border-radius: 0;
+  background: var(--panel-2, #1e1e24);
+  color: var(--text, #dddddd);
+  font-family: var(--sans, sans-serif);
   font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 30vw;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.3;
+  text-align: left;
+  text-transform: none;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
-.pi-status[data-state="hidden"] {
-  display: none;
+.pi-button:hover .pi-tooltip,
+.pi-button:focus-visible .pi-tooltip {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 `;
 
@@ -187,60 +207,53 @@
     return Boolean(response && response.ok);
   }
 
-  // Icon + label markup mirroring the marketplace Copy button (its icon is
-  // a 13px CSS line-art span); visuals come from .pi-button in content.css,
-  // which mirrors the marketplace .copy-button rule.
-  function makeButton(label, extraClass, iconClass) {
+  // Icon + label + tooltip markup mirroring the marketplace Copy button
+  // (13px CSS line-art icon, .control-tooltip hover box, aria-label).
+  function makeButton(label, tooltip, extraClass, iconClass) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "copy-button pi-button" + (extraClass ? " " + extraClass : "");
+    button.className = "copy-button has-control-tooltip pi-button" + (extraClass ? " " + extraClass : "");
+    button.setAttribute("aria-label", tooltip);
     const icon = document.createElement("span");
     icon.className = "pi-icon " + iconClass;
     icon.setAttribute("aria-hidden", "true");
     const labelEl = document.createElement("span");
     labelEl.dataset.label = "";
     labelEl.textContent = label;
-    button.append(icon, labelEl);
+    const tip = document.createElement("span");
+    tip.className = "control-tooltip pi-tooltip";
+    tip.setAttribute("role", "tooltip");
+    tip.setAttribute("aria-hidden", "true");
+    tip.textContent = tooltip;
+    button.append(icon, labelEl, tip);
     return button;
   }
 
-  // One request per button: send the action, show the result, and run the
-  // optional after-action update (the Enable/Disable toggle relabels itself).
-  function wireAction(button, plugin, type, status, afterOpen) {
+  // One request per button: send the action and let the wizard on the
+  // desktop be the feedback; run the optional after-action update (the
+  // Enable/Disable toggle relabels itself).
+  function wireAction(button, plugin, type, afterOpen) {
     let busy = false;
     button.addEventListener("click", async () => {
       if (busy) return;
       busy = true;
       button.disabled = true;
-      setStatus(status, "Requesting installer\u2026");
       const response = await talkToHost({
         type: typeof type === "function" ? type() : type,
         id: plugin.id,
         repo: plugin.repo,
         name: plugin.name,
       });
-      if (response.ok) {
-        setStatus(status, "Opened in the installer \u2192 confirm it on your desktop");
-        if (afterOpen) {
-          // Toggle buttons stay usable: the host re-checks live state on every
-          // click, so a cancelled wizard can simply be reopened.
-          afterOpen();
-        } else {
-          button.textContent = "Installer opened";
-        }
-      } else {
-        setStatus(status, `Installer unavailable: ${response.reason || "unknown"}`);
+      if (response.ok && afterOpen) {
+        // Toggle buttons stay usable: the host re-checks live state on every
+        // click, so a cancelled wizard can simply be reopened.
+        afterOpen();
       }
       // Keep toggle buttons enabled after a successful summon (the wizard may
       // be cancelled); one-shot buttons stay spent.
       button.disabled = !(response.ok && afterOpen);
       busy = false;
     });
-  }
-
-  function setStatus(status, text) {
-    status.textContent = text;
-    status.dataset.state = "show";
   }
 
   function mountButtons(plugin, state) {
@@ -255,38 +268,39 @@
     const group = document.createElement("span");
     group.className = "pi-group";
 
-    const status = document.createElement("span");
-    status.className = "pi-status";
-    status.dataset.state = "hidden";
-
+    const confirmTip = "on this machine \u2014 the Omarchy wizard will ask you to confirm";
     const buttons = [];
     if (!state.installed) {
-      const install = makeButton("Install with Omarchy", "", "pi-icon-install");
-      wireAction(install, plugin, "install", status);
+      const install = makeButton("Install with Omarchy", "Install this plugin " + confirmTip, "", "pi-icon-install");
+      wireAction(install, plugin, "install");
       buttons.push(install);
     } else {
-      // Toggle flips its own label and icon between Enable/Disable after the
-      // wizard was opened; the authoritative state is re-checked live by the
-      // host.
+      // Toggle flips its own label, icon and tooltip between Enable/Disable
+      // after the wizard was opened; the authoritative state is re-checked
+      // live by the host.
       let enabled = Boolean(state.enabled);
-      const toggle = makeButton("", "", "pi-icon-disable");
+      const toggle = makeButton("", "", "", "pi-icon-disable");
       const applyToggle = () => {
-        toggle.querySelector("[data-label]").textContent = enabled ? "Disable" : "Enable";
+        const verb = enabled ? "Disable" : "Enable";
+        const tip = verb + " this plugin " + confirmTip;
+        toggle.querySelector("[data-label]").textContent = verb;
         toggle.querySelector(".pi-icon").className =
           "pi-icon " + (enabled ? "pi-icon-disable" : "pi-icon-enable");
+        toggle.setAttribute("aria-label", tip);
+        toggle.querySelector(".pi-tooltip").textContent = tip;
       };
       applyToggle();
-      wireAction(toggle, plugin, () => (enabled ? "disable" : "enable"), status, () => {
+      wireAction(toggle, plugin, () => (enabled ? "disable" : "enable"), () => {
         enabled = !enabled;
         applyToggle();
       });
-      const uninstall = makeButton("Uninstall", "pi-button-danger", "pi-icon-uninstall");
-      wireAction(uninstall, plugin, "uninstall", status);
+      const uninstall = makeButton("Uninstall", "Uninstall this plugin " + confirmTip, "pi-button-danger", "pi-icon-uninstall");
+      wireAction(uninstall, plugin, "uninstall");
       buttons.push(toggle, uninstall);
     }
 
     head.insertBefore(group, copy);
-    group.append(...buttons, status, copy);
+    group.append(...buttons, copy);
     mounted = true;
   }
 
