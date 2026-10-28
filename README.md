@@ -65,7 +65,8 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
 - **`Wizard.qml` + `manifest.json`** — the Omarchy shell overlay plugin
   (`bramvanoploo.omarchy-browser-plugin-manager`). It re-fetches catalog + repo manifest (payload
   is never trusted for display), re-checks local state for destructive/toggle
-  flows, refuses to uninstall itself, and drives
+  flows, runs its own uninstall through the detached worker (unregistering
+  the native messaging host first), and drives
   install / enable / disable / remove via the official `omarchy plugin` CLI.
 
 ## Browser extensions
@@ -109,25 +110,21 @@ without the browser stores, see [INSTALL.md](INSTALL.md).
 
 ## Uninstall
 
-Uninstalling through the wizard (browser Uninstall button, or the
-extension-prompt's "Uninstall Omarchy plugin" option) also unregisters the
-native messaging host automatically. Removing the plugin from a terminal
-instead, unregister first — the setup script lives in the plugin folder,
-so it is gone after removal:
+Uninstalling through the wizard — the browser's Uninstall button on the
+plugin page, or the "Uninstall Omarchy plugin" option in the extension
+prompt — unregisters the native messaging host and removes the plugin in
+one confirmed action; no manual steps.
 
-1. Unregister the native messaging host:
-
-```bash
-~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup --uninstall
-```
-
-2. Remove the shell plugin:
+Removing from a terminal instead, unregister first: the setup script lives
+inside the plugin folder and is gone after removal (the plugin cannot clean
+up behind itself — `omarchy plugin remove` has no lifecycle hooks):
 
 ```bash
-omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager
+~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup --uninstall \
+  && omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager --yes
 ```
 
-3. Remove the browser extension (chrome://extensions / about:addons).
+Then remove the browser extension (chrome://extensions / about:addons).
 
 ## Security model
 
@@ -144,8 +141,11 @@ omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager
    happen, and runs the official installer path
    (`omarchy plugin add/enable/disable/remove`) only after you confirm. When
    an action finishes the result is a desktop notification; no completion
-   dialog is shown. The wizard refuses to uninstall itself, and the host
-   rejects toggles for plugins that are not in the marketplace catalog.
+   dialog is shown. The wizard's own uninstall runs through the detached
+   worker (unregistering the native messaging host, then removing the
+   plugin; removing the plugin reloads the shell and destroys the wizard),
+   and the host rejects toggles for plugins that are not in the marketplace
+   catalog.
 5. Installs the repo's current HEAD, which may differ from the marketplace's
    verified snapshot — the wizard says so.
 

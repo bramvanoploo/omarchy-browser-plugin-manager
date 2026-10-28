@@ -484,9 +484,6 @@ Item {
           root.catalogError = "Plugin is already enabled"
         } else if (root.mode === "disable" && !entry.enabled) {
           root.catalogError = "Plugin is already disabled"
-        } else if (root.mode === "uninstall"
-                   && root.manifest && String(root.manifest.id) === root.pluginId) {
-          root.catalogError = "The installer cannot uninstall itself. Remove it in a terminal: omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager --yes"
         } else if (root.mode === "enable") {
           root.catalogError = ""
           root.stage = "enable-confirm"
