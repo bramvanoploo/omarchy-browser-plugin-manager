@@ -7,6 +7,11 @@
 #   dist/<slug>-<version>.xpi         Firefox add-on (permanent install on
 #                                     ESR / Developer Edition / Nightly,
 #                                     which allow unsigned add-ons).
+#   dist/<slug>-<version>-listed.xpi  Firefox add-on for the AMO LISTED
+#                                     submission: no browser_specific_settings
+#                                     .gecko.id (that ID is registered on AMO
+#                                     via unlisted signing; AMO rejects it for
+#                                     listed and assigns <slug>@addons.mozilla.org).
 #   dist/<slug>-<version>-chrome.zip  Chrome Web Store / packed extension zip.
 #   dist/<slug>-<version>-<date>.zip  Full source archive; the Chrome /
 #                                     Chromium / Brave path (Load unpacked)
@@ -29,6 +34,7 @@ trap 'rm -rf "$STAGE"' EXIT
 
 mkdir -p "$DIST_DIR"
 rm -f "$DIST_DIR/$NAME-$VERSION.xpi" \
+      "$DIST_DIR/$NAME-$VERSION-listed.xpi" \
       "$DIST_DIR/$NAME-$VERSION-chrome.zip" \
       "$DIST_DIR/$NAME-$VERSION-"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].zip
 
@@ -49,6 +55,22 @@ jq '.background = {scripts: ["background.js"]}' "$STAGE/xpi/manifest.json" > "$S
 ( cd "$STAGE/xpi" && \
   zip -qX "$DIST_DIR/$NAME-$VERSION.xpi" manifest.json && \
   zip -qrX "$DIST_DIR/$NAME-$VERSION.xpi" . -x manifest.json )
+
+# --- Firefox AMO-LISTED upload: same scripts transform, NO manifest ID. ---
+# The manifest's self-distribution ID is registered on AMO via unlisted
+# signing, and AMO rejects it for listed submissions ("Duplicate add-on ID
+# found"). The listed upload must omit the ID; AMO then assigns
+# <slug>@addons.mozilla.org. The native messaging host registers both IDs
+# (see bin/plugin-installer-setup).
+mkdir -p "$STAGE/listed"
+cp -r "$EXT_DIR/." "$STAGE/listed/"
+rm -f "$STAGE/listed/.amo-upload-uuid"
+jq '.background = {scripts: ["background.js"]}
+   | del(.browser_specific_settings.gecko.id)' "$STAGE/listed/manifest.json" > "$STAGE/listed/manifest.json.tmp" \
+  && mv "$STAGE/listed/manifest.json.tmp" "$STAGE/listed/manifest.json"
+( cd "$STAGE/listed" && \
+  zip -qX "$DIST_DIR/$NAME-$VERSION-listed.xpi" manifest.json && \
+  zip -qrX "$DIST_DIR/$NAME-$VERSION-listed.xpi" . -x manifest.json )
 
 # --- Chrome / Chromium / Brave zip: same root-level zip layout, the Chrome
 # Web Store upload format. The Chrome-only "key" (stable extension ID) is
@@ -80,6 +102,7 @@ rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist" "$STAGE_SRC/chrome-key.pem" "$STAGE_S
 cat <<EOF
 Built in dist/:
   $NAME-$VERSION.xpi                                  (Firefox add-on)
+  $NAME-$VERSION-listed.xpi                           (AMO listed submission upload)
   $NAME-$VERSION-chrome.zip                           (Chrome Web Store upload)
   $NAME-$VERSION-$STAMP.zip                           (Chrome family / source)
 
