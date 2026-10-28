@@ -29,8 +29,9 @@ import qs.Ui
 // cancel, or uninstall the Omarchy plugin (detached worker, since removing
 // this plugin unloads the wizard).
 // The native messaging host registration is automated: registering on every
-// load is idempotent, and the uninstall worker unregisters before removing
-// the plugin (the setup script lives inside the plugin directory).
+// load is idempotent, the uninstall worker unregisters before removing the
+// plugin, and a destruction-time watcher unregisters after a terminal
+// removal (self-cleanup copy parked in the state dir).
 
 Item {
   id: root
@@ -515,6 +516,22 @@ Item {
   }
 
   Component.onCompleted: hostSetupProc.running = true
+
+  // Self-cleanup: removing the plugin (terminal `omarchy plugin remove`)
+  // destroys this overlay on the shell reload; a detached watcher checks a
+  // few seconds later that the plugin folder really is gone (a plain reload
+  // or disable leaves it in place) and then unregisters the native
+  // messaging host via the standalone copy of the setup script that
+  // registration parks in the state dir. The wizard-driven uninstall path
+  // already unregisters in its worker before removing.
+  Component.onDestruction: {
+    Quickshell.execDetached(["bash", "-c",
+      "sleep 3;"
+      + " d=\"$HOME/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager\";"
+      + " [ -d \"$d\" ] && exit 0;"
+      + " s=\"$HOME/.local/state/omarchy/bramvanoploo.omarchy-browser-plugin-manager/plugin-installer-setup\";"
+      + " [ -f \"$s\" ] && bash \"$s\" --uninstall >/dev/null 2>&1; true"])
+  }
 
   // Default browser behind the extension prompt: xdg-settings and the
   // x-scheme-handler/https association answer the same question; each fills

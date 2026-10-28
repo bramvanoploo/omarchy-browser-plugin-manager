@@ -113,15 +113,23 @@ without the browser stores, see [INSTALL.md](INSTALL.md).
 Uninstalling through the wizard — the browser's Uninstall button on the
 plugin page, or the "Uninstall Omarchy plugin" option in the extension
 prompt — unregisters the native messaging host and removes the plugin in
-one confirmed action; no manual steps.
+one confirmed action.
 
-Removing from a terminal instead, unregister first: the setup script lives
-inside the plugin folder and is gone after removal (the plugin cannot clean
-up behind itself — `omarchy plugin remove` has no lifecycle hooks):
+Removing from a terminal works too:
 
 ```bash
-~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup --uninstall \
-  && omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager --yes
+omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager
+```
+
+Removing the plugin unloads the wizard, and its detached self-cleanup
+unregisters the native messaging host a few seconds later (best effort:
+it needs the shell running at removal time and a registration performed
+by a plugin version that includes the self-cleanup). If the manifests
+survive anyway, unregister manually — the setup script lives inside the
+plugin folder and is gone after removal:
+
+```bash
+~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup --uninstall
 ```
 
 Then remove the browser extension (chrome://extensions / about:addons).

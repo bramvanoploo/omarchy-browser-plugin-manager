@@ -167,6 +167,14 @@ main() {
     printf '%s\n' "$firefox_manifest" >"$dir/$HOST_NAME.json"
   done
 
+  # Park a standalone copy of this script for self-cleanup: when the plugin
+  # folder is removed, the wizard's destruction hook spawns a detached
+  # watcher that runs this copy with --uninstall. Manifest removal is
+  # self-contained; the copy must never be run for registration from here
+  # (its host path would point into the state dir, not the plugin folder).
+  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager"
+  mkdir -p "$state_dir" && cp -f "$SCRIPT_PATH" "$state_dir/plugin-installer-setup"
+
   cat <<EOF
 Native messaging host registered:
   host:  $HOST_NAME
