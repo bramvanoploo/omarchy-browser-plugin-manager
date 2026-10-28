@@ -142,8 +142,6 @@ Item {
     root.extensionFamily === "chromium" ? "Firefox browsers" : "Chromium browsers"
   readonly property string otherExtensionUrl:
     root.extensionFamily === "chromium" ? root.amoUrl : root.cwsUrl
-  readonly property string primaryLinkText:
-    root.extensionFamily === "chromium" ? "Chrome Web Store page" : "Firefox Add-ons page"
   readonly property string otherLinkText:
     root.extensionFamily === "chromium" ? "Firefox Add-ons page" : "Chrome Web Store page"
 
@@ -998,10 +996,6 @@ Item {
             color: Color.urgent
             text: "Without the browser extension this plugin does nothing: "
               + "no Install buttons will appear on plugins.omarchy.org."
-          }
-          PiTextLink {
-            text: "Extension page for your browser: "
-              + root.linkTag(root.primaryExtensionUrl, root.primaryLinkText)
           }
           PiTextLink {
             text: "For " + root.otherFamilyName + ": "
