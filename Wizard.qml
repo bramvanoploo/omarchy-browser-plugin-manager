@@ -824,30 +824,30 @@ Item {
     readonly property real bw: Math.max(1, Math.round(u))
     // stem
     Rectangle {
-      x: Math.round(root.u * 6.5 - PiInstallIcon.bw / 2)
+      x: Math.round(PiInstallIcon.u * 6.5 - PiInstallIcon.bw / 2)
       width: PiInstallIcon.bw
-      height: Math.round(root.u * 7)
+      height: Math.round(PiInstallIcon.u * 7)
       color: Color.accent
     }
     // tray: left wall, right wall, floor (CSS: border 1, no top)
     Rectangle {
-      x: Math.round(root.u)
-      y: Math.round(size - root.u * 6)
+      x: Math.round(PiInstallIcon.u)
+      y: Math.round(PiInstallIcon.size - PiInstallIcon.u * 6)
       width: PiInstallIcon.bw
-      height: Math.round(root.u * 5)
+      height: Math.round(PiInstallIcon.u * 5)
       color: Color.accent
     }
     Rectangle {
-      x: Math.round(size - root.u - PiInstallIcon.bw)
-      y: Math.round(size - root.u * 6)
+      x: Math.round(PiInstallIcon.size - PiInstallIcon.u - PiInstallIcon.bw)
+      y: Math.round(PiInstallIcon.size - PiInstallIcon.u * 6)
       width: PiInstallIcon.bw
-      height: Math.round(root.u * 5)
+      height: Math.round(PiInstallIcon.u * 5)
       color: Color.accent
     }
     Rectangle {
-      x: Math.round(root.u)
-      y: Math.round(size - root.u * 2)
-      width: Math.round(size - root.u * 2)
+      x: Math.round(PiInstallIcon.u)
+      y: Math.round(PiInstallIcon.size - PiInstallIcon.u * 2)
+      width: Math.round(PiInstallIcon.size - PiInstallIcon.u * 2)
       height: PiInstallIcon.bw
       color: Color.accent
     }
