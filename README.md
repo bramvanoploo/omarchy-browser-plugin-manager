@@ -4,72 +4,58 @@ One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org
 
 ![Omarchy Browser Plugin Manager](preview.png)
 
-Clicking **Install** on a plugin page opens a wizard overlay on the desktop
-that validates the request (live catalog entry + repository manifest), shows
-what will be installed, and for bar widgets asks where the bar icon goes
-(left, center, or right); the plugin manifest's default section is labelled
-"(default)" and all four choices are styled the same. Nothing is installed
-before that choice, so Cancel there is a plain close.
-It installs only after you confirm, via the
-official `omarchy plugin add` + `omarchy plugin enable --section` (clone +
-manifest validation, no code execution). The install verifies the result by
-checking both the enabled flag and the bar layout entry, re-applying the
-section if the shell's post-install config sweep reverts it.
+Clicking **Install** on a plugin page opens a wizard overlay on the desktop:
+it re-validates the request (live catalog entry + repository manifest), shows
+what will be installed, and for bar widgets first asks which bar section the
+icon goes in (left, center, right; the manifest's default is labelled
+"(default)" — nothing is installed before that choice, so Cancel is a plain
+close). It installs only after you confirm, via the official
+`omarchy plugin add` + `omarchy plugin enable --section` (clone + manifest
+validation, no code execution), then verifies the result (enabled flag + bar
+layout entry), re-applying the section if the shell's post-install config
+sweep reverts it.
 
-Once a plugin is installed, the page swaps the Install button for
-**Enable/Disable** and **Uninstall** buttons (state read live from the host,
-never from the page). All four actions run through the wizard, which asks you
-to confirm before anything runs. When an action finishes, the result is a
-desktop notification: no completion dialog is shown.
-
-On the catalog page (index.html), each card's "Copy install command" button
-is kept and gains a single icon-only button directly to its left: a green
-**Install** icon when the plugin is not installed, a red **Uninstall** icon
-when it is (tooltips "Install directly"/"Uninstall directly", same icons,
-tones, and actions as the plugin page). The no-action "Manual" badges are
-never touched.
+Once a plugin is installed, the page swaps Install for **Enable/Disable** and
+**Uninstall** buttons (state read live from the host, never from the page).
+Every action ends in a desktop notification — no completion dialog. On the
+catalog page, each card gains an icon-only Install/Uninstall button beside
+its "Copy install command" button; "Manual" badges are never touched.
 
 ## Architecture
 
 ```
 browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overlay
-                         validates vs catalog.json     omarchy plugin add/enable/
-                         never installs                disable/remove; confirm
-                                                       first, notify when done
+                          validates vs catalog.json     omarchy plugin add/enable/
+                          never installs                disable/remove; confirm
+                                                        first, notify when done
 ```
 
-- **`extension/`** — MV3 WebExtension for Chrome, Chromium, Brave (Firefox MV3
-  compatible; the source manifest carries no Chrome-only `"key"` — Firefox
-  flags unknown properties and the CWS dashboard rejects it; the store item
-  ID is store-assigned, see below).
-  Content scripts match `plugins.omarchy.org/plugin.html?id=...`
-  (`content.js`, button groups) and the catalog `index.html` (`catalog.js`,
-  icon-only Install/Uninstall button beside each card's "Copy install command")
-  and inject buttons **only when**:
-  1. the marketplace's own rule passes for the plugin
-     (`installAvailable && upstreamCheckStatus !== "failed" && installCommand`), and
-  2. a ping to the local native messaging host succeeds.
-  The button set then follows the host's live `status` report
-  (`installed`/`enabled` from `omarchy plugin list --json`).
-  Manual-setup pages (like `bramvanoploo.omaguake`) and machines without this
-  plugin show no buttons — the site renders untouched.
-- **`bin/omarchy-plugin-install-host`** — native messaging host. Message types:
-  `ping`, `status` (local install state), `status_all` (batch report for the
-  catalog page), `install`, `uninstall`, `enable`,
-  `disable`. Each action is re-validated against a **fresh** `catalog.json`
-  fetch (id, repo match) and live local state (`not-installed`,
-  `already-enabled`, `already-disabled`, `already-installed`). It summons the
-  wizard and never installs anything itself.
+- **`extension/`** — MV3 WebExtension for Chrome, Chromium, Brave
+  (Firefox-compatible MV3; the source manifest carries no Chrome-only
+  `"key"` — Firefox flags it and the CWS dashboard rejects it). Buttons are
+  injected on `plugin.html?id=...` (button groups) and the catalog
+  `index.html` (icon-only button) only when the marketplace's own rule
+  passes (`installAvailable && upstreamCheckStatus !== "failed" &&
+  installCommand`) **and** a ping to the local host succeeds; the button set
+  then follows the host's live `status` report (`omarchy plugin list
+  --json`). Manual-setup pages and machines without this plugin show no
+  buttons — the site renders untouched.
+- **`bin/omarchy-plugin-install-host`** — native messaging host: `ping`,
+  `status`, `status_all` (batch for the catalog page), `install`,
+  `uninstall`, `enable`, `disable`. Each action is re-validated against a
+  **fresh** `catalog.json` fetch (id, repo match) and live local state
+  (`not-installed`, `already-enabled`, `already-disabled`,
+  `already-installed`). It summons the wizard and never installs anything.
 - **`bin/plugin-installer-setup`** — registers the native host manifest for
-  Chrome, Chromium, Brave, and Firefox, and prints extension-loading steps.
-  The shell plugin runs it automatically on every shell start (idempotent),
-  and unregisters via `--uninstall` when the plugin is removed.
-- **`Wizard.qml` + `manifest.json`** — the Omarchy shell overlay plugin
-  (`bramvanoploo.omarchy-browser-plugin-manager`). It re-fetches catalog + repo manifest (payload
-  is never trusted for display), re-checks local state for destructive/toggle
-  flows, runs its own uninstall through the detached worker (unregistering
-  the native messaging host first), and drives
-  install / enable / disable / remove via the official `omarchy plugin` CLI.
+  Chrome, Chromium, Brave, and Firefox; `--uninstall` unregisters. The
+  shell plugin runs it automatically on every shell start (idempotent) and
+  unregisters at uninstall.
+- **`Wizard.qml` + `manifest.json`** — the shell overlay plugin
+  (`bramvanoploo.omarchy-browser-plugin-manager`). Re-fetches catalog + repo
+  manifest (the payload is never trusted for display), re-checks local
+  state for destructive/toggle flows, and drives install / enable /
+  disable / remove via the official `omarchy plugin` CLI; its own
+  uninstall runs detached (unregistering the host first).
 
 ## Browser extensions
 
@@ -78,21 +64,16 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
 | Firefox-based (Firefox incl. ESR, Waterfox, LibreWolf, Tor Browser, GNU IceCat, Zen) | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
 | Chromium-based (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | [Chrome Web Store](https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf) |
 
-The Omarchy plugin registers the native messaging host on the machine
-itself (every shell start, idempotently); the browser extension alone is
-not enough.
+The Omarchy plugin registers the native messaging host itself (every shell
+start, idempotently); the browser extension alone is not enough.
 
-After installing this plugin in Omarchy, the wizard shows a one-time
-follow-up prompt (install only, not on later enables): it detects the default
-browser
+After installing this plugin in Omarchy, the wizard shows a one-time prompt
+(install only, not on later enables): it detects the default browser
 (`xdg-settings get default-web-browser`, falling back to the
-`x-scheme-handler/https` association) and opens the matching extension page
-from the table above — Firefox Add-ons for Firefox-based browsers, Chrome Web
-Store for Chromium-based ones — alongside a clickable link to the other
-family's extension. Cancelling the prompt shows a warning that the plugin is
-inert without its browser extension, with buttons to open the extension page,
-cancel, or uninstall the Omarchy plugin (run detached, since removing the
-plugin unloads the wizard itself).
+`x-scheme-handler/https` association), opens the matching extension page
+from the table above, and links the other family's page. Cancelling shows a
+warning that the plugin is inert without its browser extension, with buttons
+to open the extension page, cancel, or uninstall the Omarchy plugin.
 
 ## Installation
 
@@ -102,60 +83,44 @@ plugin unloads the wizard itself).
 omarchy plugin add https://github.com/bramvanoploo/omarchy-browser-plugin-manager --enable
 ```
 
-2. Install the browser extension for your browser from the table above
-   (the wizard shows its one-time prompt linking the right page right
-   after step 1).
-
-The plugin registers the native messaging host automatically on every
-shell start (idempotent); no manual setup step is needed. For installing
-without the browser stores, see [INSTALL.md](INSTALL.md).
+2. Install the browser extension from the table above — the wizard's
+   one-time prompt right after step 1 links the right page. No manual host
+   setup is needed. For installing without the browser stores, see
+   [INSTALL.md](INSTALL.md).
 
 ## Uninstall
 
-Uninstalling through the wizard — the browser's Uninstall button on the
-plugin page, or the "Uninstall Omarchy plugin" option in the extension
-prompt — unregisters the native messaging host and removes the plugin in
-one confirmed action.
+The wizard path (the browser's Uninstall button, or "Uninstall Omarchy
+plugin" in the extension prompt) unregisters the native messaging host and
+removes the plugin in one confirmed action.
 
-Removing from a terminal works too:
+Terminal removal works too:
 
 ```bash
 omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager
 ```
 
-Removing the plugin unloads the wizard, and its detached self-cleanup
-unregisters the native messaging host a few seconds later (best effort:
-it needs the shell running at removal time and a registration performed
-by a plugin version that includes the self-cleanup). If the manifests
-survive anyway, unregister manually — the setup script lives inside the
-plugin folder and is gone after removal:
-
-```bash
-~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup --uninstall
-```
-
-Then remove the browser extension (chrome://extensions / about:addons).
+Removing the plugin unloads the wizard, whose detached self-cleanup
+unregisters the host a few seconds later (best effort: it needs the shell
+running at removal time). If the manifests survive anyway, run
+`~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup --uninstall`
+before removing — the script lives inside the plugin folder. Then remove the
+browser extension (chrome://extensions / about:addons).
 
 ## Security model
 
-1. **Browser** shows its own "open in app?" style gate when relevant; the
-   extension is scoped to `plugins.omarchy.org` only.
-2. **Native host manifest** pins the allowed origins to the extension IDs
-   (Chrome family: the path-derived unpacked ID, the key-pinned stable ID,
-   and the Chrome Web Store item ID) / add-on IDs (Firefox: self-distribution
-   and AMO listing) — no other extension can talk to it. Chrome also
-   requires the host manifest's `description` field (the setup script sets it).
-3. **Host** re-validates against the live catalog; forged payloads for
-   manual-setup or compatibility-failed plugins are rejected.
-4. **Wizard** is the consent gate: it re-validates the request (fresh catalog
-   entry, repository manifest, live local plugin list), shows what will
-   happen, and runs the official installer path
-   (`omarchy plugin add/enable/disable/remove`) only after you confirm. When
-   an action finishes the result is a desktop notification; no completion
-   dialog is shown. The wizard's own uninstall runs through the detached
-   worker (unregistering the native messaging host, then removing the
-   plugin; removing the plugin reloads the shell and destroys the wizard),
-   and the host rejects toggles for plugins that are not in the marketplace
+1. **Browser**: the extension is scoped to `plugins.omarchy.org` only.
+2. **Native host manifest** pins allowed origins/add-ons to the known
+   extension IDs (Chrome family: path-derived unpacked, key-pinned packed,
+   CWS item; Firefox: self-distribution + AMO listing) — no other extension
+   can talk to it.
+3. **Host** re-validates every action against a fresh live catalog fetch;
+   forged payloads for manual-setup or compatibility-failed plugins are
+   rejected.
+4. **Wizard** is the consent gate: it re-validates the request (fresh
+   catalog entry, repository manifest, live local plugin list), shows what
+   will happen, and runs the official `omarchy plugin` CLI only after you
+   confirm; the host rejects toggles for plugins not in the marketplace
    catalog.
 5. Installs the repo's current HEAD, which may differ from the marketplace's
    verified snapshot — the wizard says so.
@@ -168,35 +133,32 @@ git init . && git add -A && git commit -m "init"   # if not already a repo
 omarchy plugin add file://$PWD --yes
 omarchy plugin enable bramvanoploo.omarchy-browser-plugin-manager
 
-# 2. The native messaging host registers itself: the plugin runs
-#    bin/plugin-installer-setup on every shell start. Load the browser
-#    extension from this clone (the registration pins its ID):
+# 2. The native messaging host registers itself on every shell start.
+#    Load the browser extension from this clone (the registration pins its ID):
 #   Chrome/Chromium/Brave: chrome://extensions -> Developer mode -> Load unpacked -> extension/
 #   Firefox: about:debugging#/runtime/this-firefox -> Load Temporary Add-on -> extension/manifest.json
 ```
 
-Chrome installs carry three extension IDs, all registered by the setup
-script: "Load unpacked" uses the path-derived ID; zipped packed installs
-use the key-pinned ID `nbngempephjmagmlfbfdodboeimfoibp` (derived from
-`chrome-key.pem`, gitignored, mode 600 — back it up: losing it means
-losing that ID); the Chrome Web Store listing uses the store-assigned ID
-`nalcgjmbglkcmohokidcmogcbpmhkdjf` (the 2025+ CWS dashboard rejects
-manifests containing `"key"`, so the store derives its ID from its own
-keypair at item creation — copy it from the dashboard).
-(The 2026-10-27 identity rename rotated the keypair; the superseded keypair
-is kept as `chrome-key-2026-10-27.pem.bak`, its ID
-`ojmmnnlphgmhjlmcfmanmnfialliaehj` is unused.)
+Chrome installs carry three registered IDs: "Load unpacked" uses the
+path-derived ID; zipped packed installs use the key-pinned ID
+`nbngempephjmagmlfbfdodboeimfoibp` (from `chrome-key.pem`, gitignored,
+mode 600 — back it up: losing it loses that ID); the CWS listing uses the
+store-assigned ID `nalcgjmbglkcmohokidcmogcbpmhkdjf` (the 2025+ CWS
+dashboard rejects manifests containing `"key"`, so the store derives its ID
+from its own keypair). The 2026-10-27 identity rename rotated the keypair;
+the superseded one is kept as `chrome-key-2026-10-27.pem.bak` (ID
+`ojmmnnlphgmhjlmcfmanmnfialliaehj`, unused).
 
-Verify without a browser:
+Verify without a browser — the per-browser host manifests exist:
 
 ```bash
-# Registration: the per-browser host manifests exist:
 ls ~/.config/google-chrome/NativeMessagingHosts/bramvanoploo_omarchy_browser_plugin_manager.json \
    ~/.config/mozilla/native-messaging-hosts/bramvanoploo_omarchy_browser_plugin_manager.json
-# Host reachability: the extension pings it on every plugin page; a terminal
-# run feeds the host no browser origin, so it exits silently by design
-# (the host authenticates its caller) and answers nothing.
 ```
+
+The host authenticates its caller: a terminal run feeds it no browser
+origin, so it exits silently by design. The extension pings it on every
+plugin page — the Install button appearing is the live proof.
 
 ## Roadmap
 
