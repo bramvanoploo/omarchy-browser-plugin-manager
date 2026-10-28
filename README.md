@@ -66,6 +66,31 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
   flows, refuses to uninstall itself, and drives
   install / enable / disable / remove via the official `omarchy plugin` CLI.
 
+## Browser extensions
+
+| Browser | Extension |
+| --- | --- |
+| Firefox (incl. ESR) | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
+| Waterfox | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
+| LibreWolf | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
+| Tor Browser | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
+| GNU IceCat | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
+| Chromium-based (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | Chrome Web Store — coming soon |
+
+The native messaging host must still be registered on the machine
+(`bin/plugin-installer-setup`); the browser extension alone is not enough.
+
+After installing (or enabling) this plugin in Omarchy, the wizard shows a
+follow-up prompt: it detects the default browser
+(`xdg-settings get default-web-browser`, falling back to the
+`x-scheme-handler/https` association) and opens the matching extension page
+from the table above — Firefox Add-ons for Firefox-based browsers, Chrome Web
+Store for Chromium-based ones — alongside a clickable link to the other
+family's extension. Cancelling the prompt shows a warning that the plugin is
+inert without its browser extension, with buttons to open the extension page,
+cancel, or uninstall the Omarchy plugin (run detached, since removing the
+plugin unloads the wizard itself).
+
 ## Security model
 
 1. **Browser** shows its own "open in app?" style gate when relevant; the

@@ -17,6 +17,16 @@ import qs.Ui
 // Cancel is a plain close.
 // When the action finishes, the result is a desktop notification only: no
 // completion dialog is shown and the overlay closes itself.
+// Exception: finishing an install/enable of this manager itself enters the
+// browser-extension prompt stage. The Omarchy plugin is only half the system;
+// the Install buttons in the browser come from the matching browser extension.
+// The prompt detects the default browser, sends the user to the Firefox
+// add-on page (addons.mozilla.org) for Firefox-based browsers, or to the
+// Chrome Web Store page for Chromium-based ones, and explains what happens
+// there and why. Cancelling shows a follow-up stage: the plugin does nothing
+// without its browser extension, with options to open the extension page,
+// cancel, or uninstall the Omarchy plugin (detached worker, since removing
+// this plugin unloads the wizard).
 
 Item {
   id: root
@@ -25,9 +35,28 @@ Item {
   property var shell: null
   property var manifest: null
 
+  // This manager plugin's own id: the browser-extension prompt targets its
+  // own extension, never the plugin passed in the payload.
+  readonly property string managerId: (root.manifest && root.manifest.id)
+    ? String(root.manifest.id) : "bramvanoploo.omarchy-browser-plugin-manager"
+
+  // Browser extension pages: Firefox-based browsers install the add-on from
+  // AMO; Chromium-based browsers that support Chrome Web Store extensions
+  // install from the CWS listing page (store-assigned item id; the
+  // pretty-slug URL is TBD — the bare-id URL redirects to the listing).
+  readonly property string amoUrl:
+    "https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/"
+  readonly property string cwsUrl:
+    "https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf"
+
+  // Default browser (.desktop id) behind the extension prompt; detected
+  // when the prompt opens, empty when detection failed (fallback: Firefox).
+  property string defaultBrowserId: ""
+  property bool defaultBrowserLoaded: false
+
   property bool opened: false
   // review | enable-confirm | disable-confirm | uninstall-confirm
-  // | enabling | placement | disabling
+  // | enabling | placement | disabling | browser-prompt | browser-defer
   property string stage: "review"
 
   property string pluginId: ""
@@ -81,6 +110,60 @@ Item {
     return /^[a-z0-9][a-z0-9.-]{0,127}$/.test(id || "") && String(id).indexOf("..") === -1
   }
 
+  // xdg default-browser id -> which extension family it consumes. Firefox
+  // forks (Waterfox, LibreWolf, Tor Browser, IceCat, Zen) take AMO add-ons;
+  // Chromium forks (Chrome, Brave, Vivaldi, Edge, ...) take CWS extensions.
+  // Unrecognised browsers fall back to Firefox: the AMO listing is live, the
+  // CWS listing page is pending.
+  function browserFamily(desktopId) {
+    var s = String(desktopId || "").toLowerCase()
+    if (/(chrome|chromium|brave|vivaldi|opera|edge|iridium|yandex|slimjet|slimbrowser)/.test(s))
+      return "chromium"
+    return "firefox"
+  }
+
+  // True when the action targets this manager plugin itself: its wizard is
+  // useless without its browser extension, so it gets the extension prompt.
+  function isManagerPlugin() {
+    return root.pluginId === root.managerId
+  }
+
+  readonly property string extensionFamily: root.browserFamily(root.defaultBrowserId)
+  readonly property string primaryExtensionUrl:
+    root.extensionFamily === "chromium" ? root.cwsUrl : root.amoUrl
+  readonly property string primaryExtensionLabel:
+    root.extensionFamily === "chromium" ? "Open in Chrome Web Store" : "Open in Firefox Add-ons"
+  readonly property string primaryStoreName:
+    root.extensionFamily === "chromium" ? "Chrome Web Store" : "Firefox Add-ons"
+  // The extension for the other browser family, offered as a link.
+  readonly property string otherStoreName:
+    root.extensionFamily === "chromium" ? "Firefox add-on" : "Chrome Web Store extension"
+  readonly property string otherFamilyName:
+    root.extensionFamily === "chromium"
+      ? "Firefox-based browsers (Firefox, Waterfox, LibreWolf, Tor Browser, \u2026)"
+      : "Chromium-based browsers (Chrome, Brave, Vivaldi, Edge, \u2026)"
+  readonly property string otherExtensionUrl:
+    root.extensionFamily === "chromium" ? root.amoUrl : root.cwsUrl
+
+  function openUrl(url) {
+    Quickshell.execDetached(["xdg-open", String(url || "")])
+  }
+
+  // Opens the extension page for the default browser and dismisses the prompt.
+  function openExtensionPage() {
+    root.openUrl(root.primaryExtensionUrl)
+    root.close()
+  }
+
+  // Self-removal from the defer stage: removing this plugin reloads the
+  // shell and destroys this overlay, so it runs as the same detached
+  // uninstall worker used for normal uninstalls (the notification is its
+  // completion report).
+  function uninstallManager() {
+    if (root.pluginId !== root.managerId) return
+    root.spawnWorker("uninstall", "")
+  }
+
   function open(payloadJson) {
     stopPending()
 
@@ -91,9 +174,12 @@ Item {
     pluginRepo = String(payload.repo || "")
     pluginName = String(payload.name || pluginId)
     mode = String(payload.mode || "install")
-    if (mode !== "uninstall" && mode !== "enable" && mode !== "disable") mode = "install"
+    if (mode !== "uninstall" && mode !== "enable" && mode !== "disable"
+        && mode !== "browser-prompt" && mode !== "browser-defer") mode = "install"
+    if (mode === "browser-prompt" || mode === "browser-defer") pluginId = managerId
+    if (!pluginName) pluginName = String((root.manifest && root.manifest.name) || pluginId)
 
-    stage = "review"
+    stage = (mode === "browser-prompt" || mode === "browser-defer") ? mode : "review"
     catalogLoaded = false
     manifestLoaded = false
     catalogEntry = null
@@ -124,6 +210,18 @@ Item {
       return
     }
 
+    if (mode === "browser-prompt" || mode === "browser-defer") {
+      // No marketplace data needed: the prompt shows this manager's own
+      // name/version (from the shell-loaded manifest) and the detected
+      // default browser.
+      catalogLoaded = true
+      manifestLoaded = true
+      defaultBrowserLoaded = false
+      defaultBrowserId = ""
+      browserProc.running = true
+      return
+    }
+
     catalogProc.running = true
     if (needsManifest) {
       manifestProc.command = ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--", mUrl]
@@ -131,7 +229,7 @@ Item {
     } else {
       manifestLoaded = true
     }
-    if (mode !== "install") listProc.running = true
+    if (mode === "uninstall" || mode === "enable" || mode === "disable") listProc.running = true
   }
 
   function close() {
@@ -371,6 +469,30 @@ Item {
     }
   }
 
+  // Default browser behind the extension prompt: xdg-settings and the
+  // x-scheme-handler/https association answer the same question; each fills
+  // in when the other has no answer. An empty result keeps the Firefox
+  // fallback.
+  Process {
+    id: browserProc
+    command: ["bash", "-c",
+      "xdg-settings get default-web-browser 2>/dev/null"
+      + " || xdg-mime query default x-scheme-handler/https 2>/dev/null || true"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.defaultBrowserId = String(text || "").trim()
+        root.defaultBrowserLoaded = true
+      }
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0 && !root.defaultBrowserLoaded) {
+        root.defaultBrowserId = ""
+        root.defaultBrowserLoaded = true
+      }
+    }
+  }
+
   // Every action ends in a notification + close; there is no completion
   // stage. ---- install / uninstall (detached workers) ----------------------
   // Install/uninstall touch the watched plugins directory: the clone (or
@@ -447,6 +569,13 @@ Item {
         "    notify \"Plugin installed\" \"$NAME is installed and enabled on the bar ($SECTION section).\"",
         "  else",
         "    notify \"Plugin installed\" \"$NAME is installed and enabled.\"",
+        "  fi",
+        "  # Installing the manager itself is only half the system: its",
+        "  # browser extension carries the Install buttons. Re-summon the",
+        "  # (freshly reloaded) wizard on the browser-extension prompt.",
+        "  if [ \"$ID\" = \"bramvanoploo.omarchy-browser-plugin-manager\" ]; then",
+        "    PAYLOAD=$(jq -cn --arg id \"$ID\" --arg repo \"$REPO\" --arg name \"$NAME\" '{source:\"worker\",mode:\"browser-prompt\",id:$id,repo:$repo,name:$name}')",
+        "    omarchy-shell -q shell summon \"$ID\" \"$PAYLOAD\"",
         "  fi",
         "elif enabled; then",
         "  notify \"Plugin installed\" \"$NAME is enabled, but its bar icon placement did not stick. Retry: omarchy plugin enable $ID --section $SECTION\"",
@@ -556,7 +685,19 @@ Item {
             : root.isBarWidget ? " on the bar (" + root.defaultSection + " section)" : ""
           root.notify(root.mode === "install" ? "Plugin installed" : "Plugin enabled",
                       root.pluginName + " is enabled" + where)
-          root.close()
+          // The manager is only half the system: its browser extension
+          // carries the Install buttons. An enable that lands here keeps the
+          // overlay open on the extension prompt. (A self-install finishes in
+          // the detached worker; that worker re-summons the wizard with
+          // mode=browser-prompt after the shell reload.)
+          if (root.mode === "enable" && root.isManagerPlugin()) {
+            root.stage = "browser-prompt"
+            root.defaultBrowserId = ""
+            root.defaultBrowserLoaded = false
+            browserProc.running = true
+          } else {
+            root.close()
+          }
         } else if (root.enableTries >= 8) {
           root.fail("plugin is not enabled after repeated enable attempts (the shell config reverted it)")
         } else {
@@ -645,6 +786,29 @@ Item {
     font.pixelSize: Style.font.body
   }
 
+  // RichText line with clickable <a href> links; activation opens the URL
+  // in the default browser via xdg-open.
+  component PiTextLink: Text {
+    width: cardColumn.width
+    wrapMode: Text.Wrap
+    textFormat: Text.RichText
+    color: Util.alpha(Color.foreground, 0.75)
+    linkColor: Color.accent
+    font.family: Style.font.family
+    font.pixelSize: Style.font.body
+    onLinkActivated: function (link) { root.openUrl(link) }
+  }
+
+  // Emphasised single line (default-browser identity in the prompt).
+  component PiBrowserLine: Text {
+    width: cardColumn.width
+    wrapMode: Text.Wrap
+    color: Color.foreground
+    font.family: Style.font.family
+    font.pixelSize: Style.font.body
+    font.bold: true
+  }
+
   Shortcut {
     sequence: "Escape"
     enabled: root.opened
@@ -697,14 +861,18 @@ Item {
 
         Text {
           width: parent.width
-          text: ({ install: "Install plugin", uninstall: "Uninstall plugin",
-                   enable: "Enable plugin", disable: "Disable plugin" })[root.mode]
+          text: root.stage === "browser-prompt" || root.stage === "browser-defer"
+            ? root.pluginName + (root.manifest && root.manifest.version
+                ? " v" + String(root.manifest.version) : "")
+            : ({ install: "Install plugin", uninstall: "Uninstall plugin",
+                 enable: "Enable plugin", disable: "Disable plugin" })[root.mode]
           color: Color.foreground
           font.family: Style.font.family
           font.bold: true
           font.pixelSize: Style.font.heading
         }
         PiLine {
+          visible: root.stage !== "browser-prompt" && root.stage !== "browser-defer"
           text: root.pluginName + "  \u00b7  " + root.pluginId
           color: Color.foreground
           font.bold: true
@@ -767,6 +935,66 @@ Item {
           visible: root.stage === "disable-confirm"
           text: "Installed and enabled. Disabling unloads it from the shell; "
             + "the plugin files stay installed."
+        }
+
+        // ---- stage: browser-prompt (manager install/enable finished) ----
+        // The wizard is this manager's own UI; it is inert until the matching
+        // browser extension is installed. Send the user to the extension page
+        // for their default browser and explain the other-browser option.
+        Column {
+          visible: root.stage === "browser-prompt"
+          width: cardColumn.width
+          spacing: Style.spacing.lg
+          PiLine {
+            text: root.pluginName + " is installed, but it needs its browser "
+              + "extension before it can do anything: the extension is what "
+              + "adds the Install buttons on plugins.omarchy.org and talks to "
+              + "this plugin through the native messaging host."
+          }
+          PiLine {
+            text: "The button below opens this extension's page in the "
+              + root.primaryStoreName + ", the store your default browser "
+              + "installs from. The add-on is installed there through the "
+              + "browser's own confirm dialog; nothing is installed before "
+              + "you accept it in the browser. Once installed, the Install "
+              + "buttons appear on the plugin pages straight away."
+          }
+          PiBrowserLine {
+            visible: root.defaultBrowserLoaded
+            text: "Detected default browser: "
+              + (root.defaultBrowserId.length > 0
+                 ? root.defaultBrowserId + "  (" + root.extensionFamily + ")"
+                 : "unknown \u2014 opening the Firefox add-on page")
+          }
+          PiTextLink {
+            text: "There is also a browser extension for " + root.otherFamilyName
+              + " (" + root.otherStoreName + "): <a href=\"" + root.otherExtensionUrl + "\">"
+              + root.otherExtensionUrl + "</a>"
+          }
+        }
+
+        // ---- stage: browser-defer (user cancelled the prompt) ----
+        Column {
+          visible: root.stage === "browser-defer"
+          width: cardColumn.width
+          spacing: Style.spacing.lg
+          PiLine {
+            color: Color.urgent
+            text: "Without the browser extension this plugin does nothing: "
+              + "no Install buttons appear on plugins.omarchy.org, so there is "
+              + "nothing for the wizard to install."
+          }
+          PiTextLink {
+            text: "Open the extension page for your default browser ("
+              + (root.defaultBrowserId.length > 0 ? root.defaultBrowserId : "unknown")
+              + ") in the " + root.primaryStoreName + ": <a href=\"" + root.primaryExtensionUrl + "\">"
+              + root.primaryExtensionUrl + "</a>"
+          }
+          PiTextLink {
+            text: "Or the extension for " + root.otherFamilyName + " ("
+              + root.otherStoreName + "): <a href=\"" + root.otherExtensionUrl + "\">"
+              + root.otherExtensionUrl + "</a>"
+          }
         }
 
         // ---- blocking / loading / validation errors across all confirm stages ----
@@ -864,6 +1092,34 @@ Item {
             visible: root.stage === "placement"
             label: "Cancel"
             onClickedPi: root.close()
+          }
+          PiButton {
+            visible: root.stage === "browser-prompt"
+            primary: true
+            label: root.primaryExtensionLabel
+            onClickedPi: root.openExtensionPage()
+          }
+          PiButton {
+            visible: root.stage === "browser-prompt"
+            label: "Cancel"
+            onClickedPi: root.stage = "browser-defer"
+          }
+          PiButton {
+            visible: root.stage === "browser-defer"
+            label: "Cancel"
+            onClickedPi: root.close()
+          }
+          PiButton {
+            visible: root.stage === "browser-defer"
+            primary: true
+            label: root.primaryExtensionLabel
+            onClickedPi: root.openExtensionPage()
+          }
+          PiButton {
+            visible: root.stage === "browser-defer"
+            danger: true
+            label: "Uninstall Omarchy plugin"
+            onClickedPi: root.uninstallManager()
           }
         }
       }
