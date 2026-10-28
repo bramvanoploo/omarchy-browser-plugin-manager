@@ -2,6 +2,8 @@
 
 One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org).
 
+![Omarchy Browser Plugin Manager](preview.png)
+
 Clicking **Install** on a plugin page opens a wizard overlay on the desktop
 that validates the request (live catalog entry + repository manifest), shows
 what will be installed, and for bar widgets asks where the bar icon goes
