@@ -812,47 +812,6 @@ Item {
     }
   }
 
-  // The browser extension's Install-button glyph: a download stem dropping
-  // into an open tray, drawn to the extension's CSS geometry (.pi-icon-install
-  // in content.js: 13px box, stem 1x7 at x6, tray border 1 inset 1, h5) so
-  // the wizard header and the website buttons show the same icon.
-  component PiInstallIcon: Item {
-    required property real size
-    implicitWidth: size
-    implicitHeight: size
-    readonly property real u: size / 13
-    readonly property real bw: Math.max(1, Math.round(u))
-    // stem
-    Rectangle {
-      x: Math.round(PiInstallIcon.u * 6.5 - PiInstallIcon.bw / 2)
-      width: PiInstallIcon.bw
-      height: Math.round(PiInstallIcon.u * 7)
-      color: Color.accent
-    }
-    // tray: left wall, right wall, floor (CSS: border 1, no top)
-    Rectangle {
-      x: Math.round(PiInstallIcon.u)
-      y: Math.round(PiInstallIcon.size - PiInstallIcon.u * 6)
-      width: PiInstallIcon.bw
-      height: Math.round(PiInstallIcon.u * 5)
-      color: Color.accent
-    }
-    Rectangle {
-      x: Math.round(PiInstallIcon.size - PiInstallIcon.u - PiInstallIcon.bw)
-      y: Math.round(PiInstallIcon.size - PiInstallIcon.u * 6)
-      width: PiInstallIcon.bw
-      height: Math.round(PiInstallIcon.u * 5)
-      color: Color.accent
-    }
-    Rectangle {
-      x: Math.round(PiInstallIcon.u)
-      y: Math.round(PiInstallIcon.size - PiInstallIcon.u * 2)
-      width: Math.round(PiInstallIcon.size - PiInstallIcon.u * 2)
-      height: PiInstallIcon.bw
-      color: Color.accent
-    }
-  }
-
   component PiLine: Text {
     width: cardColumn.width
     wrapMode: Text.Wrap
@@ -940,9 +899,47 @@ Item {
           width: cardColumn.width
           spacing: Style.space(14)
 
-          PiInstallIcon {
-            size: Math.max(Style.font.heading, Math.round(headerTextCol.implicitHeight))
+          // The browser extension's Install-button glyph: a download stem
+          // dropping into an open tray, drawn to the extension's CSS geometry
+          // (.pi-icon-install in content.js: 13px box, stem 1x7 at x6, tray
+          // border 1, inset 1, height 5, no top side).
+          Item {
+            id: piIcon
+            readonly property real sz: Math.max(Style.font.heading,
+              Math.round(headerTextCol.implicitHeight))
+            readonly property real u: sz / 13
+            readonly property real bw: Math.max(1, Math.round(u))
+            width: sz
+            height: sz
             anchors.verticalCenter: parent.verticalCenter
+
+            Rectangle {  // stem
+              x: Math.round(piIcon.u * 6.5 - piIcon.bw / 2)
+              width: piIcon.bw
+              height: Math.round(piIcon.u * 7)
+              color: Color.accent
+            }
+            Rectangle {  // tray: left wall
+              x: Math.round(piIcon.u)
+              y: Math.round(piIcon.sz - piIcon.u * 6)
+              width: piIcon.bw
+              height: Math.round(piIcon.u * 5)
+              color: Color.accent
+            }
+            Rectangle {  // tray: right wall
+              x: Math.round(piIcon.sz - piIcon.u - piIcon.bw)
+              y: Math.round(piIcon.sz - piIcon.u * 6)
+              width: piIcon.bw
+              height: Math.round(piIcon.u * 5)
+              color: Color.accent
+            }
+            Rectangle {  // tray: floor
+              x: Math.round(piIcon.u)
+              y: Math.round(piIcon.sz - piIcon.u * 2)
+              width: Math.round(piIcon.sz - piIcon.u * 2)
+              height: piIcon.bw
+              color: Color.accent
+            }
           }
 
           Column {
