@@ -64,7 +64,14 @@ the repo root (the directory containing `manifest.json` and `bin/`).
    `printf '\x0f\x00\x00\x00{"type":"ping"}' | bin/omarchy-plugin-install-host | tail -c +5`
    must answer with the new version (the frame length must be exactly 15 bytes).
 
-3. **Build packages** (all outputs land in `dist/`, which is gitignored):
+3. **Refresh the preview banner** — after the version sync, regenerate
+   `preview.png` so it reflects the new version: `./preview/generate-preview.sh`
+   (renders the 1920x1080 banner from `preview/template.html`, reading the
+   version from the shell plugin `manifest.json`; needs the `preview/` assets
+   and headless Chromium). The script prints the version it rendered — confirm
+   it says X.Y.Z. `preview.png` belongs in the release commit (step 5).
+
+4. **Build packages** (all outputs land in `dist/`, which is gitignored):
    - `./bin/package` → `dist/<slug>-X.Y.Z.xpi`, `dist/<slug>-X.Y.Z-chrome.zip`,
      `dist/<slug>-X.Y.Z-<YYYYMMDD>.zip` (`<slug>` = kebab manifest name,
      currently `omarchy-browser-plugin-manager`).
@@ -72,24 +79,24 @@ the repo root (the directory containing `manifest.json` and `bin/`).
      → `dist/signed/<slug>-X.Y.Z-signed.xpi`. Never read, print, or commit `.env`.
      If `.env` is absent, skip the signed build and omit it from the release notes.
 
-4. **Commit** — the version-sync edits as one commit:
-   `git add manifest.json extension/manifest.json bin/omarchy-plugin-install-host README.md`
+5. **Commit** — the version-sync edits plus the refreshed preview as one commit:
+   `git add manifest.json extension/manifest.json bin/omarchy-plugin-install-host README.md preview.png`
    (drop `bin/omarchy-plugin-install-host` from this list if its version line
    already went in with an earlier feature commit) then
    `git commit -m "Release X.Y.Z: version aligned in shell plugin, extension, and docs"`.
    Commit style: one-line subject, no conventional-commit prefix; bodies allowed.
 
-5. **Push, tag, release**:
+6. **Push, tag, release**:
    - `git push origin main`
    - `git tag -a vX.Y.Z -m "Omarchy Browser Plugin Manager X.Y.Z" && git push origin vX.Y.Z`
    - `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file <notes> <assets...>`
-     Assets (exact files from step 3):
+     Assets (exact files from step 4):
      - `dist/<slug>-X.Y.Z-chrome.zip`
      - `dist/<slug>-X.Y.Z.xpi`
      - `dist/signed/<slug>-X.Y.Z-signed.xpi` (only if built)
      - `dist/<slug>-X.Y.Z-<YYYYMMDD>.zip`
 
-6. **Release notes** — mirror the existing releases' shape
+7. **Release notes** — mirror the existing releases' shape
    (`gh release view v<prev> --json body -q .body`): a `# <name> X.Y.Z` line,
    a `### Changes` list summarizing the commits since the previous tag
    (`git log v<prev>..HEAD --oneline`), then a `### Assets` list describing
