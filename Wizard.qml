@@ -812,6 +812,47 @@ Item {
     }
   }
 
+  // The browser extension's Install-button glyph: a download stem dropping
+  // into an open tray, drawn to the extension's CSS geometry (.pi-icon-install
+  // in content.js: 13px box, stem 1x7 at x6, tray border 1 inset 1, h5) so
+  // the wizard header and the website buttons show the same icon.
+  component PiInstallIcon: Item {
+    required property real size
+    implicitWidth: size
+    implicitHeight: size
+    readonly property real u: size / 13
+    readonly property real bw: Math.max(1, Math.round(u))
+    // stem
+    Rectangle {
+      x: Math.round(root.u * 6.5 - PiInstallIcon.bw / 2)
+      width: PiInstallIcon.bw
+      height: Math.round(root.u * 7)
+      color: Color.accent
+    }
+    // tray: left wall, right wall, floor (CSS: border 1, no top)
+    Rectangle {
+      x: Math.round(root.u)
+      y: Math.round(size - root.u * 6)
+      width: PiInstallIcon.bw
+      height: Math.round(root.u * 5)
+      color: Color.accent
+    }
+    Rectangle {
+      x: Math.round(size - root.u - PiInstallIcon.bw)
+      y: Math.round(size - root.u * 6)
+      width: PiInstallIcon.bw
+      height: Math.round(root.u * 5)
+      color: Color.accent
+    }
+    Rectangle {
+      x: Math.round(root.u)
+      y: Math.round(size - root.u * 2)
+      width: Math.round(size - root.u * 2)
+      height: PiInstallIcon.bw
+      color: Color.accent
+    }
+  }
+
   component PiLine: Text {
     width: cardColumn.width
     wrapMode: Text.Wrap
@@ -899,11 +940,8 @@ Item {
           width: cardColumn.width
           spacing: Style.space(14)
 
-          Text {
-            text: "\uf268"  // FontAwesome browser glyph: this manager's logo
-            font.family: Style.font.family
-            font.pixelSize: Math.max(Style.font.heading, Math.round(headerTextCol.implicitHeight))
-            color: Color.accent
+          PiInstallIcon {
+            size: Math.max(Style.font.heading, Math.round(headerTextCol.implicitHeight))
             anchors.verticalCenter: parent.verticalCenter
           }
 
