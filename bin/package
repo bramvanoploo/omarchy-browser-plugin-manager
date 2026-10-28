@@ -9,7 +9,7 @@
 #                                     which allow unsigned add-ons).
 #   dist/<slug>-<version>-listed.xpi  Firefox add-on for the AMO LISTED
 #                                     submission: declares the listed add-on
-#                                     ID omarchy-browser-plugin-manager@bram.dev
+#                                     ID omarchy-browser-plugin-manager@sudo-systems.com
 #                                     (the self-distribution ID is registered
 #                                     on AMO via unlisted signing and rejected
 #                                     for listed; @addons.mozilla.org IDs are
@@ -68,7 +68,7 @@ mkdir -p "$STAGE/listed"
 cp -r "$EXT_DIR/." "$STAGE/listed/"
 rm -f "$STAGE/listed/.amo-upload-uuid"
 jq '.background = {scripts: ["background.js"]}
-   | .browser_specific_settings.gecko.id = "omarchy-browser-plugin-manager@bram.dev"' \
+   | .browser_specific_settings.gecko.id = "omarchy-browser-plugin-manager@sudo-systems.com"' \
    "$STAGE/listed/manifest.json" > "$STAGE/listed/manifest.json.tmp" \
   && mv "$STAGE/listed/manifest.json.tmp" "$STAGE/listed/manifest.json"
 ( cd "$STAGE/listed" && \

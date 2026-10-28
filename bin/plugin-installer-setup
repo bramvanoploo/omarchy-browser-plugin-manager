@@ -19,7 +19,7 @@ FIREFOX_ADDON_ID="bramvanoploo.omarchy-browser-plugin-manager@bram.dev"
 # AMO-listed add-on ID: MV3 listed submissions must declare an ID, the
 # self-distribution ID is taken by unlisted signing, and "@addons.mozilla.org"
 # IDs are reserved for AMO, so the listed add-on uses this fresh domain ID.
-AMO_ADDON_ID="omarchy-browser-plugin-manager@bram.dev"
+AMO_ADDON_ID="omarchy-browser-plugin-manager@sudo-systems.com"
 CHROME_STORE_ID="nbngempephjmagmlfbfdodboeimfoibp"
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
