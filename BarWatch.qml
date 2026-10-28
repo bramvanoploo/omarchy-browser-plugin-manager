@@ -51,6 +51,39 @@ Panel {
   property string statusForId: ""
   property string moveSection: ""
   property string moveOutput: ""
+  property string enabledOutput: ""
+
+  // Marketplace catalog entry for the watched plugin (display only: the
+  // preview thumbnail, description, author, version). Fetched while the
+  // popup is open, cached per plugin id.
+  property var catalogEntry: null
+  property string catalogForId: ""
+
+  readonly property string catalogThumb: {
+    var e = root.catalogEntry
+    var t = e ? String(e.previewThumbnail || "") : ""
+    // Only same-site relative asset paths are ever loaded as images.
+    return /^assets\/[A-Za-z0-9._\/-]+$/.test(t) ? t : ""
+  }
+  readonly property real catalogThumbRatio: {
+    var e = root.catalogEntry
+    var w = e ? Number(e.previewThumbnailWidth) || 0 : 0
+    var h = e ? Number(e.previewThumbnailHeight) || 0 : 0
+    return w > 0 && h > 0 ? h / w : 225 / 720
+  }
+  readonly property string catalogBlurb: {
+    var e = root.catalogEntry
+    return e && e.id === root.catalogForId ? String(e.description || "") : ""
+  }
+  readonly property string catalogMeta: {
+    var e = root.catalogEntry
+    if (!e || e.id !== root.catalogForId) return ""
+    var bits = []
+    if (e.author) bits.push("by " + String(e.author))
+    if (e.version) bits.push("v" + String(e.version))
+    if (String(e.verificationStatus || "") === "verified") bits.push("verified")
+    return bits.join("  \u00b7  ")
+  }
 
   function applyWatch(raw) {
     var s = String(raw || "").trim()
@@ -60,20 +93,25 @@ Panel {
     }
     // Shape-checked: the file is host-written, but a corrupt/foreign file
     // must never render as a plugin identity.
-    if (obj && typeof obj === "object"
-        && /^[a-z0-9][a-z0-9.-]{0,127}$/.test(String(obj.id || ""))
-        && String(obj.id || "").indexOf("..") === -1
-        && /^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+(\.git)?\/?$/.test(String(obj.repo || ""))
-        && typeof obj.ts === "number") {
-      root.watchState = obj
-    } else {
-      root.watchState = null
-    }
+    var accepted = obj && typeof obj === "object"
+      && /^[a-z0-9][a-z0-9.-]{0,127}$/.test(String(obj.id || ""))
+      && String(obj.id || "").indexOf("..") === -1
+      && /^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+(\.git)?\/?$/.test(String(obj.repo || ""))
+      && typeof obj.ts === "number"
+    var newId = accepted ? String(obj.id) : ""
+    var oldId = root.watchState ? String(root.watchState.id) : ""
+    root.watchState = accepted ? obj : null
     root.nowMs = Date.now()
-    root.statusChecked = false
-    root.pluginInstalled = false
-    root.pluginEnabled = false
-    root.statusForId = ""
+    // Status and catalog are per watched plugin: re-check them when the
+    // beacon switches plugin, not on every 5s renewal.
+    if (newId !== oldId) {
+      root.statusChecked = false
+      root.pluginInstalled = false
+      root.pluginEnabled = false
+      root.statusForId = ""
+      root.catalogEntry = null
+      root.catalogForId = ""
+    }
   }
 
   function refreshStatus() {
@@ -82,11 +120,14 @@ Panel {
     listProc.running = true
   }
 
-  function openPluginPage() {
-    var url = root.watchState
-      ? root.marketplaceUrl + "plugin.html?id=" + encodeURIComponent(String(root.watchState.id))
-      : root.marketplaceUrl
-    Quickshell.execDetached(["xdg-open", url])
+  // Marketplace metadata for the watched plugin (preview image, blurb).
+  function refreshCatalog() {
+    if (!root.opened || !root.watchState) return
+    var id = String(root.watchState.id)
+    if (root.catalogForId === id) return
+    root.catalogForId = id
+    root.catalogEntry = null
+    catalogProc.running = true
   }
 
   function openMarketplace() {
@@ -123,6 +164,18 @@ Panel {
     root.close()
   }
 
+  // Enable / Disable is plugin state, not an install: the browser page's own
+  // buttons route the same way through the host, which runs the official CLI
+  // commands directly. The popup stays open and the status row refreshes.
+  function setEnabledForWatch(activate) {
+    if (!root.watchState) return
+    root.enabledOutput = ""
+    enabledProc.command = [
+      "omarchy", "plugin", activate ? "enable" : "disable", String(root.watchState.id)
+    ]
+    enabledProc.running = true
+  }
+
   function notify(title, body) {
     var cmd = Quickshell.env("OMARCHY_PATH")
       ? Quickshell.env("OMARCHY_PATH") + "/bin/omarchy-notification-send"
@@ -140,14 +193,16 @@ Panel {
     return root.watchState ? String(root.watchState.name || root.watchState.id) : ""
   }
 
+  // The host rewrites the beacon atomically (temp file + rename), which
+  // drops Qt's inode-based file watch after the first change. So the beacon
+  // is polled on the staleness timer below instead of watched: a 2s reload
+  // of a tiny file is cheap and never goes stale.
   FileView {
     id: watchFile
     path: root.watchPath
-    watchChanges: true
     printErrors: false
     onLoaded: root.applyWatch(text())
     onLoadFailed: root.applyWatch("")
-    onFileChanged: reload()
   }
 
   // Re-evaluates beaconLive as the 5s beacon renews and time passes, so
@@ -156,7 +211,10 @@ Panel {
     interval: 2000
     repeat: true
     running: true
-    onTriggered: root.nowMs = Date.now()
+    onTriggered: {
+      root.nowMs = Date.now()
+      watchFile.reload()
+    }
   }
 
   onOpenedChanged: {
@@ -164,6 +222,7 @@ Panel {
       root.nowMs = Date.now()
       watchFile.reload()
       Qt.callLater(root.refreshStatus)
+      Qt.callLater(root.refreshCatalog)
     }
   }
 
@@ -176,21 +235,56 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         var entry = null
+        var parsed = false
         try {
           var plugins = JSON.parse(String(text || "[]"))
-          entry = plugins.filter(function (item) {
-            return item && String(item.id) === root.statusForId
-          })[0] || null
+          if (Array.isArray(plugins)) {
+            parsed = true
+            entry = plugins.filter(function (item) {
+              return item && String(item.id) === root.statusForId
+            })[0] || null
+          }
         } catch (e) {
-          entry = null
+          parsed = false
         }
-        root.pluginInstalled = !!entry && entry.firstParty !== true
-        root.pluginEnabled = !!entry && entry.enabled === true
-        root.statusChecked = true
+        // A malformed read must never render as "not installed": leave the
+        // buttons unconfirmed (and re-read on the next open) instead.
+        if (parsed) {
+          root.pluginInstalled = !!entry && entry.firstParty !== true
+          root.pluginEnabled = !!entry && entry.enabled === true
+          root.statusChecked = true
+        }
       }
     }
     onExited: function (exitCode) {
-      if (exitCode !== 0) root.statusChecked = true
+      if (exitCode !== 0) root.statusChecked = false
+    }
+  }
+
+  // Marketplace catalog, same fetch the wizard validates against; used here
+  // for display only (preview thumbnail, description, author, version).
+  Process {
+    id: catalogProc
+    command: ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--", "https://plugins.omarchy.org/catalog.json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var entry = null
+        try {
+          var catalog = JSON.parse(String(text || "[]"))
+          if (Array.isArray(catalog)) {
+            entry = catalog.filter(function (item) {
+              return item && String(item.id) === root.catalogForId
+            })[0] || null
+          }
+        } catch (e) {
+          entry = null
+        }
+        root.catalogEntry = entry
+      }
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) root.catalogEntry = null
     }
   }
 
@@ -213,6 +307,32 @@ Panel {
                     name + ": omarchy bar move exited with code " + exitCode
                     + (root.moveOutput.trim() ? ": " + root.moveOutput.trim() : ""))
       }
+    }
+  }
+
+  Process {
+    id: enabledProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.enabledOutput += "\n" + String(text || "")
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.enabledOutput += "\n" + String(text || "")
+    }
+    onExited: function (exitCode) {
+      var name = root.watchedName()
+      var verb = String(enabledProc.command[2] || "")
+      if (exitCode === 0) {
+        root.notify("Plugin " + verb + "d", name + " " + verb + "d.")
+      } else {
+        root.notify("Plugin " + verb + " failed",
+                    name + ": omarchy plugin " + verb + " exited with code " + exitCode
+                    + (root.enabledOutput.trim() ? ": " + root.enabledOutput.trim() : ""))
+      }
+      // Re-read the live state so the popup's buttons follow the change.
+      root.statusChecked = false
+      Qt.callLater(root.refreshStatus)
     }
   }
 
@@ -335,13 +455,14 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    contentWidth: popup.fittedContentWidth(Style.space(340))
-    contentHeight: popup.fittedContentHeight(popupColumn.implicitHeight, Style.space(460))
+    padding: Style.space(24)
+    contentWidth: popup.fittedContentWidth(Style.space(360))
+    contentHeight: popup.fittedContentHeight(popupColumn.implicitHeight, Style.space(560))
 
     Column {
       id: popupColumn
       width: parent ? parent.width : 0
-      spacing: Style.spacing.md
+      spacing: Style.space(14)
 
       // Header: the wizard dialog's identity block (icon + name + subtitle).
       Row {
@@ -369,7 +490,7 @@ Panel {
 
         Column {
           anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(2)
+          spacing: Style.space(4)
 
           Text {
             text: root.beaconLive ? root.watchedName() : "Browser Plugin Manager"
@@ -400,6 +521,43 @@ Panel {
         color: Color.foreground
         font.bold: true
         font.pixelSize: Style.font.body
+      }
+
+      // Preview thumbnail from the marketplace catalog, card proportions.
+      Rectangle {
+        visible: root.beaconLive && root.catalogThumb !== ""
+        width: popupColumn.width
+        height: visible
+          ? Math.round(width * root.catalogThumbRatio) + Style.space(2)
+          : 0
+        radius: Style.cornerRadius
+        color: Util.alpha(Color.foreground, 0.05)
+        border.color: Util.alpha(Color.foreground, 0.15)
+        border.width: 1
+        clip: true
+
+        Image {
+          anchors.fill: parent
+          anchors.margins: 1
+          source: root.catalogThumb !== "" ? root.marketplaceUrl + root.catalogThumb : ""
+          sourceSize.width: parent.width * 2
+          fillMode: Image.PreserveAspectCrop
+          asynchronous: true
+          cache: true
+          smooth: true
+        }
+      }
+
+      // Catalog blurb + author/version line.
+      BWLine {
+        visible: root.beaconLive && root.catalogBlurb !== ""
+        text: root.catalogBlurb
+      }
+      BWLine {
+        visible: root.beaconLive && root.catalogMeta !== ""
+        text: root.catalogMeta
+        font.pixelSize: Style.font.caption
+        color: Color.muted
       }
 
       BWLine {
@@ -439,6 +597,19 @@ Panel {
           onClickedBw: root.summonWizard("update")
         }
         BWButton {
+          visible: root.statusChecked && root.pluginInstalled && !root.pluginEnabled
+          enabled: root.statusChecked
+          primary: true
+          label: "Enable"
+          onClickedBw: root.setEnabledForWatch(true)
+        }
+        BWButton {
+          visible: root.statusChecked && root.pluginInstalled && root.pluginEnabled
+          enabled: root.statusChecked
+          label: "Disable"
+          onClickedBw: root.setEnabledForWatch(false)
+        }
+        BWButton {
           visible: root.statusChecked && root.pluginInstalled
           enabled: root.statusChecked
           danger: true
@@ -457,16 +628,6 @@ Panel {
         BWButton { label: "Left"; onClickedBw: root.moveIcon("left") }
         BWButton { label: "Center"; onClickedBw: root.moveIcon("center") }
         BWButton { label: "Right"; onClickedBw: root.moveIcon("right") }
-      }
-
-      Row {
-        visible: root.beaconLive
-        spacing: Style.spacing.controlGap
-
-        BWButton {
-          label: "Open plugin page"
-          onClickedBw: root.openPluginPage()
-        }
       }
     }
   }
