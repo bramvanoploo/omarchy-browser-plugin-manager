@@ -125,41 +125,6 @@ browser extension (chrome://extensions / about:addons).
 5. Installs the repo's current HEAD, which may differ from the marketplace's
    verified snapshot — the wizard says so.
 
-## Install (developer machine)
-
-```bash
-# 1. Shell plugin (the wizard) — from your clone of this repo:
-git init . && git add -A && git commit -m "init"   # if not already a repo
-omarchy plugin add file://$PWD --yes
-omarchy plugin enable bramvanoploo.omarchy-browser-plugin-manager
-
-# 2. The native messaging host registers itself on every shell start.
-#    Load the browser extension from this clone (the registration pins its ID):
-#   Chrome/Chromium/Brave: chrome://extensions -> Developer mode -> Load unpacked -> extension/
-#   Firefox: about:debugging#/runtime/this-firefox -> Load Temporary Add-on -> extension/manifest.json
-```
-
-Chrome installs carry three registered IDs: "Load unpacked" uses the
-path-derived ID; zipped packed installs use the key-pinned ID
-`nbngempephjmagmlfbfdodboeimfoibp` (from `chrome-key.pem`, gitignored,
-mode 600 — back it up: losing it loses that ID); the CWS listing uses the
-store-assigned ID `nalcgjmbglkcmohokidcmogcbpmhkdjf` (the 2025+ CWS
-dashboard rejects manifests containing `"key"`, so the store derives its ID
-from its own keypair). The 2026-10-27 identity rename rotated the keypair;
-the superseded one is kept as `chrome-key-2026-10-27.pem.bak` (ID
-`ojmmnnlphgmhjlmcfmanmnfialliaehj`, unused).
-
-Verify without a browser — the per-browser host manifests exist:
-
-```bash
-ls ~/.config/google-chrome/NativeMessagingHosts/bramvanoploo_omarchy_browser_plugin_manager.json \
-   ~/.config/mozilla/native-messaging-hosts/bramvanoploo_omarchy_browser_plugin_manager.json
-```
-
-The host authenticates its caller: a terminal run feeds it no browser
-origin, so it exits silently by design. The extension pings it on every
-plugin page — the Install button appearing is the live proof.
-
 ## Roadmap
 
 - Bar-icon watcher mode: the icon lights up when a tab opens on an
