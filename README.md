@@ -62,6 +62,8 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
   wizard and never installs anything itself.
 - **`bin/plugin-installer-setup`** — registers the native host manifest for
   Chrome, Chromium, Brave, and Firefox, and prints extension-loading steps.
+  The shell plugin runs it automatically on every shell start (idempotent),
+  and unregisters via `--uninstall` when the plugin is removed.
 - **`Wizard.qml` + `manifest.json`** — the Omarchy shell overlay plugin
   (`bramvanoploo.omarchy-browser-plugin-manager`). It re-fetches catalog + repo manifest (payload
   is never trusted for display), re-checks local state for destructive/toggle
@@ -139,8 +141,9 @@ Then remove the browser extension (chrome://extensions / about:addons).
 1. **Browser** shows its own "open in app?" style gate when relevant; the
    extension is scoped to `plugins.omarchy.org` only.
 2. **Native host manifest** pins the allowed origins to the extension IDs
-   (Chrome family: the path-derived unpacked ID *and* the key-pinned stable
-   ID) / add-on ID (Firefox) — no other extension can talk to it. Chrome also
+   (Chrome family: the path-derived unpacked ID, the key-pinned stable ID,
+   and the Chrome Web Store item ID) / add-on IDs (Firefox: self-distribution
+   and AMO listing) — no other extension can talk to it. Chrome also
    requires the host manifest's `description` field (the setup script sets it).
 3. **Host** re-validates against the live catalog; forged payloads for
    manual-setup or compatibility-failed plugins are rejected.
@@ -165,9 +168,9 @@ git init . && git add -A && git commit -m "init"   # if not already a repo
 omarchy plugin add file://$PWD --yes
 omarchy plugin enable bramvanoploo.omarchy-browser-plugin-manager
 
-# 2. Browser integration (registers the native messaging host):
-bin/plugin-installer-setup
-# then load the extension as printed by the setup script:
+# 2. The native messaging host registers itself: the plugin runs
+#    bin/plugin-installer-setup on every shell start. Load the browser
+#    extension from this clone (the registration pins its ID):
 #   Chrome/Chromium/Brave: chrome://extensions -> Developer mode -> Load unpacked -> extension/
 #   Firefox: about:debugging#/runtime/this-firefox -> Load Temporary Add-on -> extension/manifest.json
 ```
@@ -187,23 +190,16 @@ is kept as `chrome-key-2026-10-27.pem.bak`, its ID
 Verify without a browser:
 
 ```bash
-printf '\x10\x00\x00\x00{"type":"ping"}' | bin/omarchy-plugin-install-host | tail -c +5; echo
-# expect: {"ok":true,"host":"bramvanoploo_omarchy_browser_plugin_manager","version":"0.3.4"}
-# (host version tracks releases; bump with each signed extension release)
-```
-
-## Uninstall
-
-```bash
-bin/plugin-installer-setup --uninstall
-omarchy plugin disable bramvanoploo.omarchy-browser-plugin-manager
-omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager --yes
+# Registration: the per-browser host manifests exist:
+ls ~/.config/google-chrome/NativeMessagingHosts/bramvanoploo_omarchy_browser_plugin_manager.json \
+   ~/.config/mozilla/native-messaging-hosts/bramvanoploo_omarchy_browser_plugin_manager.json
+# Host reachability: the extension pings it on every plugin page; a terminal
+# run feeds the host no browser origin, so it exits silently by design
+# (the host authenticates its caller) and answers nothing.
 ```
 
 ## Roadmap
 
-- Chrome Web Store listing (stable extension ID) + AMO-signed Firefox add-on,
-  replacing load-unpacked/temporary installs.
 - Bar-icon watcher mode: the icon lights up when a tab opens on an
   installable plugin page (reuses the same host).
 - "Install verified snapshot exactly" mode using `listingValidatedCommit`.

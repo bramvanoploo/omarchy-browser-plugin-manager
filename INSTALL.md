@@ -1,7 +1,8 @@
 # Install without the browser stores
 
 This archive contains everything needed to run the Omarchy Browser Plugin Manager
-without publishing to the Chrome Web Store or AMO.
+without installing the browser extension from the Chrome Web Store or AMO
+(the stores carry identical code, see the README's browser table).
 
 Unpack this archive wherever you want to keep it, e.g. `~/apps/`. All paths
 below are relative to the unpacked directory.
@@ -16,6 +17,11 @@ The setup script registers the host with Chrome, Chromium, Brave, and Firefox
 and prints the exact extension ID derived from *your* unpack location. You
 must load the browser extension from exactly that `--extension-dir` path,
 otherwise the native host will reject its connection.
+
+The shell plugin also registers the host by itself on every shell start,
+pinned to this directory's `extension/` — if you add the shell plugin from
+this same unpacked directory (`omarchy plugin add file://$PWD --enable`),
+registration happens automatically and this step is redundant.
 
 ## 2. Load the browser extension
 
@@ -37,7 +43,12 @@ be reproduced.
 
 **Firefox (release builds, >= 121): signed `.xpi` required**
 
-Release Firefox permanently installs only AMO-signed add-ons, and the
+Easiest: install the add-on from the AMO listing
+([addons.mozilla.org](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/));
+its listed ID `omarchy-browser-plugin-manager@sudo-systems.com` is registered
+by the setup script alongside the self-distribution ID below.
+
+Without the listing, release Firefox permanently installs only AMO-signed add-ons, and the
 native-messaging allowlist matches the stable add-on ID
 `bramvanoploo.omarchy-browser-plugin-manager@bram.dev` — which only a permanent install gives:
 
@@ -65,10 +76,15 @@ Permanent installs use the stable add-on ID, so native messaging works.
 ## 3. Verify
 
 ```sh
-printf '\x10\x00\x00\x00{"type":"ping"}' | ./bin/omarchy-plugin-install-host | tail -c +5 ; echo
+ls ~/.config/google-chrome/NativeMessagingHosts/bramvanoploo_omarchy_browser_plugin_manager.json \
+   ~/.config/mozilla/native-messaging-hosts/bramvanoploo_omarchy_browser_plugin_manager.json
 ```
 
-Expected: `{"ok":true}`
+Both host manifests must exist (the setup script writes one per browser
+family). A terminal ping of `./bin/omarchy-plugin-install-host` answers
+nothing by design: the host authenticates its caller, and a terminal run
+feeds it no browser origin, so it exits silently. The extension pings it on
+every plugin page; the Install button appearing is the live proof.
 
 ## 4. Use it
 
@@ -89,3 +105,6 @@ notification.
 Then remove the extension from the browser (chrome://extensions /
 about:addons), and remove the shell plugin with
 `omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager`.
+Removing the shell plugin while the shell runs also triggers the wizard's
+self-cleanup, which unregisters the host a few seconds later; the command
+above is the deterministic way, and works even with the shell stopped.
