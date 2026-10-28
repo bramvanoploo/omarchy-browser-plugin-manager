@@ -342,7 +342,7 @@
   </div>
 </div>
 
-<!-- Right Column: Visual Previews Stack -->
+<!-- Right Column: playful screenshot collage, vertically centered -->
 <style>
   .right-col {
     position: relative;
@@ -351,15 +351,16 @@
     height: 988px;
     display: flex;
     flex-direction: column;
-    gap: 26px;
+    justify-content: center;
+    align-items: center;
+    gap: 0;
+    padding-bottom: 8px;
   }
 
   .shot-card {
     border-radius: 14px;
     overflow: hidden;
     border: 1px solid rgba(224, 138, 76, 0.35);
-    box-shadow: 0 24px 60px -10px rgba(0, 0, 0, 0.75),
-                0 0 35px -5px rgba(224, 138, 76, 0.15);
     background: #0f141d;
   }
 
@@ -392,35 +393,63 @@
 
   .shot-card img { width: 100%; display: block; }
 
-  /* All screenshots share one scale (0.55) so they stay proportionally true
-     to each other: wizard cards 1142px wide -> 628, the marketplace button
-     strips keep their native 1:1 pixel size from the same display. */
-  .wizard-card { width: 628px; flex: none; align-self: center; }
-
-  .buttons-card { width: 946px; flex: none; align-self: center; }
-
-  .buttons-row {
-    padding: 16px 20px 6px;
-    display: flex;
-    gap: 28px;
-    justify-content: center;
-    align-items: center;
+  /* One shared scale (0.56): wizard cards 1142px wide -> 640, button strips
+     at 54px height, all proportionally true to each other. The collage is
+     fanned: cards lean apart, overlap, and the strips sit on top like
+     stickers. justify-content:center keeps top/bottom spacing equal. */
+  .wizard-card {
+    width: 640px;
+    flex: none;
+    box-shadow: 0 26px 60px -12px rgba(0, 0, 0, 0.8),
+                0 0 40px -6px rgba(224, 138, 76, 0.18);
   }
 
-  .buttons-row img { display: block; border-radius: 6px; height: 54px; width: auto; }
+  .wizard-install-card {
+    transform: rotate(-1.4deg) translateX(-46px);
+    z-index: 1;
+  }
 
-  .strip-caption {
+  .wizard-disable-card {
+    transform: rotate(1.5deg) translateX(52px);
+    margin-top: -42px;
+    z-index: 2;
+    box-shadow: 0 26px 70px -10px rgba(0, 0, 0, 0.85),
+                0 0 46px -4px rgba(224, 138, 76, 0.22);
+  }
+
+  .strip-cluster {
+    display: flex;
+    align-items: center;
+    justify-content: space-evenly;
+    width: 100%;
+    margin-top: 30px;
+    z-index: 3;
+  }
+
+  .strip-cluster img {
+    display: block;
+    height: 54px;
+    width: auto;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 14px 34px -6px rgba(0, 0, 0, 0.8),
+                0 0 22px -4px rgba(180, 201, 111, 0.25);
+  }
+
+  .collage-caption {
+    margin-top: 20px;
     font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
-    font-size: 11.5px;
+    font-size: 12px;
     color: #64748b;
     letter-spacing: 0.04em;
+    text-align: center;
+    transform: rotate(-0.4deg);
   }
 </style>
 
 <div class="right-col">
 
-  <!-- Install wizard overlay -->
-  <div class="shot-card wizard-card">
+  <div class="shot-card wizard-card wizard-install-card">
     <div class="shot-topbar">
       <span class="shot-title">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
@@ -433,8 +462,7 @@
     <img src="wizard_install.png" alt="Install wizard reviewing a plugin over the marketplace page">
   </div>
 
-  <!-- Disable wizard overlay, stacked under the install wizard -->
-  <div class="shot-card wizard-card">
+  <div class="shot-card wizard-card wizard-disable-card">
     <div class="shot-topbar">
       <span class="shot-title">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
@@ -447,24 +475,13 @@
     <img src="wizard_disable.png" alt="Disable plugin wizard confirming before disabling a plugin">
   </div>
 
-  <!-- Buttons the extension injects into plugins.omarchy.org -->
-  <div class="shot-card buttons-card">
-    <div class="shot-topbar">
-      <span class="shot-title">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-          <path d="M3 5h18v2H3V5zm0 6h18v2H3v-2zm0 6h18v2H3v-2z"/>
-        </svg>
-        Buttons added to the plugin marketplace
-      </span>
-      <span class="shot-hint">state read from the local host, never the page</span>
-    </div>
-    <div class="buttons-row">
-      <img src="buttons_install.png" alt="Install and Copy buttons on a plugin that is not installed">
-      <img src="buttons_disable.png" alt="Enable, Uninstall and Copy buttons on an installed plugin">
-      <img src="catalog_icons.png" alt="Catalog card icons: views, installs, download, terminal, copy">
-    </div>
-    <div class="strip-caption"># not installed: Install &middot; Copy &nbsp;&nbsp;# installed: Enable &middot; Uninstall &middot; Copy &nbsp;&nbsp;# catalog card icons</div>
+  <div class="strip-cluster">
+    <img class="b-install" src="buttons_install.png" alt="Install and Copy buttons on a plugin that is not installed">
+    <img class="b-disable" src="buttons_disable.png" alt="Enable, Uninstall and Copy buttons on an installed plugin">
+    <img class="b-catalog" src="catalog_icons.png" alt="Catalog card icons: views, installs, download, terminal, copy">
   </div>
+
+  <div class="collage-caption"># not installed: Install &middot; Copy&nbsp;&nbsp;# installed: Enable &middot; Uninstall &middot; Copy&nbsp;&nbsp;# catalog card icons</div>
 
 </div>
 
