@@ -19,9 +19,11 @@ const ALLOWED_TYPES = new Set([
   "uninstall",
   "enable",
   "disable",
+  "watch",
+  "unwatch",
 ]);
 
-const FAST_TYPES = new Set(["ping", "status", "status_all"]);
+const FAST_TYPES = new Set(["ping", "status", "status_all", "watch", "unwatch"]);
 
 let activePort = null;
 let currentTask = null;

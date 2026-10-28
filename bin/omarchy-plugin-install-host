@@ -10,11 +10,20 @@
 #   {"type":"uninstall","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
 #   {"type":"enable","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
 #   {"type":"disable","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
+#   {"type":"watch","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
+#   {"type":"unwatch","id":"acme.weather"}
 #
-# This host NEVER installs anything itself. It validates the request against a
+# This host NEVER installs anything itself. It validates a request against a
 # fresh fetch of the marketplace catalog, then summons the wizard overlay,
 # which re-validates, asks the user to confirm, and runs the omarchy plugin
 # command. The outcome is a desktop notification; no completion dialog shows.
+#
+# "watch" is the bar-icon watcher beacon: a tab on an installable plugin page
+# sends it every few seconds. The host only format-checks id/repo (no catalog
+# fetch, no action) and records the page in browser-watch.json in the state
+# dir; the bar widget lights up while that file is fresh, and its dropdown
+# routes every action through the wizard, which re-validates. "unwatch" and
+# host exit remove the record (a lost beacon goes stale on its own).
 
 set -euo pipefail
 # Qt (used by omarchy-shell / omarchy plugin list) writes a warning to stdout
@@ -23,10 +32,15 @@ set -euo pipefail
 export LC_ALL=C.UTF-8
 
 HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
-HOST_VERSION="0.3.4"
+HOST_VERSION="0.4.0"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
 MAX_FRAME_BYTES=65536
+# Watcher-mode beacon record: the plugin page of the tab(s) currently open.
+# The bar widget reads this file; it is written here and removed by
+# "unwatch" and by the host's exit trap.
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/$WIZARD_ID"
+WATCH_FILE="$STATE_DIR/browser-watch.json"
 
 byte_length() {
   local LC_ALL=C
@@ -70,12 +84,10 @@ plugin_status() {
   printf '%s\n' "$out"
 }
 
-# Validate an install/uninstall/enable/disable request against local state and
-# a fresh fetch of the marketplace catalog. Prints a machine-readable reason on
-# failure and returns 1; returns 0 when trustworthy enough to summon the wizard.
-validate_action() {
-  local payload="$1" mode="$2"
-  local id="" repo="" owner="" repo_name="" norm_repo="" status="" catalog="" catalog_check=""
+# Parse id/repo out of a payload and normalize them. Sets _target_id and
+# _target_repo; prints a machine-readable reason and returns 1 on failure.
+normalize_target() {
+  local payload="$1" id="" repo="" owner="" repo_name=""
 
   IFS=$'\t' read -r id repo < <(
     jq -r '[
@@ -98,7 +110,23 @@ validate_action() {
     echo "invalid-repo-url"
     return 1
   fi
-  norm_repo="https://github.com/$owner/$repo_name"
+  _target_id="$id"
+  _target_repo="https://github.com/$owner/$repo_name"
+  return 0
+}
+
+# Validate an install/uninstall/enable/disable request against local state and
+# a fresh fetch of the marketplace catalog. Prints a machine-readable reason on
+# failure and returns 1; returns 0 when trustworthy enough to summon the wizard.
+validate_action() {
+  local payload="$1" mode="$2"
+  local id="" repo="" status="" catalog="" catalog_check=""
+
+  # normalize_target echoes the machine-readable reason itself, which is
+  # exactly what this function's caller captures on failure.
+  normalize_target "$payload" || return 1
+  id="$_target_id"
+  repo="$_target_repo"
 
   # Check local plugin status first before making a network request.
   status=$(plugin_status "$id")
@@ -146,7 +174,7 @@ validate_action() {
     return 1
   }
 
-  catalog_check=$(jq -r --arg id "$id" --arg repo "$norm_repo" --arg mode "$mode" '
+  catalog_check=$(jq -r --arg id "$id" --arg repo "$repo" --arg mode "$mode" '
     ((.plugins // []) | map(select(type == "object" and .id == $id)) | first) as $entry
     | if $entry == null then
         "unknown-plugin-id"
@@ -187,12 +215,45 @@ summon_wizard() {
   omarchy-shell shell summon "$WIZARD_ID" "$json" >/dev/null 2>&1
 }
 
+# Bar-icon watcher beacon: record the plugin page of the tab that sent the
+# "watch". Format-checked only (id/repo shape): the beacon never acts, it
+# only lights the bar icon. Every action from the dropdown is re-validated
+# through validate_action and confirmed by the wizard. The record carries
+# this host's pid so only the owner clears it; a beacon that stops (tab
+# closed, browser killed) goes stale and the icon dims.
+record_watch() {
+  local payload="$1" name="" ts="" tmp="" json=""
+  normalize_target "$payload" || return 1
+  name=$(jq -r 'if type == "object" and (.name | type) == "string" then .name[0:128] else "" end' <<<"$payload" 2>/dev/null) || name=""
+  ts=$(date +%s)
+  json=$(jq -cn --arg id "$_target_id" --arg repo "$_target_repo" --arg name "$name" \
+    --argjson pid "$$" --argjson ts "$ts" \
+    '{id:$id, repo:$repo, name:$name, pid:$pid, ts:$ts}') || return 1
+  mkdir -p "$STATE_DIR" || return 1
+  tmp="$WATCH_FILE.tmp.$$"
+  printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$WATCH_FILE"
+}
+
+# Remove the beacon record, but only when this host process wrote it: a
+# second running browser has its own host keeping its own beacon fresh.
+clear_watch() {
+  [[ -f $WATCH_FILE ]] || return 0
+  [[ "$(jq -r '.pid // empty' "$WATCH_FILE" 2>/dev/null)" == "$$" ]] && rm -f "$WATCH_FILE"
+  return 0
+}
+
 main() {
   local length payload type id local_status all_status reason
-  local trace="${PI_NATIVE_TRACE:-}"
+  trace="${PI_NATIVE_TRACE:-}"
+  on_host_exit() {
+    clear_watch
+    if [[ -n $trace ]]; then
+      printf '%s exit pid=%s rc=%s\n' "$(date +%T)" "$$" "$?" >> "$trace" 2>/dev/null || true
+    fi
+  }
+  trap on_host_exit EXIT
   if [[ -n $trace ]] && mkdir -p "$(dirname -- "$trace")" 2>/dev/null; then
     printf '%s launch pid=%s argv=%s\n' "$(date +%T)" "$$" "$*" >> "$trace" 2>/dev/null || true
-    trap 'printf "%s exit pid=%s rc=%s\n" "$(date +%T)" "$$" "$?" >> "$trace" 2>/dev/null || true' EXIT
   else
     trace=""
   fi
@@ -237,6 +298,17 @@ main() {
         else
           reply_err "$reason"
         fi
+        ;;
+      watch)
+        if reason=$(record_watch "$payload"); then
+          reply_ok
+        else
+          reply_err "$reason"
+        fi
+        ;;
+      unwatch)
+        clear_watch
+        reply_ok
         ;;
       *)
         reply_err "unknown-message-type"

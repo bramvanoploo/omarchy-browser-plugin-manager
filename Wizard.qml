@@ -6,8 +6,10 @@ import qs.Commons
 import qs.Ui
 
 // Omarchy Browser Plugin Manager wizard overlay.
-// Summoned by the native messaging host (browser button click) with payload
-// {mode, id, repo, name}. The payload is treated as a hint only: the catalog
+// Summoned by the native messaging host (browser button click) or by the
+// bar widget's dropdown with payload {mode, id, repo, name}; the modes are
+// install / uninstall / enable / disable (host) and update (bar widget).
+// The payload is treated as a hint only: the catalog
 // entry and the repository manifest are re-fetched and cross-checked before
 // anything is displayed, and the user confirms the action in this overlay.
 // Installing a bar widget adds a placement step: the user picks the bar
@@ -67,14 +69,15 @@ Item {
 
   property bool opened: false
   // review | enable-confirm | disable-confirm | uninstall-confirm
-  // | enabling | placement | disabling | browser-prompt | browser-defer
+  // | update-confirm | enabling | placement | disabling
+  // | browser-prompt | browser-defer
   property string stage: "review"
 
   property string pluginId: ""
   property string pluginRepo: ""
   property string pluginName: ""
-  // "install" (default) | "uninstall" | "enable" | "disable" — decided by the
-  // native host from live local state, never by the page.
+  // "install" (default) | "uninstall" | "enable" | "disable" | "update" —
+  // decided by the native host from live local state, never by the page.
   property string mode: "install"
 
   property bool catalogLoaded: false
@@ -119,7 +122,8 @@ Item {
     if (root.stage === "enabling") return "Enabling plugin\u2026"
     if (root.stage === "disabling") return "Disabling plugin\u2026"
     var action = ({ install: "Install plugin", uninstall: "Uninstall plugin",
-                    enable: "Enable plugin", disable: "Disable plugin" })[root.mode]
+                    enable: "Enable plugin", disable: "Disable plugin",
+                    update: "Update plugin" })[root.mode]
     return action || "Plugin setup"
   }
 
@@ -204,6 +208,7 @@ Item {
 
     var newMode = String(payload.mode || "install")
     if (newMode !== "uninstall" && newMode !== "enable" && newMode !== "disable"
+        && newMode !== "update"
         && newMode !== "browser-prompt" && newMode !== "browser-defer") newMode = "install"
     // Stage before mode: the title binding chooses its source from stage, and
     // assigning a browser-* mode while the old stage is still a confirm stage
@@ -267,7 +272,7 @@ Item {
     } else {
       manifestLoaded = true
     }
-    if (mode === "uninstall" || mode === "enable" || mode === "disable") listProc.running = true
+    if (mode === "uninstall" || mode === "enable" || mode === "disable" || mode === "update") listProc.running = true
   }
 
   function close() {
@@ -325,7 +330,8 @@ Item {
   // The action failed: report it as a notification and close; no dialog.
   function fail(reason) {
     var t = ({ install: "Plugin install failed", uninstall: "Plugin uninstall failed",
-               enable: "Plugin enable failed", disable: "Plugin disable failed" })[root.mode]
+               enable: "Plugin enable failed", disable: "Plugin disable failed",
+               update: "Plugin update failed" })[root.mode]
     root.notify(t, root.pluginName + ": " + reason)
     root.close()
   }
@@ -360,6 +366,14 @@ Item {
   function runUninstall() {
     if (!root.canAct) return
     root.spawnWorker("uninstall")
+  }
+
+  // Update runs detached like install/uninstall: a git pull touches the
+  // watched plugins directory, and updating the manager itself reloads the
+  // shell and destroys this overlay.
+  function runUpdate() {
+    if (!root.canAct) return
+    root.spawnWorker("update", "")
   }
 
   function confirmEnable() {
@@ -491,6 +505,9 @@ Item {
         } else if (root.mode === "disable") {
           root.catalogError = ""
           root.stage = "disable-confirm"
+        } else if (root.mode === "update") {
+          root.catalogError = ""
+          root.stage = "update-confirm"
         } else {
           root.catalogError = ""
           root.stage = "uninstall-confirm"
@@ -592,7 +609,23 @@ Item {
       "}",
       "OUT=''"
     ]
-    if (kind === "install") {
+    if (kind === "update") {
+      // Git-managed update of the installed clone; --yes because the user
+      // already confirmed in this dialog. The shell reloads the plugin
+      // itself; a running update of the manager reloads the shell, so this
+      // worker is detached like install/uninstall.
+      s = s.concat([
+        "if ! OUT=\"$(omarchy plugin update \"$ID\" --yes 2>&1)\"; then",
+        "  notify \"Plugin update failed\" \"$NAME: $OUT\"",
+        "  exit 1",
+        "fi",
+        "if printf '%s' \"$OUT\" | grep -qi 'up to date'; then",
+        "  notify \"Plugin up to date\" \"$NAME was already at the latest version.\"",
+        "else",
+        "  notify \"Plugin updated\" \"$NAME is updated to the latest version.\"",
+        "fi"
+      ])
+    } else if (kind === "install") {
       s = s.concat([
         "# The chosen bar section cannot ride on add's --enable, so clone",
         "# first and let the enable loop below apply --section.",
@@ -1073,6 +1106,11 @@ Item {
           text: "Installed and enabled. Disabling unloads it from the shell; "
             + "the plugin files stay installed."
         }
+        PiLine {
+          visible: root.stage === "update-confirm"
+          text: "Installed. Updating pulls the latest commits from the plugin's "
+            + "git repository; the shell reloads the plugin afterwards."
+        }
 
         // ---- stage: browser-prompt (manager install finished) ----
         // Shown exactly once: the install worker summons it directly after a
@@ -1120,7 +1158,8 @@ Item {
         PiLine {
           visible: root.reviewBlocked.length > 0
             && (root.stage === "review" || root.stage === "uninstall-confirm"
-                || root.stage === "enable-confirm" || root.stage === "disable-confirm")
+                || root.stage === "enable-confirm" || root.stage === "disable-confirm"
+                || root.stage === "update-confirm")
           color: Color.urgent
           text: root.reviewBlocked
         }
@@ -1202,8 +1241,16 @@ Item {
             onClickedPi: root.runDisable()
           }
           PiButton {
+            visible: root.mode === "update" && root.stage === "update-confirm"
+            enabled: root.canAct
+            primary: true
+            label: "Update plugin"
+            onClickedPi: root.runUpdate()
+          }
+          PiButton {
             visible: root.stage === "review" || root.stage === "uninstall-confirm"
               || root.stage === "enable-confirm" || root.stage === "disable-confirm"
+              || root.stage === "update-confirm"
             label: "Cancel"
             onClickedPi: root.close()
           }

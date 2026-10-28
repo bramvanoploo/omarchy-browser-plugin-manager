@@ -8,6 +8,9 @@
 //   1. the marketplace's own availability rule for this plugin (catalog.json),
 //   2. a live ping to the local native messaging host.
 // No host => no buttons; the site renders untouched.
+// While the page is the visible tab it also runs the bar-icon watcher beacon:
+// a "watch" record with the host (renewed every 5s, "unwatch" on leave) that
+// lights the Omarchy bar widget for this plugin.
 
 (() => {
   "use strict";
@@ -376,6 +379,37 @@
     });
   }
 
+  // Bar-icon watcher beacon: while this plugin page is the visible tab,
+  // "watch" re-records the page with the local host every few seconds (the
+  // bar icon lights up while that record is fresh); leaving the tab or
+  // closing it sends "unwatch". Losing the unwatch (browser killed) is
+  // safe: the record simply goes stale and the bar icon dims.
+  const BEACON_REFRESH_MS = 5000;
+  const BEACON_STALE_MS = 12000;
+  let beaconTimer = null;
+  let beaconActive = false;
+
+  function sendBeacon(plugin, unwatch) {
+    const message = unwatch
+      ? { type: "unwatch", id: plugin.id }
+      : { type: "watch", id: plugin.id, repo: plugin.repo, name: plugin.name };
+    talkToHost(message, HOST_STATUS_TIMEOUT_MS);
+  }
+
+  function setBeacon(plugin, active) {
+    if (active === beaconActive) return;
+    beaconActive = active;
+    sendBeacon(plugin, !active);
+  }
+
+  function startBeacon(plugin) {
+    if (beaconTimer) return;
+    setBeacon(plugin, !document.hidden);
+    beaconTimer = setInterval(() => setBeacon(plugin, !document.hidden), BEACON_REFRESH_MS);
+    document.addEventListener("visibilitychange", () => setBeacon(plugin, !document.hidden));
+    window.addEventListener("pagehide", () => setBeacon(plugin, false));
+  }
+
   async function init() {
     if (!PLUGIN_ID) return;
     injectStyles();
@@ -397,13 +431,13 @@
 
     // The detail section renders async after the page's own catalog fetch.
     mountButtons(plugin, state);
-    if (mounted) startStateSync(plugin);
+    if (mounted) { startStateSync(plugin); startBeacon(plugin); }
     const target = document.querySelector("#detail-content");
     if (!target || mounted) return;
     const observer = new MutationObserver(() => {
       if (document.querySelector("#detail-content [data-install-copy]")) {
         mountButtons(plugin, state);
-        if (mounted) startStateSync(plugin);
+        if (mounted) { startStateSync(plugin); startBeacon(plugin); }
         observer.disconnect();
       }
     });

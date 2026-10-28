@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Omarchy Browser Plugin Manager",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "Adds Install/Uninstall buttons to installable plugins on plugins.omarchy.org. Requires the Omarchy shell plugin and native host.",
   "permissions": [
     "nativeMessaging"

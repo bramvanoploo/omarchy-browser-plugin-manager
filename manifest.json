@@ -2,14 +2,25 @@
   "schemaVersion": 1,
   "id": "bramvanoploo.omarchy-browser-plugin-manager",
   "name": "Browser Plugin Manager",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "author": "Bram van Oploo",
-  "description": "Installation wizard for Omarchy plugins, summoned from the browser extension's Install button",
+  "description": "Installation wizard for Omarchy plugins, summoned from the browser extension's Install button; bar-icon watcher mode lights up on installable plugin pages",
   "kinds": [
-    "overlay"
+    "overlay",
+    "bar-widget"
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "overlay": "Wizard.qml"
+    "overlay": "Wizard.qml",
+    "barWidget": "BarWatch.qml"
+  },
+  "barWidget": {
+    "displayName": "Browser Plugin Watch",
+    "description": "Bar icon that lights up while a browser tab is open on an installable plugin page; left click opens a menu to install, uninstall, update, or move that plugin's bar icon",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {},
+    "schema": []
   }
 }
