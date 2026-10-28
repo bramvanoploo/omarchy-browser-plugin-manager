@@ -139,9 +139,7 @@ Item {
   readonly property string otherStoreName:
     root.extensionFamily === "chromium" ? "Firefox add-on" : "Chrome Web Store extension"
   readonly property string otherFamilyName:
-    root.extensionFamily === "chromium"
-      ? "Firefox-based browsers (Firefox, Waterfox, LibreWolf, Tor Browser, \u2026)"
-      : "Chromium-based browsers (Chrome, Brave, Vivaldi, Edge, \u2026)"
+    root.extensionFamily === "chromium" ? "Firefox browsers" : "Chromium browsers"
   readonly property string otherExtensionUrl:
     root.extensionFamily === "chromium" ? root.amoUrl : root.cwsUrl
   readonly property string primaryLinkText:
@@ -969,29 +967,25 @@ Item {
           width: cardColumn.width
           spacing: Style.spacing.lg
           PiLine {
-            text: root.pluginName + " is installed, but it needs its browser "
-              + "extension before it can do anything: the extension is what "
-              + "adds the Install buttons on plugins.omarchy.org and talks to "
-              + "this plugin through the native messaging host."
+            text: "The Omarchy plugin is installed. Its browser extension is "
+              + "what shows the Install buttons on plugins.omarchy.org, so "
+              + "without it the plugin does nothing."
           }
           PiLine {
-            text: "The button below opens this extension's page in the "
-              + root.primaryStoreName + ", the store your default browser "
-              + "installs from. The add-on is installed there through the "
-              + "browser's own confirm dialog; nothing is installed before "
-              + "you accept it in the browser. Once installed, the Install "
-              + "buttons appear on the plugin pages straight away."
+            text: "The button below opens the extension in the "
+              + root.primaryStoreName + " for your default browser; the "
+              + "browser asks before installing anything."
           }
           PiBrowserLine {
             visible: root.defaultBrowserLoaded
-            text: "Detected default browser: "
+            text: "Default browser: "
               + (root.defaultBrowserId.length > 0
                  ? root.defaultBrowserId + "  (" + root.extensionFamily + ")"
                  : "unknown \u2014 opening the Firefox add-on page")
           }
           PiTextLink {
-            text: "There is also a browser extension for " + root.otherFamilyName
-              + ": " + root.linkTag(root.otherExtensionUrl, root.otherLinkText)
+            text: "For " + root.otherFamilyName + ": "
+              + root.linkTag(root.otherExtensionUrl, root.otherLinkText)
           }
         }
 
@@ -1003,17 +997,14 @@ Item {
           PiLine {
             color: Color.urgent
             text: "Without the browser extension this plugin does nothing: "
-              + "no Install buttons appear on plugins.omarchy.org, so there is "
-              + "nothing for the wizard to install."
+              + "no Install buttons will appear on plugins.omarchy.org."
           }
           PiTextLink {
-            text: "Open the extension page for your default browser ("
-              + (root.defaultBrowserId.length > 0 ? root.defaultBrowserId : "unknown")
-              + ") in the " + root.primaryStoreName + ": "
+            text: "Extension page for your browser: "
               + root.linkTag(root.primaryExtensionUrl, root.primaryLinkText)
           }
           PiTextLink {
-            text: "Or the extension for " + root.otherFamilyName + ": "
+            text: "For " + root.otherFamilyName + ": "
               + root.linkTag(root.otherExtensionUrl, root.otherLinkText)
           }
         }
