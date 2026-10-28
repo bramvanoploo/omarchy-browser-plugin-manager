@@ -137,8 +137,15 @@ Panel {
       && typeof obj.ts === "number"
     var newId = accepted ? String(obj.id) : ""
     var oldId = root.watchState ? String(root.watchState.id) : ""
-    if (root.watchState !== null && !accepted)
-      console.warn("BarWatch: beacon record lost (missing/blank/unparsable file) -> showing no-plugin panel")
+    // A failed/partial read (the file is renamed-replaced while we reload,
+    // which Qt's file watching reports as gone) is transient: keep the last
+    // record and let ts staleness end it. Only a well-formed record for a
+    // *different* plugin resets the per-plugin status/catalog state.
+    if (root.watchState !== null && !accepted) {
+      console.warn("BarWatch: transient beacon read failure, keeping last record")
+      root.nowMs = Date.now()
+      return
+    }
     root.watchState = accepted ? obj : null
     root.nowMs = Date.now()
     // Status and catalog are per watched plugin: re-check them when the
@@ -151,6 +158,11 @@ Panel {
       root.installedVersion = ""
       root.catalogEntry = null
       root.catalogForId = ""
+      if (root.opened && newId !== "") {
+        // The popup stayed open across a tab switch: re-read the new plugin.
+        Qt.callLater(root.refreshStatus)
+        Qt.callLater(root.refreshCatalog)
+      }
     }
   }
 
