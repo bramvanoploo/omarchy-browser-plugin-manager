@@ -42,8 +42,7 @@ Item {
 
   // Browser extension pages: Firefox-based browsers install the add-on from
   // AMO; Chromium-based browsers that support Chrome Web Store extensions
-  // install from the CWS listing page (store-assigned item id; the
-  // pretty-slug URL is TBD — the bare-id URL redirects to the listing).
+  // install from the CWS listing page (store-assigned item id URL).
   readonly property string amoUrl:
     "https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/"
   readonly property string cwsUrl:
@@ -128,8 +127,7 @@ Item {
   // xdg default-browser id -> which extension family it consumes. Firefox
   // forks (Waterfox, LibreWolf, Tor Browser, IceCat, Zen) take AMO add-ons;
   // Chromium forks (Chrome, Brave, Vivaldi, Edge, ...) take CWS extensions.
-  // Unrecognised browsers fall back to Firefox: the AMO listing is live, the
-  // CWS listing page is pending.
+  // Unrecognised browsers fall back to the Firefox (AMO) listing.
   function browserFamily(desktopId) {
     var s = String(desktopId || "").toLowerCase()
     if (/(chrome|chromium|brave|vivaldi|opera|edge|iridium|yandex|slimjet|slimbrowser)/.test(s))

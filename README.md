@@ -77,7 +77,7 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
 | LibreWolf | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
 | Tor Browser | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
 | GNU IceCat | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
-| Chromium-based (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | Chrome Web Store — coming soon |
+| Chromium-based (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | [Chrome Web Store](https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf) |
 
 The native messaging host must still be registered on the machine
 (`bin/plugin-installer-setup`); the browser extension alone is not enough.
