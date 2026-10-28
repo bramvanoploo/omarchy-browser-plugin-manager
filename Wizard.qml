@@ -97,6 +97,21 @@ Item {
   readonly property bool canAct: reviewBlocked.length === 0
   readonly property bool canInstall: canAct && stage === "review"
 
+  // Header subtitle: the action this dialog performs, under the plugin
+  // identity (name + version pill).
+  readonly property string headerSubtitle: {
+    if (root.stage === "browser-prompt" || root.stage === "browser-defer")
+      return "Browser extension setup"
+    if (root.stage === "placement")
+      return (root.mode === "enable" ? "Enable plugin" : "Install plugin")
+        + " \u2014 choose bar section"
+    if (root.stage === "enabling") return "Enabling plugin\u2026"
+    if (root.stage === "disabling") return "Disabling plugin\u2026"
+    var action = ({ install: "Install plugin", uninstall: "Uninstall plugin",
+                    enable: "Enable plugin", disable: "Disable plugin" })[root.mode]
+    return action || "Plugin setup"
+  }
+
   function stopPending() {
     enableRetryTimer.stop()
     finalVerifyTimer.stop()
@@ -878,17 +893,67 @@ Item {
         anchors.leftMargin: card.contentLeftInset
         spacing: Style.spacing.panelGap
 
-        Text {
-          width: parent.width
-          text: root.stage === "browser-prompt" || root.stage === "browser-defer"
-            ? root.pluginName + (root.manifest && root.manifest.version
-                ? " v" + String(root.manifest.version) : "")
-            : ({ install: "Install plugin", uninstall: "Uninstall plugin",
-                 enable: "Enable plugin", disable: "Disable plugin" })[root.mode]
-          color: Color.foreground
-          font.family: Style.font.family
-          font.bold: true
-          font.pixelSize: Style.font.heading
+        // Header: icon + plugin name + version pill + action subtitle,
+        // styled like the OmaGuake settings panel header.
+        Row {
+          width: cardColumn.width
+          spacing: Style.space(14)
+
+          Text {
+            text: "\uf268"  // FontAwesome browser glyph: this manager's logo
+            font.family: Style.font.family
+            font.pixelSize: Math.max(Style.font.heading, Math.round(headerTextCol.implicitHeight))
+            color: Color.accent
+            anchors.verticalCenter: parent.verticalCenter
+          }
+
+          Column {
+            id: headerTextCol
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+
+            Row {
+              spacing: Style.space(8)
+
+              Text {
+                text: (root.manifest && root.manifest.name)
+                  ? String(root.manifest.name) : root.pluginName
+                font.family: Style.font.family
+                font.pixelSize: Style.font.title
+                font.bold: true
+                color: Color.foreground
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Rectangle {
+                visible: root.manifest && root.manifest.version
+                anchors.verticalCenter: parent.verticalCenter
+                height: Style.space(18)
+                width: headerVersionText.implicitWidth + Style.space(12)
+                radius: Style.cornerRadius > 0 ? 4 : 0
+                color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15)
+                border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.4)
+                border.width: 1
+
+                Text {
+                  id: headerVersionText
+                  anchors.centerIn: parent
+                  text: "v" + String((root.manifest && root.manifest.version) || "")
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  color: Color.accent
+                }
+              }
+            }
+
+            Text {
+              text: root.headerSubtitle
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              color: Color.muted
+            }
+          }
         }
         PiLine {
           visible: root.stage !== "browser-prompt" && root.stage !== "browser-defer"
