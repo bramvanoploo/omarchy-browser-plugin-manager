@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Browser Plugin Manager Preview</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background-color: #0b0e14;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", "Helvetica Neue", sans-serif;
+    color: #f1f5f9;
+    position: relative;
+    display: flex;
+    padding: 46px 56px;
+    gap: 44px;
+  }
+
+  .bg-glow-1 {
+    position: absolute;
+    width: 950px;
+    height: 950px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(224, 122, 60, 0.16) 0%, rgba(224, 122, 60, 0) 65%);
+    top: -240px;
+    left: -200px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .bg-glow-2 {
+    position: absolute;
+    width: 1050px;
+    height: 1050px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(180, 201, 111, 0.13) 0%, rgba(180, 201, 111, 0) 65%);
+    bottom: -260px;
+    right: 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .bg-grid {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Left column */
+  .left-col {
+    position: relative;
+    z-index: 1;
+    width: 700px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .header { display: flex; flex-direction: column; gap: 14px; }
+  .badge-row { display: flex; align-items: center; gap: 12px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: rgba(224, 122, 60, 0.12);
+    color: #e08a4c;
+    border: 1px solid rgba(224, 122, 60, 0.35);
+  }
+
+  .version-badge {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.06);
+    color: #94a3b8;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .platform-badge {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12.5px;
+    font-weight: 600;
+    background: rgba(180, 201, 111, 0.12);
+    color: #b4c96f;
+    border: 1px solid rgba(180, 201, 111, 0.28);
+    letter-spacing: 0.05em;
+  }
+
+  .title-row { display: flex; align-items: center; gap: 18px; }
+
+  .icon-box {
+    width: 64px;
+    height: 64px;
+    background: linear-gradient(135deg, #1e293b, #0f172a);
+    border: 1px solid rgba(224, 138, 76, 0.4);
+    border-radius: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 12px 28px -6px rgba(224, 138, 76, 0.3);
+    flex-shrink: 0;
+  }
+
+  .icon-box svg { width: 36px; height: 36px; fill: #e08a4c; }
+
+  h1 {
+    font-size: 44px;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    color: #ffffff;
+    line-height: 1.05;
+  }
+
+  .tagline {
+    font-size: 18px;
+    font-weight: 400;
+    color: #94a3b8;
+    line-height: 1.45;
+  }
+
+  .features { display: flex; flex-direction: column; gap: 12px; margin: 6px 0; }
+
+  .feature-card-lead {
+    border: 1px solid rgba(224, 138, 76, 0.45);
+    background: rgba(224, 122, 60, 0.07);
+    box-shadow: 0 4px 24px rgba(224, 122, 60, 0.12);
+  }
+
+  .feature-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 13px 18px;
+    background: rgba(18, 24, 38, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    backdrop-filter: blur(14px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  }
+
+  .feature-icon-wrap {
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    background: rgba(224, 122, 60, 0.12);
+    border: 1px solid rgba(224, 122, 60, 0.25);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .feature-icon-wrap svg { width: 22px; height: 22px; fill: #e08a4c; }
+
+  .feature-body { display: flex; flex-direction: column; gap: 3px; }
+
+  .feature-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #f8fafc;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .feature-pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(180, 201, 111, 0.15);
+    color: #b4c96f;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .feature-desc { font-size: 13px; color: #94a3b8; line-height: 1.4; }
+
+  .footer-note {
+    font-size: 13px;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-glow-1"></div>
+<div class="bg-glow-2"></div>
+<div class="bg-grid"></div>
+
+<!-- Left Column -->
+<div class="left-col">
+  <div class="header">
+    <div class="badge-row">
+      <div class="badge">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+        Omarchy Plugin
+      </div>
+      <div class="version-badge">v{{VERSION}}</div>
+      <div class="platform-badge">Browser &amp; Wayland</div>
+    </div>
+
+    <div class="title-row">
+      <div class="icon-box">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm7.9 9h-3.4a14 14 0 0 0-1.2-5.4A8 8 0 0 1 19.9 11zM12 4.1c.9 1.3 1.7 3.7 2 6.9h-4c.3-3.2 1.1-5.6 2-6.9zM4.1 13h3.4c.1 2 .6 3.9 1.2 5.4A8 8 0 0 1 4.1 13zm3.4-2H4.1a8 8 0 0 1 4.6-5.4A14 14 0 0 0 7.5 11zM12 19.9c-.9-1.3-1.7-3.7-2-6.9h4c-.3 3.2-1.1 5.6-2 6.9zm3.3-1.5c.6-1.5 1.1-3.4 1.2-5.4h3.4a8 8 0 0 1-4.6 5.4z"/>
+        </svg>
+      </div>
+      <h1>Browser Plugin<br>Manager</h1>
+    </div>
+
+    <div class="tagline">
+      One-click plugin installs from plugins.omarchy.org: Install, Enable/Disable
+      and Uninstall buttons injected into the marketplace, confirmed in a desktop
+      wizard, installed through the official <b>omarchy plugin</b> CLI.
+    </div>
+  </div>
+
+  <!-- Feature Cards -->
+  <div class="features">
+
+    <div class="feature-card feature-card-lead">
+      <div class="feature-icon-wrap">
+        <svg viewBox="0 0 24 24">
+          <path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z"/>
+        </svg>
+      </div>
+      <div class="feature-body">
+        <div class="feature-title">
+          Companion Browser Extensions
+          <span class="feature-pill">Firefox &bull; Chromium</span>
+        </div>
+        <div class="feature-desc">
+          Install the companion extension from your browser's add-on store (Firefox Add-ons,
+          Chrome Web Store) for Chromium-based browsers like Chrome, Brave, Edge and Vivaldi.
+          It adds Install, Enable/Disable and Uninstall buttons to the official Omarchy Plugin
+          Marketplace (plugins.omarchy.org) for one-click installation and management of
+          Omarchy plugins.
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon-wrap">
+        <svg viewBox="0 0 24 24">
+          <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+        </svg>
+      </div>
+      <div class="feature-body">
+        <div class="feature-title">
+          Wizard-Confirmed Installs
+          <span class="feature-pill">Nothing Runs Unasked</span>
+        </div>
+        <div class="feature-desc">
+          The Install button summons a desktop overlay that shows author, version, license,
+          verification state and source before anything is cloned. Cancel is a plain close.
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon-wrap">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/>
+        </svg>
+      </div>
+      <div class="feature-body">
+        <div class="feature-title">
+          Re-Validated Every Action
+          <span class="feature-pill">Catalog + Manifest</span>
+        </div>
+        <div class="feature-desc">
+          Install, Enable, Disable and Uninstall are each re-checked against a fresh catalog
+          fetch and the live local plugin state. The installer refuses to uninstall itself.
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon-wrap">
+        <svg viewBox="0 0 24 24">
+          <path d="M4 4h16v2H4V4zm0 14h16v2H4v-2zm0-7h16v2H4v-2z"/>
+        </svg>
+      </div>
+      <div class="feature-body">
+        <div class="feature-title">
+          Bar Widgets Pick a Section
+          <span class="feature-pill">Left &bull; Center &bull; Right</span>
+        </div>
+        <div class="feature-desc">
+          Installing a bar widget asks where its icon goes; the manifest default is labelled
+          "(default)", and the placement is verified and re-applied after the shell's config sweep.
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon-wrap">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+        </svg>
+      </div>
+      <div class="feature-body">
+        <div class="feature-title">
+          Live State, Zero Surprises
+          <span class="feature-pill">Never from the Page</span>
+        </div>
+        <div class="feature-desc">
+          Buttons follow the host's live installed/enabled state, show only when the local
+          native host replies, and results arrive as desktop notifications.
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footer-note">
+    <span>MIT License</span>
+    <span>&bull;</span>
+    <span>Chrome &bull; Chromium &bull; Brave &bull; Firefox &mdash; Wayland &amp; Hyprland</span>
+  </div>
+</div>
+
+<!-- Right Column: Visual Previews Stack -->
+<style>
+  .right-col {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+    height: 988px;
+    display: flex;
+    flex-direction: column;
+    gap: 26px;
+  }
+
+  .shot-card {
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(224, 138, 76, 0.35);
+    box-shadow: 0 24px 60px -10px rgba(0, 0, 0, 0.75),
+                0 0 35px -5px rgba(224, 138, 76, 0.15);
+    background: #0f141d;
+  }
+
+  .shot-topbar {
+    height: 36px;
+    background: #141a24;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    gap: 8px;
+  }
+
+  .shot-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #e08a4c;
+    letter-spacing: 0.02em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .shot-hint {
+    font-size: 11px;
+    color: #64748b;
+    font-weight: 500;
+  }
+
+  .shot-card img { width: 100%; display: block; }
+
+  /* All screenshots share one scale (0.55) so they stay proportionally true
+     to each other: wizard cards 1142px wide -> 628, the marketplace button
+     strips keep their native 1:1 pixel size from the same display. */
+  .wizard-card { width: 628px; flex: none; align-self: center; }
+
+  .buttons-card { width: 946px; flex: none; align-self: center; }
+
+  .buttons-row {
+    padding: 16px 20px 6px;
+    display: flex;
+    gap: 28px;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .buttons-row img { display: block; border-radius: 6px; height: 54px; width: auto; }
+
+  .strip-caption {
+    font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+    font-size: 11.5px;
+    color: #64748b;
+    letter-spacing: 0.04em;
+  }
+</style>
+
+<div class="right-col">
+
+  <!-- Install wizard overlay -->
+  <div class="shot-card wizard-card">
+    <div class="shot-topbar">
+      <span class="shot-title">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+          <path d="M12 16l6-6-1.4-1.4L12 13.2 7.4 8.6 6 10l6 6z"/>
+        </svg>
+        Install wizard &mdash; desktop overlay
+      </span>
+      <span class="shot-hint">review author, version, license, source before anything runs</span>
+    </div>
+    <img src="wizard_install.png" alt="Install wizard reviewing a plugin over the marketplace page">
+  </div>
+
+  <!-- Disable wizard overlay, stacked under the install wizard -->
+  <div class="shot-card wizard-card">
+    <div class="shot-topbar">
+      <span class="shot-title">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+          <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+        </svg>
+        Disable wizard &mdash; confirm before anything runs
+      </span>
+      <span class="shot-hint">Escape / outside click cancels</span>
+    </div>
+    <img src="wizard_disable.png" alt="Disable plugin wizard confirming before disabling a plugin">
+  </div>
+
+  <!-- Buttons the extension injects into plugins.omarchy.org -->
+  <div class="shot-card buttons-card">
+    <div class="shot-topbar">
+      <span class="shot-title">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+          <path d="M3 5h18v2H3V5zm0 6h18v2H3v-2zm0 6h18v2H3v-2z"/>
+        </svg>
+        Buttons added to the plugin marketplace
+      </span>
+      <span class="shot-hint">state read from the local host, never the page</span>
+    </div>
+    <div class="buttons-row">
+      <img src="buttons_install.png" alt="Install and Copy buttons on a plugin that is not installed">
+      <img src="buttons_disable.png" alt="Enable, Uninstall and Copy buttons on an installed plugin">
+      <img src="catalog_icons.png" alt="Catalog card icons: views, installs, download, terminal, copy">
+    </div>
+    <div class="strip-caption"># not installed: Install &middot; Copy &nbsp;&nbsp;# installed: Enable &middot; Uninstall &middot; Copy &nbsp;&nbsp;# catalog card icons</div>
+  </div>
+
+</div>
+
+</body>
+</html>
