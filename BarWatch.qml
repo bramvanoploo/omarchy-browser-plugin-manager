@@ -53,6 +53,43 @@ Panel {
   property string moveOutput: ""
   property string enabledOutput: ""
 
+  // Installed plugin version, from the local plugin manifest (display gate
+  // for the Update button: show it only when the catalog version is newer).
+  property string installedVersion: ""
+
+  readonly property string pluginsDir: {
+    var base = Quickshell.env("HOME") || "/tmp"
+    return base + "/.config/omarchy/plugins"
+  }
+  readonly property string installedManifestPath: {
+    var s = root.statusForId
+    // statusForId is set from the shape-checked beacon id; belt: no traversal.
+    return s && s.indexOf("..") === -1 ? root.pluginsDir + "/" + s + "/manifest.json" : ""
+  }
+
+  // Catalog version vs installed version (numeric semver-ish compare).
+  readonly property bool hasUpdate: {
+    var e = root.catalogEntry
+    if (!e || e.id !== root.statusForId || !root.pluginInstalled) return false
+    var remote = String(e.version || "")
+    var local = root.installedVersion
+    if (!remote || !local) return false
+    return root.compareVersions(remote, local) > 0
+  }
+
+  function compareVersions(a, b) {
+    var pa = String(a).split(".")
+    var pb = String(b).split(".")
+    for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
+      var na = parseInt(pa[i], 10)
+      var nb = parseInt(pb[i], 10)
+      na = isNaN(na) ? 0 : na
+      nb = isNaN(nb) ? 0 : nb
+      if (na !== nb) return na > nb ? 1 : -1
+    }
+    return 0
+  }
+
   // Marketplace catalog entry for the watched plugin (display only: the
   // preview thumbnail, description, author, version). Fetched while the
   // popup is open, cached per plugin id.
@@ -100,6 +137,8 @@ Panel {
       && typeof obj.ts === "number"
     var newId = accepted ? String(obj.id) : ""
     var oldId = root.watchState ? String(root.watchState.id) : ""
+    if (root.watchState !== null && !accepted)
+      console.warn("BarWatch: beacon record lost (missing/blank/unparsable file) -> showing no-plugin panel")
     root.watchState = accepted ? obj : null
     root.nowMs = Date.now()
     // Status and catalog are per watched plugin: re-check them when the
@@ -109,6 +148,7 @@ Panel {
       root.pluginInstalled = false
       root.pluginEnabled = false
       root.statusForId = ""
+      root.installedVersion = ""
       root.catalogEntry = null
       root.catalogForId = ""
     }
@@ -203,6 +243,23 @@ Panel {
     printErrors: false
     onLoaded: root.applyWatch(text())
     onLoadFailed: root.applyWatch("")
+  }
+
+  // Local manifest of the watched plugin (installed version for the
+  // Update-button gate). Path follows statusForId, so it reloads per plugin.
+  FileView {
+    id: manifestFile
+    path: root.installedManifestPath
+    printErrors: false
+    onLoaded: {
+      try {
+        var m = JSON.parse(text())
+        root.installedVersion = String(m.version || "")
+      } catch (e) {
+        root.installedVersion = ""
+      }
+    }
+    onLoadFailed: root.installedVersion = ""
   }
 
   // Re-evaluates beaconLive as the 5s beacon renews and time passes, so
@@ -591,7 +648,7 @@ Panel {
           onClickedBw: root.summonWizard("install")
         }
         BWButton {
-          visible: root.statusChecked && root.pluginInstalled
+          visible: root.statusChecked && root.pluginInstalled && root.hasUpdate
           enabled: root.statusChecked
           label: "Update"
           onClickedBw: root.summonWizard("update")
