@@ -144,9 +144,26 @@ Item {
       : "Chromium-based browsers (Chrome, Brave, Vivaldi, Edge, \u2026)"
   readonly property string otherExtensionUrl:
     root.extensionFamily === "chromium" ? root.amoUrl : root.cwsUrl
+  readonly property string primaryLinkText:
+    root.extensionFamily === "chromium" ? "Chrome Web Store page" : "Firefox Add-ons page"
+  readonly property string otherLinkText:
+    root.extensionFamily === "chromium" ? "Firefox Add-ons page" : "Chrome Web Store page"
 
   function openUrl(url) {
     Quickshell.execDetached(["xdg-open", String(url || "")])
+  }
+
+  // RichText ignores Text.linkColor (StyledText only), so links carry an
+  // inline color style built from the theme accent.
+  function cssHexChannel(v) {
+    var h = Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16)
+    return h.length === 1 ? "0" + h : h
+  }
+  readonly property string accentCss: "#"
+    + cssHexChannel(Color.accent.r) + cssHexChannel(Color.accent.g) + cssHexChannel(Color.accent.b)
+  function linkTag(href, label) {
+    return "<a href=\"" + href + "\" style=\"color: " + root.accentCss
+      + "; text-decoration: underline;\">" + label + "</a>"
   }
 
   // Opens the extension page for the default browser and dismisses the prompt.
@@ -793,13 +810,13 @@ Item {
   }
 
   // RichText line with clickable <a href> links; activation opens the URL
-  // in the default browser via xdg-open.
+  // in the default browser via xdg-open. Colors come from the inline style
+  // in root.linkTag (RichText ignores Text.linkColor).
   component PiTextLink: Text {
     width: cardColumn.width
     wrapMode: Text.Wrap
     textFormat: Text.RichText
     color: Util.alpha(Color.foreground, 0.75)
-    linkColor: Color.accent
     font.family: Style.font.family
     font.pixelSize: Style.font.body
     onLinkActivated: function (link) { root.openUrl(link) }
@@ -974,8 +991,7 @@ Item {
           }
           PiTextLink {
             text: "There is also a browser extension for " + root.otherFamilyName
-              + " (" + root.otherStoreName + "): <a href=\"" + root.otherExtensionUrl + "\">"
-              + root.otherExtensionUrl + "</a>"
+              + ": " + root.linkTag(root.otherExtensionUrl, root.otherLinkText)
           }
         }
 
@@ -993,13 +1009,12 @@ Item {
           PiTextLink {
             text: "Open the extension page for your default browser ("
               + (root.defaultBrowserId.length > 0 ? root.defaultBrowserId : "unknown")
-              + ") in the " + root.primaryStoreName + ": <a href=\"" + root.primaryExtensionUrl + "\">"
-              + root.primaryExtensionUrl + "</a>"
+              + ") in the " + root.primaryStoreName + ": "
+              + root.linkTag(root.primaryExtensionUrl, root.primaryLinkText)
           }
           PiTextLink {
-            text: "Or the extension for " + root.otherFamilyName + " ("
-              + root.otherStoreName + "): <a href=\"" + root.otherExtensionUrl + "\">"
-              + root.otherExtensionUrl + "</a>"
+            text: "Or the extension for " + root.otherFamilyName + ": "
+              + root.linkTag(root.otherExtensionUrl, root.otherLinkText)
           }
         }
 
