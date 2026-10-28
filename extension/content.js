@@ -405,7 +405,13 @@
   function startBeacon(plugin) {
     if (beaconTimer) return;
     setBeacon(plugin, !document.hidden);
-    beaconTimer = setInterval(() => setBeacon(plugin, !document.hidden), BEACON_REFRESH_MS);
+    // setBeacon only sends on transitions; the bar widget treats a record
+    // older than 12s as gone, so a visible tab must re-send "watch" on
+    // every tick, not only when visibility flips.
+    beaconTimer = setInterval(() => {
+      if (!document.hidden && beaconActive) sendBeacon(plugin, false);
+      else setBeacon(plugin, !document.hidden);
+    }, BEACON_REFRESH_MS);
     document.addEventListener("visibilitychange", () => setBeacon(plugin, !document.hidden));
     window.addEventListener("pagehide", () => setBeacon(plugin, false));
   }
