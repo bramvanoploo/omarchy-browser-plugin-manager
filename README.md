@@ -75,8 +75,9 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
 | Firefox-based (Firefox incl. ESR, Waterfox, LibreWolf, Tor Browser, GNU IceCat, Zen) | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
 | Chromium-based (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | [Chrome Web Store](https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf) |
 
-The native messaging host must still be registered on the machine
-(`bin/plugin-installer-setup`); the browser extension alone is not enough.
+The Omarchy plugin registers the native messaging host on the machine
+itself (every shell start, idempotently); the browser extension alone is
+not enough.
 
 After installing this plugin in Omarchy, the wizard shows a one-time
 follow-up prompt (install only, not on later enables): it detects the default
@@ -98,22 +99,23 @@ plugin unloads the wizard itself).
 omarchy plugin add https://github.com/bramvanoploo/omarchy-browser-plugin-manager --enable
 ```
 
-2. Register the native messaging host on the machine:
-
-```bash
-~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup
-```
-
-3. Install the browser extension for your browser from the table above
+2. Install the browser extension for your browser from the table above
    (the wizard shows its one-time prompt linking the right page right
    after step 1).
 
-For installing without the browser stores, see [INSTALL.md](INSTALL.md).
+The plugin registers the native messaging host automatically on every
+shell start (idempotent); no manual setup step is needed. For installing
+without the browser stores, see [INSTALL.md](INSTALL.md).
 
 ## Uninstall
 
-1. Unregister the native messaging host (the script lives in the plugin
-   folder, so run this before removing the plugin):
+Uninstalling through the wizard (browser Uninstall button, or the
+extension-prompt's "Uninstall Omarchy plugin" option) also unregisters the
+native messaging host automatically. Removing the plugin from a terminal
+instead, unregister first — the setup script lives in the plugin folder,
+so it is gone after removal:
+
+1. Unregister the native messaging host:
 
 ```bash
 ~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup --uninstall

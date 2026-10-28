@@ -17,9 +17,10 @@ import qs.Ui
 // Cancel is a plain close.
 // When the action finishes, the result is a desktop notification only: no
 // completion dialog is shown and the overlay closes itself.
-// Exception: finishing an install/enable of this manager itself enters the
-// browser-extension prompt stage. The Omarchy plugin is only half the system;
-// the Install buttons in the browser come from the matching browser extension.
+// Exception: finishing an install of this manager itself summons the
+// browser-extension prompt (once, via the install worker). The Omarchy plugin
+// is only half the system; the Install buttons in the browser come from the
+// matching browser extension.
 // The prompt detects the default browser, sends the user to the Firefox
 // add-on page (addons.mozilla.org) for Firefox-based browsers, or to the
 // Chrome Web Store page for Chromium-based ones, and explains what happens
@@ -27,6 +28,9 @@ import qs.Ui
 // without its browser extension, with options to open the extension page,
 // cancel, or uninstall the Omarchy plugin (detached worker, since removing
 // this plugin unloads the wizard).
+// The native messaging host registration is automated: registering on every
+// load is idempotent, and the uninstall worker unregisters before removing
+// the plugin (the setup script lives inside the plugin directory).
 
 Item {
   id: root
@@ -34,6 +38,13 @@ Item {
   property string omarchyPath: Quickshell.env("OMARCHY_PATH")
   property var shell: null
   property var manifest: null
+
+  // Directory this overlay was loaded from (the installed plugin folder),
+  // as a filesystem path: the plugin's bin/ scripts live next to Wizard.qml.
+  readonly property string pluginDir: {
+    var u = String(Qt.resolvedUrl("."))
+    return u.startsWith("file://") ? decodeURIComponent(u.slice(7)) : u
+  }
 
   // This manager plugin's own id: the browser-extension prompt targets its
   // own extension, never the plugin passed in the payload.
@@ -495,6 +506,19 @@ Item {
     }
   }
 
+  // Keep the native messaging host registration in sync with the plugin's
+  // presence: registering on every load is idempotent (the script rewrites
+  // its manifests, pinned to the published extension IDs), so installing the
+  // plugin in Omarchy is all that is needed; the uninstall worker runs the
+  // script with --uninstall before the plugin directory is removed.
+  Process {
+    id: hostSetupProc
+    command: ["bash", root.pluginDir + "/bin/plugin-installer-setup"]
+    // Prints extension-loading guidance on registration; nothing to consume.
+  }
+
+  Component.onCompleted: hostSetupProc.running = true
+
   // Default browser behind the extension prompt: xdg-settings and the
   // x-scheme-handler/https association answer the same question; each fills
   // in when the other has no answer. An empty result keeps the Firefox
@@ -611,6 +635,13 @@ Item {
       ])
     } else {
       s = s.concat([
+        // Unregister the native messaging host while the plugin directory
+        // still exists: the setup script lives inside it, and after removal
+        // nothing can find it.
+        "PLUG=\"$HOME/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager\"",
+        "if [ -x \"$PLUG/bin/plugin-installer-setup\" ]; then",
+        "  \"$PLUG/bin/plugin-installer-setup\" --uninstall >/dev/null 2>&1 || true",
+        "fi",
         "if ! OUT=\"$(omarchy plugin remove \"$ID\" --yes 2>&1)\"; then",
         "  notify \"Plugin uninstall failed\" \"$NAME: $OUT\"",
         "  exit 1",
