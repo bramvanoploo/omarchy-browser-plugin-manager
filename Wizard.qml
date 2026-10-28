@@ -833,16 +833,6 @@ Item {
     onLinkActivated: function (link) { root.openUrl(link) }
   }
 
-  // Emphasised single line (default-browser identity in the prompt).
-  component PiBrowserLine: Text {
-    width: cardColumn.width
-    wrapMode: Text.Wrap
-    color: Color.foreground
-    font.family: Style.font.family
-    font.pixelSize: Style.font.body
-    font.bold: true
-  }
-
   Shortcut {
     sequence: "Escape"
     enabled: root.opened
@@ -1073,13 +1063,6 @@ Item {
             text: "The button below opens the extension in the "
               + root.primaryStoreName + " for your default browser; the "
               + "browser asks before installing anything."
-          }
-          PiBrowserLine {
-            visible: root.defaultBrowserLoaded
-            text: "Default browser: "
-              + (root.defaultBrowserId.length > 0
-                 ? root.defaultBrowserId + "  (" + root.extensionFamily + ")"
-                 : "unknown \u2014 opening the Firefox add-on page")
           }
           PiTextLink {
             text: "For " + root.otherFamilyName + ": "
