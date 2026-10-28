@@ -8,10 +8,12 @@
 #                                     ESR / Developer Edition / Nightly,
 #                                     which allow unsigned add-ons).
 #   dist/<slug>-<version>-listed.xpi  Firefox add-on for the AMO LISTED
-#                                     submission: no browser_specific_settings
-#                                     .gecko.id (that ID is registered on AMO
-#                                     via unlisted signing; AMO rejects it for
-#                                     listed and assigns <slug>@addons.mozilla.org).
+#                                     submission: declares the listed add-on
+#                                     ID omarchy-browser-plugin-manager@bram.dev
+#                                     (the self-distribution ID is registered
+#                                     on AMO via unlisted signing and rejected
+#                                     for listed; @addons.mozilla.org IDs are
+#                                     reserved; MV3 requires an explicit ID).
 #   dist/<slug>-<version>-chrome.zip  Chrome Web Store / packed extension zip.
 #   dist/<slug>-<version>-<date>.zip  Full source archive; the Chrome /
 #                                     Chromium / Brave path (Load unpacked)
@@ -56,17 +58,18 @@ jq '.background = {scripts: ["background.js"]}' "$STAGE/xpi/manifest.json" > "$S
   zip -qX "$DIST_DIR/$NAME-$VERSION.xpi" manifest.json && \
   zip -qrX "$DIST_DIR/$NAME-$VERSION.xpi" . -x manifest.json )
 
-# --- Firefox AMO-LISTED upload: same scripts transform, NO manifest ID. ---
-# The manifest's self-distribution ID is registered on AMO via unlisted
-# signing, and AMO rejects it for listed submissions ("Duplicate add-on ID
-# found"). The listed upload must omit the ID; AMO then assigns
-# <slug>@addons.mozilla.org. The native messaging host registers both IDs
+# --- Firefox AMO-LISTED upload: same scripts transform, LISTED add-on ID. ---
+# AMO requires an explicit gecko.id for MV3 submissions, and the manifest's
+# self-distribution ID is registered on AMO via unlisted signing, so listed
+# submissions must use a fresh ID on our own domain ("@addons.mozilla.org"
+# IDs are reserved for AMO). The native messaging host registers both IDs
 # (see bin/plugin-installer-setup).
 mkdir -p "$STAGE/listed"
 cp -r "$EXT_DIR/." "$STAGE/listed/"
 rm -f "$STAGE/listed/.amo-upload-uuid"
 jq '.background = {scripts: ["background.js"]}
-   | del(.browser_specific_settings.gecko.id)' "$STAGE/listed/manifest.json" > "$STAGE/listed/manifest.json.tmp" \
+   | .browser_specific_settings.gecko.id = "omarchy-browser-plugin-manager@bram.dev"' \
+   "$STAGE/listed/manifest.json" > "$STAGE/listed/manifest.json.tmp" \
   && mv "$STAGE/listed/manifest.json.tmp" "$STAGE/listed/manifest.json"
 ( cd "$STAGE/listed" && \
   zip -qX "$DIST_DIR/$NAME-$VERSION-listed.xpi" manifest.json && \
