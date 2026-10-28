@@ -328,12 +328,14 @@ Panel {
       onStreamFinished: {
         var entry = null
         try {
-          var catalog = JSON.parse(String(text || "[]"))
-          if (Array.isArray(catalog)) {
-            entry = catalog.filter(function (item) {
-              return item && String(item.id) === root.catalogForId
-            })[0] || null
-          }
+          var catalog = JSON.parse(String(text || "{}"))
+          // The catalog root is an object ({generatedAt, plugins: [...]});
+          // a bare top-level array is accepted too, like the wizard.
+          var items = Array.isArray(catalog) ? catalog
+            : (catalog && Array.isArray(catalog.plugins) ? catalog.plugins : [])
+          entry = items.filter(function (item) {
+            return item && String(item.id) === root.catalogForId
+          })[0] || null
         } catch (e) {
           entry = null
         }
