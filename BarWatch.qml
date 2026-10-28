@@ -89,6 +89,10 @@ Panel {
     Quickshell.execDetached(["xdg-open", url])
   }
 
+  function openMarketplace() {
+    Quickshell.execDetached(["xdg-open", root.marketplaceUrl])
+  }
+
   // Install / Uninstall / Update go through the wizard (the project's
   // consent gate: it re-validates catalog, repo manifest, and live state
   // before acting). Summon this plugin's own overlay with the beacon's
@@ -405,14 +409,14 @@ Panel {
           + "move that plugin's bar icon."
       }
 
-      Text {
+      Row {
         visible: !root.beaconLive
-        text: "<a href=\"" + root.marketplaceUrl + "\">Open plugins.omarchy.org</a>"
-        textFormat: Text.RichText
-        color: Color.accent
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        onLinkActivated: function (link) { Quickshell.execDetached(["xdg-open", String(link)]) }
+        spacing: Style.spacing.controlGap
+
+        BWButton {
+          label: "Open plugins.omarchy.org"
+          onClickedBw: root.openMarketplace()
+        }
       }
 
       // Manage buttons: from live local state only, enabled once the list
@@ -455,14 +459,14 @@ Panel {
         BWButton { label: "Right"; onClickedBw: root.moveIcon("right") }
       }
 
-      Text {
+      Row {
         visible: root.beaconLive
-        text: "<a href=\"open\">Open plugin page</a>"
-        textFormat: Text.RichText
-        color: Color.accent
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        onLinkActivated: root.openPluginPage()
+        spacing: Style.spacing.controlGap
+
+        BWButton {
+          label: "Open plugin page"
+          onClickedBw: root.openPluginPage()
+        }
       }
     }
   }
