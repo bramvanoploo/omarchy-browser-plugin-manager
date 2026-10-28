@@ -137,12 +137,6 @@ Item {
     return "firefox"
   }
 
-  // True when the action targets this manager plugin itself: its wizard is
-  // useless without its browser extension, so it gets the extension prompt.
-  function isManagerPlugin() {
-    return root.pluginId === root.managerId
-  }
-
   readonly property string extensionFamily: root.browserFamily(root.defaultBrowserId)
   readonly property string primaryExtensionUrl:
     root.extensionFamily === "chromium" ? root.cwsUrl : root.amoUrl
@@ -719,19 +713,10 @@ Item {
             : root.isBarWidget ? " on the bar (" + root.defaultSection + " section)" : ""
           root.notify(root.mode === "install" ? "Plugin installed" : "Plugin enabled",
                       root.pluginName + " is enabled" + where)
-          // The manager is only half the system: its browser extension
-          // carries the Install buttons. An enable that lands here keeps the
-          // overlay open on the extension prompt. (A self-install finishes in
-          // the detached worker; that worker re-summons the wizard with
-          // mode=browser-prompt after the shell reload.)
-          if (root.mode === "enable" && root.isManagerPlugin()) {
-            root.stage = "browser-prompt"
-            root.defaultBrowserId = ""
-            root.defaultBrowserLoaded = false
-            browserProc.running = true
-          } else {
-            root.close()
-          }
+          // Close like every other action: the browser-extension prompt is
+          // shown exactly once, by the install worker directly after a
+          // successful install of the manager (see buildWorkerScript).
+          root.close()
         } else if (root.enableTries >= 8) {
           root.fail("plugin is not enabled after repeated enable attempts (the shell config reverted it)")
         } else {
@@ -1046,10 +1031,12 @@ Item {
             + "the plugin files stay installed."
         }
 
-        // ---- stage: browser-prompt (manager install/enable finished) ----
-        // The wizard is this manager's own UI; it is inert until the matching
-        // browser extension is installed. Send the user to the extension page
-        // for their default browser and explain the other-browser option.
+        // ---- stage: browser-prompt (manager install finished) ----
+        // Shown exactly once: the install worker summons it directly after a
+        // successful install of the manager. The wizard is this manager's own
+        // UI; it is inert until the matching browser extension is installed.
+        // Send the user to the extension page for their default browser and
+        // explain the other-browser option.
         Column {
           visible: root.stage === "browser-prompt"
           width: cardColumn.width

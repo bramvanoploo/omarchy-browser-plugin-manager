@@ -80,8 +80,9 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
 The native messaging host must still be registered on the machine
 (`bin/plugin-installer-setup`); the browser extension alone is not enough.
 
-After installing (or enabling) this plugin in Omarchy, the wizard shows a
-follow-up prompt: it detects the default browser
+After installing this plugin in Omarchy, the wizard shows a one-time
+follow-up prompt (install only, not on later enables): it detects the default
+browser
 (`xdg-settings get default-web-browser`, falling back to the
 `x-scheme-handler/https` association) and opens the matching extension page
 from the table above — Firefox Add-ons for Firefox-based browsers, Chrome Web
