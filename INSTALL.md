@@ -26,12 +26,14 @@ otherwise the native host will reject its connection.
 3. **Load unpacked** -> select the `extension/` directory from this archive
 
 Load unpacked gets the path-derived ID. The store artifact
-`omarchy-browser-plugin-manager-<version>-chrome.zip` (built by `bin/package`) carries a
-Chrome-only `"key"` field pinning the stable ID
-`nbngempephjmagmlfbfdodboeimfoibp` for zipped installs and a future Chrome
-Web Store listing. The setup script registers both IDs, so
-native messaging works for either. Keep `chrome-key.pem` safe — without it
-the ID cannot be reproduced.
+`omarchy-browser-plugin-manager-<version>-chrome.zip` (built by `bin/package`) is
+the Chrome Web Store upload format (the CWS dashboard rejects a `"key"`
+field, so the store assigns its own ID: `nalcgjmbglkcmohokidcmogcbpmhkdjf`).
+Zipped packed installs get the key-pinned ID
+`nbngempephjmagmlfbfdodboeimfoibp`, derived from `chrome-key.pem`. The
+setup script registers all three IDs, so native messaging works for any of
+them. Keep `chrome-key.pem` safe — without it the packed-install ID cannot
+be reproduced.
 
 **Firefox (release builds, >= 121): signed `.xpi` required**
 

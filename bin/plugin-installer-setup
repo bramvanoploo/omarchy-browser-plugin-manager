@@ -5,8 +5,8 @@
 # Browsers covered: Google Chrome, Chromium, Brave, Firefox.
 # The host manifest is written per browser family:
 #   - Chromium family: allowed_origins pinned to the extension ID derived from
-#     the extension directory path (stable for "Load unpacked" at that path)
-#     and the stable store/key-pinned extension ID.
+#     the extension directory path (stable for "Load unpacked" at that path),
+#     the key-pinned packed-install ID, and the Chrome Web Store item ID.
 #   - Firefox: allowed_extensions pinned to both the self-distribution add-on
 #     ID from the extension manifest's browser_specific_settings and the
 #     AMO-listed add-on ID derived from the listing slug.
@@ -20,7 +20,10 @@ FIREFOX_ADDON_ID="bramvanoploo.omarchy-browser-plugin-manager@bram.dev"
 # self-distribution ID is taken by unlisted signing, and "@addons.mozilla.org"
 # IDs are reserved for AMO, so the listed add-on uses this fresh domain ID.
 AMO_ADDON_ID="omarchy-browser-plugin-manager@sudo-systems.com"
-CHROME_STORE_ID="nbngempephjmagmlfbfdodboeimfoibp"
+# Chrome Web Store item ID, assigned by the store at first upload from the
+# store-side keypair (the 2025+ CWS dashboard rejects manifests containing
+# "key", so it is NOT derivable from chrome-key.pem). Copy from the dashboard.
+CHROME_STORE_ID="nalcgjmbglkcmohokidcmogcbpmhkdjf"
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
@@ -80,9 +83,10 @@ chrome_extension_id() {
 }
 
 # Stable Chrome extension ID derived from the manifest's "key" (public key):
-# used by packed/zip installs and Chrome Web Store installs. The source
-# manifest carries no key (Firefox warns about it), so fall back to the
-# repo's chrome-key.pem (when present) or the pinned Chrome Web Store ID.
+# used by packed/zip installs. The source manifest carries no key (Firefox
+# warns about it), so fall back to the repo's chrome-key.pem (when present)
+# or the legacy pinned ID. The Chrome Web Store item ID is separate
+# (CHROME_STORE_ID): the store derives it from its own keypair.
 chrome_key_id() {
   local key=""
   key=$(jq -r '.key // ""' "$1" 2>/dev/null) || true
@@ -116,17 +120,22 @@ main() {
   }
 
   local chromium_id key_id chromium_manifest firefox_manifest dir ext_abs
+  local id o skip
   local -a origins
   ext_abs=$(realpath "$ext_dir")
   chromium_id=$(chrome_extension_id "$ext_dir")
   key_id=$(chrome_key_id "$ext_dir/manifest.json")
 
-  # Pin both the path-derived unpacked ID and the key-pinned stable ID so
-  # Load unpacked, zipped dev installs, and store installs all reach the host.
+  # Pin the path-derived unpacked ID, the key-pinned packed-install ID, and
+  # the Chrome Web Store item ID so Load unpacked, zipped dev installs, and
+  # store installs all reach the host.
   origins=("chrome-extension://$chromium_id/")
-  if [[ -n $key_id && $key_id != "$chromium_id" ]]; then
-    origins+=("chrome-extension://$key_id/")
-  fi
+  for id in "$key_id" "$CHROME_STORE_ID"; do
+    [[ -n $id ]] || continue
+    skip=0
+    for o in "${origins[@]}"; do [[ $o == "chrome-extension://$id/" ]] && skip=1 && break; done
+    (( skip )) || origins+=("chrome-extension://$id/")
+  done
 
   chromium_manifest=$(jq -cn \
     --arg name "$HOST_NAME" \

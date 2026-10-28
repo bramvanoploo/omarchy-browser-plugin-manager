@@ -38,8 +38,8 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
 
 - **`extension/`** — MV3 WebExtension for Chrome, Chromium, Brave (Firefox MV3
   compatible; the source manifest carries no Chrome-only `"key"` — Firefox
-  flags unknown properties — `bin/package` injects it into the Chrome zip,
-  pinning the packed/store ID `nbngempephjmagmlfbfdodboeimfoibp`).
+  flags unknown properties and the CWS dashboard rejects it; the store item
+  ID is store-assigned, see below).
   Content scripts match `plugins.omarchy.org/plugin.html?id=...`
   (`content.js`, button groups) and the catalog `index.html` (`catalog.js`,
   icon-only Install/Uninstall button beside each card's "Copy install command")
@@ -101,15 +101,16 @@ bin/plugin-installer-setup
 #   Firefox: about:debugging#/runtime/this-firefox -> Load Temporary Add-on -> extension/manifest.json
 ```
 
-The Chrome zip's `"key"` (injected by `bin/package`, absent from the source
-manifest) pins the Chrome Web Store / packed-install extension ID
-(`nbngempephjmagmlfbfdodboeimfoibp`); "Load unpacked" uses the path-derived
-ID. The private key lives in `chrome-key.pem`
-(gitignored, mode 600) — back it up: losing it means losing that ID. The
-setup script registers both IDs (deriving the key ID from the pem when the
-manifest has no key).
-(The 2026-10-27 identity rename rotated this key; the superseded keypair is
-kept as `chrome-key-2026-10-27.pem.bak`, its ID
+Chrome installs carry three extension IDs, all registered by the setup
+script: "Load unpacked" uses the path-derived ID; zipped packed installs
+use the key-pinned ID `nbngempephjmagmlfbfdodboeimfoibp` (derived from
+`chrome-key.pem`, gitignored, mode 600 — back it up: losing it means
+losing that ID); the Chrome Web Store listing uses the store-assigned ID
+`nalcgjmbglkcmohokidcmogcbpmhkdjf` (the 2025+ CWS dashboard rejects
+manifests containing `"key"`, so the store derives its ID from its own
+keypair at item creation — copy it from the dashboard).
+(The 2026-10-27 identity rename rotated the keypair; the superseded keypair
+is kept as `chrome-key-2026-10-27.pem.bak`, its ID
 `ojmmnnlphgmhjlmcfmanmnfialliaehj` is unused.)
 
 Verify without a browser:
