@@ -170,16 +170,22 @@ Item {
     var payload = {}
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
 
+    var newMode = String(payload.mode || "install")
+    if (newMode !== "uninstall" && newMode !== "enable" && newMode !== "disable"
+        && newMode !== "browser-prompt" && newMode !== "browser-defer") newMode = "install"
+    // Stage before mode: the title binding chooses its source from stage, and
+    // assigning a browser-* mode while the old stage is still a confirm stage
+    // would index the title map with it (undefined -> "Unable to assign
+    // [undefined] to QString").
+    stage = (newMode === "browser-prompt" || newMode === "browser-defer") ? newMode : "review"
+    mode = newMode
+
     pluginId = String(payload.id || "")
     pluginRepo = String(payload.repo || "")
     pluginName = String(payload.name || pluginId)
-    mode = String(payload.mode || "install")
-    if (mode !== "uninstall" && mode !== "enable" && mode !== "disable"
-        && mode !== "browser-prompt" && mode !== "browser-defer") mode = "install"
     if (mode === "browser-prompt" || mode === "browser-defer") pluginId = managerId
     if (!pluginName) pluginName = String((root.manifest && root.manifest.name) || pluginId)
 
-    stage = (mode === "browser-prompt" || mode === "browser-defer") ? mode : "review"
     catalogLoaded = false
     manifestLoaded = false
     catalogEntry = null
