@@ -4,7 +4,7 @@
   "name": "Browser Plugin Manager",
   "version": "0.4.1",
   "author": "Bram van Oploo",
-  "description": "Installation wizard for Omarchy plugins, summoned from the browser extension's Install button; bar-icon watcher mode lights up on installable plugin pages",
+  "description": "Installation wizard for Omarchy plugins, summoned from the browser extension's Install button; bar-icon watcher mode lights up on manageable plugin pages",
   "kinds": [
     "overlay",
     "bar-widget"

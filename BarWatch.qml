@@ -501,7 +501,7 @@ Panel {
     active: root.beaconLive
     tooltipText: root.beaconLive
       ? root.watchedName() + " \u00b7 open in browser \u00b7 click to manage"
-      : "Browser Plugin Manager \u00b7 lights up on installable plugin pages"
+      : "Browser Plugin Manager \u00b7 lights up on manageable plugin pages"
 
     onPressed: function (code) {
       if (code === Qt.LeftButton) root.toggle()
