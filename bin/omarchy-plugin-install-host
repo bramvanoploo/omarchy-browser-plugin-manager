@@ -11,6 +11,7 @@
 #   {"type":"enable","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
 #   {"type":"disable","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
 #   {"type":"watch","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
+#   {"type":"watch","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather","paused":true}
 #   {"type":"unwatch","id":"acme.weather"}
 #
 # This host NEVER installs anything itself. It validates a request against a
@@ -18,14 +19,15 @@
 # which re-validates, asks the user to confirm, and runs the omarchy plugin
 # command. The outcome is a desktop notification; no completion dialog shows.
 #
-# "watch" is the bar-icon watcher beacon: a tab on an installable plugin page
-# in a focused browser window sends it every few seconds, and "unwatch" when
-# the tab hides, the window loses focus, or the page closes. The host only
-# format-checks id/repo (no catalog fetch, no action) and records the page in
-# browser-watch.json in the state dir; the bar widget lights up while that
-# file is fresh, and its dropdown routes every action through the wizard,
-# which re-validates. "unwatch" removes the record right away (the widget
-# shows its placeholder); a lost beacon (browser killed) goes stale on its own.
+# "watch" is the bar-icon watcher beacon: a tab on a manageable plugin page
+# in a focused browser window sends it every few seconds, "watch" with
+# "paused":true when the window loses focus, and "unwatch" when the tab
+# hides or the page closes. The host only format-checks id/repo (no catalog
+# fetch, no action) and records the page in browser-watch.json in the state
+# dir; the bar widget shows the plugin while that record is live, and its
+# dropdown routes every action through the wizard, which re-validates.
+# "unwatch" removes the record right away (the widget shows its placeholder);
+# a lost beacon (browser killed) goes stale on its own.
 
 set -euo pipefail
 # Qt (used by omarchy-shell / omarchy plugin list) writes a warning to stdout
@@ -221,16 +223,30 @@ summon_wizard() {
 # "watch". Format-checked only (id/repo shape): the beacon never acts, it
 # only lights the bar icon. Every action from the dropdown is re-validated
 # through validate_action and confirmed by the wizard. The record carries
-# this host's pid so only the owner clears it; a beacon that stops (tab
-# closed, browser killed) goes stale and the icon dims.
+# this host's pid so only the owner clears it. A live beacon renews ts;
+# "paused":true (the tab's window lost OS focus) stamps the existing record
+# of that same plugin paused so the bar widget dims within its poll, and
+# the next live "watch" (focus regained) lights it again; a beacon that
+# stops without pausing (browser killed) goes stale and the icon dims.
 record_watch() {
-  local payload="$1" name="" ts="" tmp="" json=""
+  local payload="$1" name="" ts="" tmp="" json="" paused="false"
   normalize_target "$payload" || return 1
   name=$(jq -r 'if type == "object" and (.name | type) == "string" then .name[0:128] else "" end' <<<"$payload" 2>/dev/null) || name=""
+  paused=$(jq -r 'if type == "object" and (.paused == true) then "true" else "false" end' <<<"$payload" 2>/dev/null) || paused="false"
   ts=$(date +%s)
-  json=$(jq -cn --arg id "$_target_id" --arg repo "$_target_repo" --arg name "$name" \
-    --argjson pid "$$" --argjson ts "$ts" \
-    '{id:$id, repo:$repo, name:$name, pid:$pid, ts:$ts}') || return 1
+  if [[ $paused == "true" ]]; then
+    # Id-scoped pause (same rule as clear_watch_for_id): a late blur write
+    # from the tab that was switched away from must never pause the new
+    # tab's live record, and a pause must never create a record.
+    [[ -f $WATCH_FILE ]] || return 0
+    [[ "$(jq -r '.id // empty' "$WATCH_FILE" 2>/dev/null)" == "$_target_id" ]] || return 0
+    json=$(jq -c --argjson pid "$$" --argjson ts "$ts" \
+      '. + {paused:true, pid:$pid, ts:$ts}' "$WATCH_FILE" 2>/dev/null) || return 1
+  else
+    json=$(jq -cn --arg id "$_target_id" --arg repo "$_target_repo" --arg name "$name" \
+      --argjson pid "$$" --argjson ts "$ts" \
+      '{id:$id, repo:$repo, name:$name, pid:$pid, ts:$ts}') || return 1
+  fi
   mkdir -p "$STATE_DIR" || return 1
   tmp="$WATCH_FILE.tmp.$$"
   printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$WATCH_FILE"
@@ -258,10 +274,10 @@ clear_watch_for_id() {
 
 main() {
   local length payload type id local_status all_status reason
-  # Message trace: enabled by default into the state dir (override with
-  # PI_NATIVE_TRACE, disable with PI_NATIVE_TRACE=""). One line per received
-  # frame: proves which messages (watch/unwatch/status) reach the host.
-  trace="${PI_NATIVE_TRACE-$STATE_DIR/host-trace.log}"
+  # Message trace: opt-in diagnostic (enable with PI_NATIVE_TRACE=<path>,
+  # one line per received frame) for debugging beacon traffic. Off by
+  # default: the shell and browsers run this host constantly.
+  trace="${PI_NATIVE_TRACE-}"
   if [[ -n $trace && -f $trace ]] && (( $(stat -c%s "$trace" 2>/dev/null || echo 0) > 200000 )); then
     : > "$trace"   # truncate on launch instead of growing forever
   fi

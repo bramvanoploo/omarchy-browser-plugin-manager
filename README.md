@@ -25,12 +25,13 @@ its "Copy install command" button; "Manual" badges are never touched.
 *focused* browser window, the extension renews a beacon with the local host
 every 5s and the Omarchy bar icon lights up (accent tone); switching to
 another plugin tab sends "unwatch" (id-scoped) and the icon and panel follow
-right away, while switching to another application pauses the beacon so the
-record expires (≤12s) and the placeholder returns. Pages for plugins that
-are *not* installable from the browser (no install command, built-in, failed
-upstream check) light the icon too when the plugin is installed on this
-machine, so its panel (update/uninstall/move icon) is reachable; no page
-buttons appear there. Left click opens a dropdown with that plugin’s
+right away, while switching to another application stamps the record
+"paused" so the placeholder returns on the widget's next poll (≤2s);
+focusing the browser again lights the icon immediately. Pages for plugins
+that are *not* installable from the browser (no install command, built-in,
+failed upstream check) light the icon too when the plugin is installed on
+this machine, so its panel (update/uninstall/move icon) is reachable; no
+page buttons appear there. Left click opens a dropdown with that plugin’s
 header title (as in the dialogs) and buttons to **Install**, **Update**,
 **Uninstall**, and move its bar icon (left/center/right). Install, Update,
 and Uninstall summon the same wizard — the beacon is a display hint, the
@@ -58,7 +59,8 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
   --json`). Manual-setup pages and machines without this plugin show no
   buttons — the site renders untouched.
   While the plugin page is the visible tab, a `watch` beacon is renewed
-  every 5s (`unwatch` on leave).
+  every 5s (`watch` with `"paused":true` on window blur, `unwatch` on
+  leave).
 - **`bin/omarchy-plugin-install-host`** — native messaging host: `ping`,
   `status`, `status_all` (batch for the catalog page), `install`,
   `uninstall`, `enable`, `disable`. Each action is re-validated against a
@@ -66,7 +68,8 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
   (`not-installed`, `already-enabled`, `already-disabled`,
   `already-installed`). It summons the wizard and never installs anything.
   `watch` is format-checked only and records the page in
-  `browser-watch.json` (state dir); `unwatch` and host exit remove it.
+  `browser-watch.json` (state dir); a `"paused":true` watch stamps an
+  existing same-id record paused, `unwatch` and host exit remove it.
 - **`bin/plugin-installer-setup`** — registers the native host manifest for
   Chrome, Chromium, Brave, and Firefox; `--uninstall` unregisters. The
   shell plugin runs it automatically on every shell start (idempotent) and
@@ -78,7 +81,8 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
   disable / remove / update via the official `omarchy plugin` CLI; its own
   uninstall runs detached (unregistering the host first).
 - **`BarWatch.qml`** — the bar widget: reads the beacon record, lights up
-  while it is fresh (dims on staleness, so a killed browser clears itself),
+  while it is live (fresh ≤12s and not paused: a blurred browser dims the
+  icon within its 2s poll, a killed browser clears itself via staleness),
   and offers the plugin’s manage dropdown. Install/Update/Uninstall route
   through the wizard with the beacon’s id/repo/name as hint only.
 

@@ -11,8 +11,9 @@ import qs.Ui
 // plugin page on its active tab: the extension renews a beacon record with
 // the native host every few seconds, the host writes it to
 // browser-watch.json in the state dir, and this widget reads that file. A
-// beacon that stops (tab closed, browser switched to the background,
-// browser killed) goes stale and the icon dims.
+// beacon that stops dims the icon: a tab close/pagehide unwatches (file
+// gone) right away, a blurred window stamps the record "paused" (dropped on
+// the next poll), and a killed browser leaves the record to staleness.
 //
 // Left click opens a dropdown with the watched plugin's header title (the
 // same identity line the wizard dialogs show) and buttons to manage it:
@@ -29,7 +30,9 @@ Panel {
   readonly property string managerId: "bramvanoploo.omarchy-browser-plugin-manager"
   readonly property string marketplaceUrl: "https://plugins.omarchy.org/"
   // Must match the beacon interval/staleness in the host and extension:
-  // the record is renewed every 5s, so 12s without a renewal means gone.
+  // a live beacon renews every 5s, so 12s without a renewal means gone
+  // (that is the browser-killed path). An app switch marks the record
+  // "paused" right at the blur, so the dimming lands on the next poll.
   readonly property int beaconStaleMs: 12000
 
   readonly property string stateDir: {
@@ -39,16 +42,19 @@ Panel {
   }
   readonly property string watchPath: stateDir + "/browser-watch.json"
 
-  // Parsed beacon record ({id, repo, name, pid, ts}) or null.
+  // Parsed beacon record ({id, repo, name, pid, ts, paused?}) or null.
+  // "paused" is stamped by the host when the tab's browser window loses
+  // OS focus; focus regained sends a live record again.
   property var watchState: null
   property real nowMs: 0
   readonly property bool beaconLive: watchState !== null && nowMs > 0
     && (nowMs - Number(watchState.ts) * 1000) < beaconStaleMs
+    && watchState.paused !== true
 
   // What the popup shows. The popup freezes on the plugin captured when it
   // opens: the menu must never swap or lose its content mid-interaction
-  // (the record can die while open: a 12s app-switch staleness, the tab
-  // closed). Two capture windows stay open: the reload issued on open
+  // (the record can die while open: the beacon paused by an app switch, the
+  // tab closed). Two capture windows stay open: the reload issued on open
   // (captureOnOpen: a tab switch right before opening must be picked up,
   // the 2s poll may not have run), and a popup showing the placeholder (a
   // switched-to page renews its beacon ~1s after the switch, so a fresh
@@ -197,7 +203,6 @@ Panel {
     // away, not survive 12s on the kept record.
     if (root.watchState !== null && !accepted && !fileGone) {
       if (root.opened) return // hiccup during an open capture: stay frozen, next poll retries
-      console.warn("BarWatch: transient beacon read failure, keeping last record")
       root.nowMs = Date.now()
       return
     }
@@ -578,61 +583,10 @@ Panel {
       width: parent ? parent.width : 0
       spacing: Style.space(14)
 
-      // Header: the wizard dialog's identity block (icon + name + subtitle).
+      // Header (the wizard/OmaGuake panel header pattern): extensions glyph
+      // (accent Text, no background, no border) + plugin name + version pill
+      // + muted status/id subtitle.
       Row {
-        width: popupColumn.width
-        spacing: Style.space(12)
-
-        Rectangle {
-          anchors.verticalCenter: parent.verticalCenter
-          width: Style.space(26)
-          height: Style.space(26)
-          radius: Style.cornerRadius > 0 ? 4 : 0
-          color: Util.alpha(Color.accent, 0.12)
-          border.color: Util.alpha(Color.accent, 0.4)
-          border.width: 1
-
-          Text {
-            anchors.centerIn: parent
-            text: "\u2913"   // downwards arrow to bar: the install gesture
-            font.family: Style.font.family
-            font.pixelSize: Style.font.body
-            font.bold: true
-            color: Color.accent
-          }
-        }
-
-        Column {
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(4)
-
-          Text {
-            text: root.popupLive ? root.watchedName() : "Browser Plugin Manager"
-            font.family: Style.font.family
-            font.pixelSize: Style.font.title
-            font.bold: true
-            color: Color.foreground
-          }
-          Text {
-            text: root.popupLive
-              ? (root.statusChecked
-                 ? (root.pluginInstalled
-                    ? (root.pluginEnabled ? "Installed \u00b7 enabled" : "Installed \u00b7 disabled")
-                    : "Not installed")
-                 : "Checking installed state\u2026")
-              : "No plugin page is open in the browser"
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            color: Color.muted
-          }
-        }
-      }
-
-      // Live page header: extensions glyph + plugin name + version pill +
-      // plugin id, same structure and styling as the wizard panel header
-      // (which follows the OmaGuake settings panel header).
-      Row {
-        visible: root.popupLive
         width: popupColumn.width
         spacing: Style.space(14)
 
@@ -654,7 +608,7 @@ Panel {
             spacing: Style.space(8)
 
             Text {
-              text: root.watchedName()
+              text: root.popupLive ? root.watchedName() : "Browser Plugin Manager"
               font.family: Style.font.family
               font.pixelSize: Style.font.title
               font.bold: true
@@ -663,8 +617,8 @@ Panel {
             }
 
             Rectangle {
-              visible: root.statusChecked && root.pluginInstalled
-                && root.installedVersion !== ""
+              visible: root.popupLive && root.statusChecked
+                && root.pluginInstalled && root.installedVersion !== ""
               anchors.verticalCenter: parent.verticalCenter
               height: Style.space(18)
               width: bwHeaderVersionText.implicitWidth + Style.space(12)
@@ -686,7 +640,14 @@ Panel {
           }
 
           Text {
-            text: String(root.watchState ? root.watchState.id : "")
+            text: root.popupLive
+              ? (root.statusChecked
+                 ? ((root.pluginInstalled
+                     ? (root.pluginEnabled ? "Installed \u00b7 enabled" : "Installed \u00b7 disabled")
+                     : "Not installed")
+                    + "  \u00b7  " + String(root.watchState ? root.watchState.id : ""))
+                 : "Checking installed state\u2026")
+              : "No plugin page is open in the browser"
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
             color: Color.muted
