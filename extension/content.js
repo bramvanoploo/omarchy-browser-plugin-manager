@@ -10,8 +10,9 @@
 // No host => no buttons; the site renders untouched.
 // While the page is the visible tab of a focused browser window it also runs
 // the bar-icon watcher beacon: a "watch" record with the host (renewed every
-// 5s, "unwatch" when the tab hides, the window loses focus, or the page
-// closes) that lights the Omarchy bar widget for this plugin.
+// 5s, "unwatch" when the tab hides or the page closes; losing window focus
+// only pauses renewal so the record dies via staleness) that lights the
+// Omarchy bar widget for this plugin.
 
 (() => {
   "use strict";
@@ -381,14 +382,17 @@
   }
 
   // Bar-icon watcher beacon: the plugin page is watched only while it is
-  // the user's visible tab *in a focused browser window* — the bar widget
-  // shows the plugin when the browser is the active application, and the
-  // placeholder the moment the user switches to another app. "watch"
-  // re-records the page with the local host every few seconds (the bar
-  // icon lights up while that record is fresh); the tab going hidden, the
-  // window losing OS focus, or closing the page sends "unwatch", which
-  // removes the record and dims the icon right away. Losing the unwatch
-  // (browser killed) is safe: the record simply goes stale and dims.
+  // the user's visible tab in a focused browser window — the bar widget
+  // shows the plugin while that record is fresh (≤12s), and the
+  // placeholder once it goes stale. "watch" re-records the page with the
+  // local host every few seconds. The tab going hidden or the page
+  // unloading sends "unwatch" (id-scoped) right away, so tab switches
+  // follow instantly. Losing OS window focus only PAUSES the beacon: the
+  // record dies naturally via staleness (≤12s), which covers app
+  // switches; no unwatch on blur, because Firefox fires focus/blur per
+  // window on every tab switch and the quickshell bar's own popup steals
+  // focus — a blur-unwatch deleted the live record under an active tab
+  // and made the icon flicker to the dim state.
   const BEACON_REFRESH_MS = 5000;
   const BEACON_STALE_MS = 12000;
   let beaconTimer = null;
@@ -411,12 +415,21 @@
   function setBeacon(plugin, active) {
     if (active === beaconActive) return;
     beaconActive = active;
-    sendBeacon(plugin, !active);
+    if (active) sendBeacon(plugin, false);
+    // Deactivation is a silent pause (see header); the record expires
+    // via staleness and the bar shows the placeholder.
   }
 
   function startBeacon(plugin) {
     if (beaconTimer) return;
     const refresh = () => setBeacon(plugin, beaconShouldBeActive());
+    const leave = () => {
+      // Explicit tab/page departure: drop the record now (id-scoped, so a
+      // late arrival can never wipe a newer tab's record) so switching
+      // away from the plugin tab dims the icon immediately.
+      beaconActive = false;
+      sendBeacon(plugin, true);
+    };
     setBeacon(plugin, beaconShouldBeActive());
     // setBeacon only sends on transitions; the bar widget treats a record
     // older than 12s as gone, so an active beacon must re-send "watch" on
@@ -425,11 +438,14 @@
       if (beaconActive) sendBeacon(plugin, false);
       else setBeacon(plugin, beaconShouldBeActive());
     }, BEACON_REFRESH_MS);
-    document.addEventListener("visibilitychange", refresh);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) leave();
+      else refresh();
+    });
     window.addEventListener("focus", () => { windowFocused = true; refresh(); });
     window.addEventListener("blur", () => { windowFocused = false; refresh(); });
     window.addEventListener("pageshow", refresh);
-    window.addEventListener("pagehide", () => setBeacon(plugin, false));
+    window.addEventListener("pagehide", leave);
   }
 
   async function init() {
