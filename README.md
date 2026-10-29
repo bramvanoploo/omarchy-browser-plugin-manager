@@ -26,7 +26,11 @@ its "Copy install command" button; "Manual" badges are never touched.
 every 5s and the Omarchy bar icon lights up (accent tone); switching to
 another plugin tab sends "unwatch" (id-scoped) and the icon and panel follow
 right away, while switching to another application pauses the beacon so the
-record expires (≤12s) and the placeholder returns. Left click opens a dropdown with that plugin’s
+record expires (≤12s) and the placeholder returns. Pages for plugins that
+are *not* installable from the browser (no install command, built-in, failed
+upstream check) light the icon too when the plugin is installed on this
+machine, so its panel (update/uninstall/move icon) is reachable; no page
+buttons appear there. Left click opens a dropdown with that plugin’s
 header title (as in the dialogs) and buttons to **Install**, **Update**,
 **Uninstall**, and move its bar icon (left/center/right). Install, Update,
 and Uninstall summon the same wizard — the beacon is a display hint, the

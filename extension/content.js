@@ -462,7 +462,16 @@
     } catch (_e) {
       return;
     }
-    if (!installable(plugin)) return;
+    if (!installable(plugin)) {
+      // Not installable from the browser (no install command, built-in,
+      // failed upstream check): the bar panel can still manage a plugin
+      // that is installed on this machine (update/uninstall/move icon), so
+      // light the beacon when the local host reports it installed. No page
+      // buttons: those require the marketplace's installability rule.
+      const state = await talkToHost({ type: "status", id: PLUGIN_ID }, HOST_STATUS_TIMEOUT_MS);
+      if (state && state.ok && !state.firstParty && state.installed) startBeacon(plugin);
+      return;
+    }
 
     const state = await talkToHost({ type: "status", id: PLUGIN_ID }, HOST_STATUS_TIMEOUT_MS);
     if (!state || !state.ok || state.firstParty) return;

@@ -120,6 +120,16 @@ Panel {
   // thumb is a 16:9 box with object-fit: cover), not the entry's native
   // size: 320x720 portrait thumbnails must not tower over the popup.
   readonly property real catalogThumbRatio: 9 / 16
+  // Native thumbnail proportion (h/w) from the catalog entry: the cover
+  // crop needs it to size the image so a portrait thumb shows its TOP
+  // (the box clips the overflow at the bottom) and a landscape thumb
+  // stays vertically centered.
+  readonly property real catalogThumbNative: {
+    var e = root.catalogEntry
+    var w = e ? Number(e.previewThumbnailWidth) || 0 : 0
+    var h = e ? Number(e.previewThumbnailHeight) || 0 : 0
+    return w > 0 && h > 0 ? h / w : root.catalogThumbRatio
+  }
   readonly property string catalogBlurb: {
     var e = root.catalogEntry
     return e && e.id === root.catalogForId ? String(e.description || "") : ""
@@ -637,11 +647,18 @@ Panel {
         clip: true
 
         Image {
-          anchors.fill: parent
-          anchors.margins: 1
+          // Cover crop of the 16:9 box: portrait thumbnails (h/w > 9/16,
+          // e.g. 320x720) scale to the full box width anchored at the TOP,
+          // so the top of the image stays visible and the box clips the
+          // overflow at the bottom; landscape thumbnails scale to the box
+          // height, horizontally centered. (clip: true = overflow hidden.)
+          x: 1 + (parent.width - 2 - width) / 2
+          y: 1
+          width: Math.max(parent.width - 2, (parent.height - 2) / root.catalogThumbNative)
+          height: Math.max(parent.height - 2, width * root.catalogThumbNative)
           source: root.catalogThumb !== "" ? root.marketplaceUrl + root.catalogThumb : ""
-          sourceSize.width: parent.width * 2
-          fillMode: Image.PreserveAspectCrop
+          sourceSize.width: width * 2
+          fillMode: Image.Stretch
           asynchronous: true
           cache: true
           smooth: true
