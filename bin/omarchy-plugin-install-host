@@ -244,6 +244,18 @@ clear_watch() {
   return 0
 }
 
+# Id-scoped unwatch: a tab leaving removes the record only when it is the
+# tab's own plugin. Rapid tab switches deliver the previous tab's unwatch
+# after the new tab's watch (new pages boot slower than visibility events
+# lag); without the id guard that late unwatch wipes the new plugin's
+# record and the bar panel/icon goes stale until the next renewal.
+clear_watch_for_id() {
+  local id="$1"
+  [[ -n $id && -f $WATCH_FILE ]] || return 0
+  [[ "$(jq -r '.id // empty' "$WATCH_FILE" 2>/dev/null)" == "$id" ]] || return 0
+  clear_watch
+}
+
 main() {
   local length payload type id local_status all_status reason
   # Message trace: enabled by default into the state dir (override with
@@ -315,7 +327,8 @@ main() {
         fi
         ;;
       unwatch)
-        clear_watch
+        id=$(jq -r 'if type == "object" and (.id | type) == "string" then .id else "" end' <<<"$payload" 2>/dev/null || true)
+        clear_watch_for_id "$id"
         reply_ok
         ;;
       *)
