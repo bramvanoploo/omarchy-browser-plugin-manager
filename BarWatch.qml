@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -144,6 +145,30 @@ Panel {
     return bits.join("  \u00b7  ")
   }
 
+  // Section of the omarchy bar layout ("left"/"center"/"right") that holds
+  // the watched plugin's icon, "" when unknown. Bar layout entries carry
+  // the plugin id; omarchy bar move writes the same file we read.
+  property string iconSection: ""
+  function parseIconSection(raw) {
+    var sec = ""
+    var id = root.watchState ? String(root.watchState.id) : ""
+    try {
+      var d = JSON.parse(raw)
+      var lay = d && d.bar && d.bar.layout ? d.bar.layout : {}
+      var order = ["left", "center", "right"]
+      for (var i = 0; i < order.length && !sec; i++) {
+        var arr = lay[order[i]]
+        if (!Array.isArray(arr)) continue
+        for (var j = 0; j < arr.length; j++) {
+          if (arr[j] && String(arr[j].id || "") === id) { sec = order[i]; break }
+        }
+      }
+    } catch (e) {
+      sec = ""
+    }
+    root.iconSection = id ? sec : ""
+  }
+
   function applyWatch(raw, fileGone) {
     // Freeze the popup on the plugin captured at open time (see popupLive).
     // A popup that currently shows the placeholder is never frozen: filling
@@ -189,6 +214,8 @@ Panel {
       root.installedVersion = ""
       root.catalogEntry = null
       root.catalogForId = ""
+      root.iconSection = ""
+      shellFile.reload()
       if (root.opened && newId !== "") {
         // The popup stayed open across a tab switch: re-read the new plugin.
         Qt.callLater(root.refreshStatus)
@@ -309,6 +336,18 @@ Panel {
     onLoadFailed: root.installedVersion = ""
   }
 
+  // Bar layout config: which section (left/center/right) the watched
+  // plugin's icon currently sits in. Read when the popup opens and after a
+  // move, so the move buttons can disable the active section.
+  FileView {
+    id: shellFile
+    path: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") || "/tmp") + "/.config")
+      + "/omarchy/shell.json"
+    printErrors: false
+    onLoaded: root.parseIconSection(text())
+    onLoadFailed: root.iconSection = ""
+  }
+
   // Re-evaluates beaconLive as the 5s beacon renews and time passes, so
   // the icon lights within seconds of a tab opening and dims when it dies.
   Timer {
@@ -329,6 +368,7 @@ Panel {
       // flag exactly once so the capture is not frozen away).
       root.captureOnOpen = true
       watchFile.reload()
+      shellFile.reload()
       Qt.callLater(root.refreshStatus)
       Qt.callLater(root.refreshCatalog)
     }
@@ -410,6 +450,7 @@ Panel {
     }
     onExited: function (exitCode) {
       var name = root.watchedName()
+      shellFile.reload() // reflect the new section in the move buttons
       if (exitCode === 0) {
         root.notify("Bar icon moved", name + "'s icon now sits in the " + root.moveSection + " section.")
       } else {
@@ -637,8 +678,12 @@ Panel {
       Rectangle {
         visible: root.popupLive && root.catalogThumb !== ""
         width: popupColumn.width
+        // Proportional height at the full panel width, capped at the
+        // marketplace card's 16:9: wide-short thumbs (e.g. 499x48 banners)
+        // get their own short box; taller images (e.g. 320x720) cap here
+        // and overflow, hidden by clip.
         height: visible
-          ? Math.round(width * root.catalogThumbRatio) + Style.space(2)
+          ? Math.round((width - 2) * Math.min(root.catalogThumbNative, root.catalogThumbRatio)) + 2
           : 0
         radius: Style.cornerRadius
         color: Util.alpha(Color.foreground, 0.05)
@@ -647,14 +692,13 @@ Panel {
         clip: true
 
         Image {
-          // Cover crop of the 16:9 box: portrait thumbnails (h/w > 9/16,
-          // e.g. 320x720) scale to the full box width anchored at the TOP,
-          // so the top of the image stays visible and the box clips the
-          // overflow at the bottom; landscape thumbnails scale to the box
-          // height, horizontally centered. (clip: true = overflow hidden.)
-          x: 1 + (parent.width - 2 - width) / 2
+          // Full-width, proportional (h/w from the catalog entry), anchored
+          // at the TOP: only images that exceed the capped box height
+          // overflow, and the box's clip hides the BOTTOM overflow, so the
+          // top of the image always stays visible. No side cropping.
+          x: 1
           y: 1
-          width: Math.max(parent.width - 2, (parent.height - 2) / root.catalogThumbNative)
+          width: parent.width - 2
           height: Math.max(parent.height - 2, width * root.catalogThumbNative)
           source: root.catalogThumb !== "" ? root.marketplaceUrl + root.catalogThumb : ""
           sourceSize.width: width * 2
@@ -739,12 +783,35 @@ Panel {
         visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
         text: "Move this plugin's bar icon:"
       }
-      Row {
+      GridLayout {
         visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
-        spacing: Style.spacing.controlGap
-        BWButton { label: "Left"; onClickedBw: root.moveIcon("left") }
-        BWButton { label: "Center"; onClickedBw: root.moveIcon("center") }
-        BWButton { label: "Right"; onClickedBw: root.moveIcon("right") }
+        width: popupColumn.width
+        columns: 3
+        columnSpacing: Style.spacing.controlGap
+        // Three equal-width buttons spanning the full panel row; the
+        // section the icon currently sits in is disabled and marked
+        // "(active)" (iconSection from the bar layout config).
+        BWButton {
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(30)
+          label: "Left" + (root.iconSection === "left" ? " (active)" : "")
+          enabled: root.iconSection !== "left"
+          onClickedBw: root.moveIcon("left")
+        }
+        BWButton {
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(30)
+          label: "Center" + (root.iconSection === "center" ? " (active)" : "")
+          enabled: root.iconSection !== "center"
+          onClickedBw: root.moveIcon("center")
+        }
+        BWButton {
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(30)
+          label: "Right" + (root.iconSection === "right" ? " (active)" : "")
+          enabled: root.iconSection !== "right"
+          onClickedBw: root.moveIcon("right")
+        }
       }
     }
   }
