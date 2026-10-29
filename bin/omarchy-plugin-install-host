@@ -246,7 +246,13 @@ clear_watch() {
 
 main() {
   local length payload type id local_status all_status reason
-  trace="${PI_NATIVE_TRACE:-}"
+  # Message trace: enabled by default into the state dir (override with
+  # PI_NATIVE_TRACE, disable with PI_NATIVE_TRACE=""). One line per received
+  # frame: proves which messages (watch/unwatch/status) reach the host.
+  trace="${PI_NATIVE_TRACE-$STATE_DIR/host-trace.log}"
+  if [[ -n $trace && -f $trace ]] && (( $(stat -c%s "$trace" 2>/dev/null || echo 0) > 200000 )); then
+    : > "$trace"   # truncate on launch instead of growing forever
+  fi
   on_host_exit() {
     clear_watch
     if [[ -n $trace ]]; then
