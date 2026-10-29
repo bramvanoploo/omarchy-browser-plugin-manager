@@ -116,12 +116,10 @@ Panel {
     // Only same-site relative asset paths are ever loaded as images.
     return /^assets\/[A-Za-z0-9._\/-]+$/.test(t) ? t : ""
   }
-  readonly property real catalogThumbRatio: {
-    var e = root.catalogEntry
-    var w = e ? Number(e.previewThumbnailWidth) || 0 : 0
-    var h = e ? Number(e.previewThumbnailHeight) || 0 : 0
-    return w > 0 && h > 0 ? h / w : 225 / 720
-  }
+  // Marketplace card proportion (same as plugins.omarchy.org: every card
+  // thumb is a 16:9 box with object-fit: cover), not the entry's native
+  // size: 320x720 portrait thumbnails must not tower over the popup.
+  readonly property real catalogThumbRatio: 9 / 16
   readonly property string catalogBlurb: {
     var e = root.catalogEntry
     return e && e.id === root.catalogForId ? String(e.description || "") : ""
