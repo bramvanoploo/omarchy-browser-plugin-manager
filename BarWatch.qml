@@ -487,61 +487,22 @@ Panel {
     }
   }
 
-  // Download-tray glyph: the extension's Install-button icon (.pi-icon-install
-  // in content.js, also the wizard header icon): 13px box, stem 1x7 at x6.5,
-  // tray walls/floor border 1 inset 1, no top side. Painted at the bar's
-  // optical canvas size; the color is the button foreground: dim normally,
-  // accent while a beacon is live ("lit up").
+  // Browser-window glyph (Nerd Font md "web_asset", U+F05C5): a browser
+  // page frame, the thing the manager watches. BarIconButton draws it at
+  // the bar's optical canvas size; the color follows the button defaults:
+  // dim normally, active (accent) color while a beacon is live ("lit up").
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    hasVisualContent: true
-    foreground: root.beaconLive ? Color.accent : Qt.darker(root.barForeground, 1.6)
+    text: "\uF05C5"
+    active: root.beaconLive
     tooltipText: root.beaconLive
       ? root.watchedName() + " \u00b7 open in browser \u00b7 click to manage"
       : "Browser Plugin Manager \u00b7 lights up on installable plugin pages"
 
     onPressed: function (code) {
       if (code === Qt.LeftButton) root.toggle()
-    }
-
-    Item {
-      id: glyphCanvas
-      anchors.centerIn: parent
-      width: Style.bar.iconCanvas
-      height: Style.bar.iconCanvas
-
-      readonly property real u: width / 13
-      readonly property real bw: Math.max(1, Math.round(u))
-
-      Rectangle {  // stem
-        x: Math.round(glyphCanvas.u * 6.5 - glyphCanvas.bw / 2)
-        width: glyphCanvas.bw
-        height: Math.round(glyphCanvas.u * 7)
-        color: button.foreground
-      }
-      Rectangle {  // tray: left wall
-        x: Math.round(glyphCanvas.u)
-        y: Math.round(glyphCanvas.width - glyphCanvas.u * 6)
-        width: glyphCanvas.bw
-        height: Math.round(glyphCanvas.u * 5)
-        color: button.foreground
-      }
-      Rectangle {  // tray: right wall
-        x: Math.round(glyphCanvas.width - glyphCanvas.u - glyphCanvas.bw)
-        y: Math.round(glyphCanvas.width - glyphCanvas.u * 6)
-        width: glyphCanvas.bw
-        height: Math.round(glyphCanvas.u * 5)
-        color: button.foreground
-      }
-      Rectangle {  // tray: floor
-        x: Math.round(glyphCanvas.u)
-        y: Math.round(glyphCanvas.width - glyphCanvas.u * 2)
-        width: Math.round(glyphCanvas.width - glyphCanvas.u * 2)
-        height: glyphCanvas.bw
-        color: button.foreground
-      }
     }
   }
 
