@@ -44,12 +44,18 @@ Panel {
   readonly property bool beaconLive: watchState !== null && nowMs > 0
     && (nowMs - Number(watchState.ts) * 1000) < beaconStaleMs
 
-  // What the popup shows. Clicking the bar icon blurs the browser window,
-  // which by design ends the beacon (the placeholder is the spec for "the
-  // browser is not the active application"); an open popup must never lose
-  // its content mid-interaction, so it keeps displaying the watched plugin
-  // while it is open. The icon itself and reopened popups follow beaconLive.
+  // What the popup shows. The popup freezes on the plugin captured when it
+  // opens: the menu must never swap or lose its content mid-interaction
+  // (the record can die while open: a 12s app-switch staleness, the tab
+  // closed). Two capture windows stay open: the reload issued on open
+  // (captureOnOpen: a tab switch right before opening must be picked up,
+  // the 2s poll may not have run), and a popup showing the placeholder (a
+  // switched-to page renews its beacon ~1s after the switch, so a fresh
+  // record can fill the open popup). The icon follows beaconLive.
   readonly property bool popupLive: beaconLive || (root.opened && root.watchState !== null)
+  // One capture allowed right after the popup opens (consumed by
+  // applyWatch; kept on transient read hiccups so the next poll retries).
+  property bool captureOnOpen: false
 
   // Live local state for the watched plugin, refreshed while the popup is
   // open (the wizard can change it while the dropdown sits there).
@@ -131,12 +137,11 @@ Panel {
   }
 
   function applyWatch(raw, fileGone) {
-    // The popup is frozen while open: opening the menu blurs the browser
-    // window (which by design ends the beacon with an unwatch), and the
-    // menu must never lose its content mid-interaction. The popup shows
-    // the state captured when it was opened; the 2s poll resumes updates
-    // the moment it closes.
-    if (root.opened) return
+    // Freeze the popup on the plugin captured at open time (see popupLive).
+    // A popup that currently shows the placeholder is never frozen: filling
+    // in content loses nothing, and the switched-to page's first beacon
+    // renewal lands ~1s after the switch, while the popup is already open.
+    if (root.opened && root.watchState !== null && !root.captureOnOpen) return
     var s = String(raw || "").trim()
     var obj = null
     if (s) {
@@ -155,13 +160,15 @@ Panel {
     // which Qt's file watching reports as gone) is transient: keep the last
     // record and let ts staleness end it. A file that is really gone
     // (FileNotFound) is an intentional unwatch: the extension ended the
-    // beacon (tab hidden, browser window unfocused, page closed), so the
-    // placeholder must show right away, not survive 12s on the kept record.
+    // beacon (tab hidden, page closed), so the placeholder must show right
+    // away, not survive 12s on the kept record.
     if (root.watchState !== null && !accepted && !fileGone) {
+      if (root.opened) return // hiccup during an open capture: stay frozen, next poll retries
       console.warn("BarWatch: transient beacon read failure, keeping last record")
       root.nowMs = Date.now()
       return
     }
+    root.captureOnOpen = false
     root.watchState = accepted ? obj : null
     root.nowMs = Date.now()
     // Status and catalog are per watched plugin: re-check them when the
@@ -309,6 +316,10 @@ Panel {
   onOpenedChanged: {
     if (root.opened) {
       root.nowMs = Date.now()
+      // Capture the current beacon record for this opening (the async
+      // reload lands while opened is already true; applyWatch honors this
+      // flag exactly once so the capture is not frozen away).
+      root.captureOnOpen = true
       watchFile.reload()
       Qt.callLater(root.refreshStatus)
       Qt.callLater(root.refreshCatalog)
