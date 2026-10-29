@@ -53,7 +53,9 @@ Usage: plugin-installer-setup [--extension-dir PATH] [--uninstall]
                         extension (default: $REPO_DIR/extension).
                         The Chrome/Chromium/Brave native-messaging origin is
                         derived from this path, so the extension must be
-                        loaded from exactly this directory.
+                        loaded from exactly this directory. Extra dirs are
+                        remembered (state-dir extension-dirs.conf) and stay
+                        registered when the plugin auto-registers on load.
   --uninstall           Remove the registered native messaging manifests.
 EOF
 }
@@ -121,16 +123,44 @@ main() {
 
   local chromium_id key_id chromium_manifest firefox_manifest dir ext_abs
   local id o skip
-  local -a origins
+  local -a origins ext_dirs
   ext_abs=$(realpath "$ext_dir")
-  chromium_id=$(chrome_extension_id "$ext_dir")
-  key_id=$(chrome_key_id "$ext_dir/manifest.json")
 
-  # Pin the path-derived unpacked ID, the key-pinned packed-install ID, and
-  # the Chrome Web Store item ID so Load unpacked, zipped dev installs, and
-  # store installs all reach the host.
-  origins=("chrome-extension://$chromium_id/")
-  for id in "$key_id" "$CHROME_STORE_ID"; do
+  # Persist every extension dir ever registered: the shell plugin
+  # auto-registers on every load (no arguments, default dir). Without this
+  # file, an auto-registration silently drops the origin of an unpacked
+  # extension loaded from a dev checkout, and Chrome forbids connectNative
+  # for it until setup is re-run by hand. One realpath'ed dir per line.
+  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager"
+  local origins_conf="$state_dir/extension-dirs.conf"
+  mkdir -p "$state_dir" 2>/dev/null || true
+  ext_dirs=("$ext_abs")
+  if [[ -f $origins_conf ]]; then
+    while IFS= read -r dir; do
+      [[ -n $dir && -f "$dir/manifest.json" ]] || continue
+      skip=0
+      for o in "${ext_dirs[@]}"; do [[ $o == "$dir" ]] && skip=1 && break; done
+      (( skip )) || ext_dirs+=("$dir")
+    done <"$origins_conf"
+  fi
+  printf '%s\n' "${ext_dirs[@]}" >"$origins_conf" 2>/dev/null || true
+
+  # Pin the path-derived unpacked IDs (every registered dir: plugin folder,
+  # dev checkouts), the key-pinned packed-install ID, and the Chrome Web
+  # Store item ID so Load unpacked, zipped dev installs, and store installs
+  # all reach the host.
+  origins=()
+  for dir in "${ext_dirs[@]}"; do
+    chromium_id=$(chrome_extension_id "$dir")
+    key_id=$(chrome_key_id "$dir/manifest.json")
+    for id in "$chromium_id" "$key_id"; do
+      [[ -n $id ]] || continue
+      skip=0
+      for o in "${origins[@]}"; do [[ $o == "chrome-extension://$id/" ]] && skip=1 && break; done
+      (( skip )) || origins+=("chrome-extension://$id/")
+    done
+  done
+  for id in "$CHROME_STORE_ID"; do
     [[ -n $id ]] || continue
     skip=0
     for o in "${origins[@]}"; do [[ $o == "chrome-extension://$id/" ]] && skip=1 && break; done
