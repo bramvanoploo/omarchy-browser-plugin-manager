@@ -628,13 +628,70 @@ Panel {
         }
       }
 
-      // Live page: the wizard's identity line (name \u00b7 id).
-      BWLine {
+      // Live page header: extensions glyph + plugin name + version pill +
+      // plugin id, same structure and styling as the wizard panel header
+      // (which follows the OmaGuake settings panel header).
+      Row {
         visible: root.popupLive
-        text: root.watchedName() + "  \u00b7  " + String(root.watchState ? root.watchState.id : "")
-        color: Color.foreground
-        font.bold: true
-        font.pixelSize: Style.font.body
+        width: popupColumn.width
+        spacing: Style.space(14)
+
+        Text {
+          text: ""
+          font.family: Style.font.family
+          font.pixelSize: Math.max(Style.font.heading,
+            Math.round(bwHeaderTextCol.implicitHeight))
+          color: Color.accent
+          anchors.verticalCenter: parent.verticalCenter
+        }
+
+        Column {
+          id: bwHeaderTextCol
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(2)
+
+          Row {
+            spacing: Style.space(8)
+
+            Text {
+              text: root.watchedName()
+              font.family: Style.font.family
+              font.pixelSize: Style.font.title
+              font.bold: true
+              color: Color.foreground
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Rectangle {
+              visible: root.statusChecked && root.pluginInstalled
+                && root.installedVersion !== ""
+              anchors.verticalCenter: parent.verticalCenter
+              height: Style.space(18)
+              width: bwHeaderVersionText.implicitWidth + Style.space(12)
+              radius: Style.cornerRadius > 0 ? 4 : 0
+              color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15)
+              border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.4)
+              border.width: 1
+
+              Text {
+                id: bwHeaderVersionText
+                anchors.centerIn: parent
+                text: "v" + String(root.installedVersion)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                color: Color.accent
+              }
+            }
+          }
+
+          Text {
+            text: String(root.watchState ? root.watchState.id : "")
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            color: Color.muted
+          }
+        }
       }
 
       // Preview thumbnail from the marketplace catalog, card proportions.
