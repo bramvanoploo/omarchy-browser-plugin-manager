@@ -21,9 +21,11 @@ Every action ends in a desktop notification — no completion dialog. On the
 catalog page, each card gains an icon-only Install/Uninstall button beside
 its "Copy install command" button; "Manual" badges are never touched.
 
-**Bar-icon watcher mode**: while a plugin page is your visible browser tab,
-the extension renews a beacon with the local host and the Omarchy bar icon
-lights up (accent tone). Left click opens a dropdown with that plugin’s
+**Bar-icon watcher mode**: while a plugin page is the active tab of a
+*focused* browser window, the extension renews a beacon with the local host
+and the Omarchy bar icon lights up (accent tone); switching to another
+application sends "unwatch" and the icon and panel drop back to their
+placeholder right away. Left click opens a dropdown with that plugin’s
 header title (as in the dialogs) and buttons to **Install**, **Update**,
 **Uninstall**, and move its bar icon (left/center/right). Install, Update,
 and Uninstall summon the same wizard — the beacon is a display hint, the

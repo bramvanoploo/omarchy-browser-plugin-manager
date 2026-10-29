@@ -6,11 +6,12 @@ import qs.Ui
 
 // Omarchy Browser Plugin Manager bar widget (watcher mode).
 //
-// The icon lights up while a browser tab is open on an installable plugin
-// page: the extension renews a beacon record with the native host every few
-// seconds, the host writes it to browser-watch.json in the state dir, and
-// this widget reads that file. A beacon that stops (tab closed, browser
-// killed) goes stale and the icon dims.
+// The icon lights up while a focused browser window has an installable
+// plugin page on its active tab: the extension renews a beacon record with
+// the native host every few seconds, the host writes it to
+// browser-watch.json in the state dir, and this widget reads that file. A
+// beacon that stops (tab closed, browser switched to the background,
+// browser killed) goes stale and the icon dims.
 //
 // Left click opens a dropdown with the watched plugin's header title (the
 // same identity line the wizard dialogs show) and buttons to manage it:
@@ -42,6 +43,13 @@ Panel {
   property real nowMs: 0
   readonly property bool beaconLive: watchState !== null && nowMs > 0
     && (nowMs - Number(watchState.ts) * 1000) < beaconStaleMs
+
+  // What the popup shows. Clicking the bar icon blurs the browser window,
+  // which by design ends the beacon (the placeholder is the spec for "the
+  // browser is not the active application"); an open popup must never lose
+  // its content mid-interaction, so it keeps displaying the watched plugin
+  // while it is open. The icon itself and reopened popups follow beaconLive.
+  readonly property bool popupLive: beaconLive || (root.opened && root.watchState !== null)
 
   // Live local state for the watched plugin, refreshed while the popup is
   // open (the wizard can change it while the dropdown sits there).
@@ -122,7 +130,7 @@ Panel {
     return bits.join("  \u00b7  ")
   }
 
-  function applyWatch(raw) {
+  function applyWatch(raw, fileGone) {
     var s = String(raw || "").trim()
     var obj = null
     if (s) {
@@ -139,9 +147,11 @@ Panel {
     var oldId = root.watchState ? String(root.watchState.id) : ""
     // A failed/partial read (the file is renamed-replaced while we reload,
     // which Qt's file watching reports as gone) is transient: keep the last
-    // record and let ts staleness end it. Only a well-formed record for a
-    // *different* plugin resets the per-plugin status/catalog state.
-    if (root.watchState !== null && !accepted) {
+    // record and let ts staleness end it. A file that is really gone
+    // (FileNotFound) is an intentional unwatch: the extension ended the
+    // beacon (tab hidden, browser window unfocused, page closed), so the
+    // placeholder must show right away, not survive 12s on the kept record.
+    if (root.watchState !== null && !accepted && !fileGone) {
       console.warn("BarWatch: transient beacon read failure, keeping last record")
       root.nowMs = Date.now()
       return
@@ -254,7 +264,11 @@ Panel {
     path: root.watchPath
     printErrors: false
     onLoaded: root.applyWatch(text())
-    onLoadFailed: root.applyWatch("")
+    onLoadFailed: function (error) {
+      // FileNotFound means the host deliberately removed the record
+      // (unwatch); any other failure is a transient read hiccup.
+      root.applyWatch("", error === FileViewError.FileNotFound)
+    }
   }
 
   // Local manifest of the watched plugin (installed version for the
@@ -564,14 +578,14 @@ Panel {
           spacing: Style.space(4)
 
           Text {
-            text: root.beaconLive ? root.watchedName() : "Browser Plugin Manager"
+            text: root.popupLive ? root.watchedName() : "Browser Plugin Manager"
             font.family: Style.font.family
             font.pixelSize: Style.font.title
             font.bold: true
             color: Color.foreground
           }
           Text {
-            text: root.beaconLive
+            text: root.popupLive
               ? (root.statusChecked
                  ? (root.pluginInstalled
                     ? (root.pluginEnabled ? "Installed \u00b7 enabled" : "Installed \u00b7 disabled")
@@ -587,7 +601,7 @@ Panel {
 
       // Live page: the wizard's identity line (name \u00b7 id).
       BWLine {
-        visible: root.beaconLive
+        visible: root.popupLive
         text: root.watchedName() + "  \u00b7  " + String(root.watchState ? root.watchState.id : "")
         color: Color.foreground
         font.bold: true
@@ -596,7 +610,7 @@ Panel {
 
       // Preview thumbnail from the marketplace catalog, card proportions.
       Rectangle {
-        visible: root.beaconLive && root.catalogThumb !== ""
+        visible: root.popupLive && root.catalogThumb !== ""
         width: popupColumn.width
         height: visible
           ? Math.round(width * root.catalogThumbRatio) + Style.space(2)
@@ -621,25 +635,25 @@ Panel {
 
       // Catalog blurb + author/version line.
       BWLine {
-        visible: root.beaconLive && root.catalogBlurb !== ""
+        visible: root.popupLive && root.catalogBlurb !== ""
         text: root.catalogBlurb
       }
       BWLine {
-        visible: root.beaconLive && root.catalogMeta !== ""
+        visible: root.popupLive && root.catalogMeta !== ""
         text: root.catalogMeta
         font.pixelSize: Style.font.caption
         color: Color.muted
       }
 
       BWLine {
-        visible: !root.beaconLive
+        visible: !root.popupLive
         text: "Open an installable plugin page on plugins.omarchy.org and the "
           + "icon lights up; click it here to install, uninstall, update, or "
           + "move that plugin's bar icon."
       }
 
       Row {
-        visible: !root.beaconLive
+        visible: !root.popupLive
         spacing: Style.spacing.controlGap
 
         BWButton {
@@ -651,7 +665,7 @@ Panel {
       // Manage buttons: from live local state only, enabled once the list
       // read landed, so the dropdown can never offer a stale action set.
       Row {
-        visible: root.beaconLive
+        visible: root.popupLive
         spacing: Style.spacing.controlGap
 
         BWButton {
@@ -690,11 +704,11 @@ Panel {
       }
 
       BWLine {
-        visible: root.beaconLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
+        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
         text: "Move this plugin's bar icon:"
       }
       Row {
-        visible: root.beaconLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
+        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
         spacing: Style.spacing.controlGap
         BWButton { label: "Left"; onClickedBw: root.moveIcon("left") }
         BWButton { label: "Center"; onClickedBw: root.moveIcon("center") }

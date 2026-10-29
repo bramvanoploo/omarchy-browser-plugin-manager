@@ -8,9 +8,10 @@
 //   1. the marketplace's own availability rule for this plugin (catalog.json),
 //   2. a live ping to the local native messaging host.
 // No host => no buttons; the site renders untouched.
-// While the page is the visible tab it also runs the bar-icon watcher beacon:
-// a "watch" record with the host (renewed every 5s, "unwatch" on leave) that
-// lights the Omarchy bar widget for this plugin.
+// While the page is the visible tab of a focused browser window it also runs
+// the bar-icon watcher beacon: a "watch" record with the host (renewed every
+// 5s, "unwatch" when the tab hides, the window loses focus, or the page
+// closes) that lights the Omarchy bar widget for this plugin.
 
 (() => {
   "use strict";
@@ -379,15 +380,26 @@
     });
   }
 
-  // Bar-icon watcher beacon: while this plugin page is the visible tab,
-  // "watch" re-records the page with the local host every few seconds (the
-  // bar icon lights up while that record is fresh); leaving the tab or
-  // closing it sends "unwatch". Losing the unwatch (browser killed) is
-  // safe: the record simply goes stale and the bar icon dims.
+  // Bar-icon watcher beacon: the plugin page is watched only while it is
+  // the user's visible tab *in a focused browser window* — the bar widget
+  // shows the plugin when the browser is the active application, and the
+  // placeholder the moment the user switches to another app. "watch"
+  // re-records the page with the local host every few seconds (the bar
+  // icon lights up while that record is fresh); the tab going hidden, the
+  // window losing OS focus, or closing the page sends "unwatch", which
+  // removes the record and dims the icon right away. Losing the unwatch
+  // (browser killed) is safe: the record simply goes stale and dims.
   const BEACON_REFRESH_MS = 5000;
   const BEACON_STALE_MS = 12000;
   let beaconTimer = null;
   let beaconActive = false;
+  // Window activation: blur/focus fire when the browser window gains or
+  // loses OS focus to another application.
+  let windowFocused = document.hasFocus();
+
+  function beaconShouldBeActive() {
+    return !document.hidden && windowFocused;
+  }
 
   function sendBeacon(plugin, unwatch) {
     const message = unwatch
@@ -404,15 +416,19 @@
 
   function startBeacon(plugin) {
     if (beaconTimer) return;
-    setBeacon(plugin, !document.hidden);
+    const refresh = () => setBeacon(plugin, beaconShouldBeActive());
+    setBeacon(plugin, beaconShouldBeActive());
     // setBeacon only sends on transitions; the bar widget treats a record
-    // older than 12s as gone, so a visible tab must re-send "watch" on
-    // every tick, not only when visibility flips.
+    // older than 12s as gone, so an active beacon must re-send "watch" on
+    // every tick, not only when focus/visibility flip.
     beaconTimer = setInterval(() => {
-      if (!document.hidden && beaconActive) sendBeacon(plugin, false);
-      else setBeacon(plugin, !document.hidden);
+      if (beaconActive) sendBeacon(plugin, false);
+      else setBeacon(plugin, beaconShouldBeActive());
     }, BEACON_REFRESH_MS);
-    document.addEventListener("visibilitychange", () => setBeacon(plugin, !document.hidden));
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", () => { windowFocused = true; refresh(); });
+    window.addEventListener("blur", () => { windowFocused = false; refresh(); });
+    window.addEventListener("pageshow", refresh);
     window.addEventListener("pagehide", () => setBeacon(plugin, false));
   }
 

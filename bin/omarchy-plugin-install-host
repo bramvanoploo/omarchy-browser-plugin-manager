@@ -19,11 +19,13 @@
 # command. The outcome is a desktop notification; no completion dialog shows.
 #
 # "watch" is the bar-icon watcher beacon: a tab on an installable plugin page
-# sends it every few seconds. The host only format-checks id/repo (no catalog
-# fetch, no action) and records the page in browser-watch.json in the state
-# dir; the bar widget lights up while that file is fresh, and its dropdown
-# routes every action through the wizard, which re-validates. "unwatch" and
-# host exit remove the record (a lost beacon goes stale on its own).
+# in a focused browser window sends it every few seconds, and "unwatch" when
+# the tab hides, the window loses focus, or the page closes. The host only
+# format-checks id/repo (no catalog fetch, no action) and records the page in
+# browser-watch.json in the state dir; the bar widget lights up while that
+# file is fresh, and its dropdown routes every action through the wizard,
+# which re-validates. "unwatch" removes the record right away (the widget
+# shows its placeholder); a lost beacon (browser killed) goes stale on its own.
 
 set -euo pipefail
 # Qt (used by omarchy-shell / omarchy plugin list) writes a warning to stdout
@@ -32,7 +34,7 @@ set -euo pipefail
 export LC_ALL=C.UTF-8
 
 HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
-HOST_VERSION="0.4.0"
+HOST_VERSION="0.4.1"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
 MAX_FRAME_BYTES=65536
