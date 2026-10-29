@@ -487,10 +487,12 @@ Panel {
     }
   }
 
-  // Browser-window glyph (Nerd Font md "web_asset", U+F05C5): a browser
-  // page frame, the thing the manager watches. BarIconButton draws it at
-  // the bar's optical canvas size; the color follows the button defaults:
-  // dim normally, active (accent) color while a beacon is live ("lit up").
+  // Extensions glyph (Nerd Font "cod-extensions", U+EAE6): the puzzle
+  // piece, universal browser-extension symbol. BarIconButton draws it at
+  // the bar's optical canvas size with its default colors: dim normally,
+  // active (accent) color while a beacon is live ("lit up").
+  // NOTE: write the glyph as a literal character: QML \u escapes consume
+  // exactly 4 hex digits, so \uXXXXX would draw U+XXXX plus a stray digit.
   BarIconButton {
     id: button
     anchors.fill: parent
