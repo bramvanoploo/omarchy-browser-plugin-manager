@@ -950,47 +950,18 @@ Item {
           width: cardColumn.width
           spacing: Style.space(14)
 
-          // The browser extension's Install-button glyph: a download stem
-          // dropping into an open tray, drawn to the extension's CSS geometry
-          // (.pi-icon-install in content.js: 13px box, stem 1x7 at x6, tray
-          // border 1, inset 1, height 5, no top side).
-          Item {
-            id: piIcon
-            readonly property real sz: Math.max(Style.font.heading,
+          // Extensions glyph (Nerd Font "cod-extensions", U+EAE6): the same
+          // icon the bar widget uses. Styled exactly like the OmaGuake
+          // settings panel header icon: plain accent-color Text, sized to
+          // span the title + subtitle block, no background, no border.
+          // (Literal glyph char: QML \\u escapes consume exactly 4 hex digits.)
+          Text {
+            text: ""
+            font.family: Style.font.family
+            font.pixelSize: Math.max(Style.font.heading,
               Math.round(headerTextCol.implicitHeight))
-            readonly property real u: sz / 13
-            readonly property real bw: Math.max(1, Math.round(u))
-            width: sz
-            height: sz
+            color: Color.accent
             anchors.verticalCenter: parent.verticalCenter
-
-            Rectangle {  // stem
-              x: Math.round(piIcon.u * 6.5 - piIcon.bw / 2)
-              width: piIcon.bw
-              height: Math.round(piIcon.u * 7)
-              color: Color.accent
-            }
-            Rectangle {  // tray: left wall
-              x: Math.round(piIcon.u)
-              y: Math.round(piIcon.sz - piIcon.u * 6)
-              width: piIcon.bw
-              height: Math.round(piIcon.u * 5)
-              color: Color.accent
-            }
-            Rectangle {  // tray: right wall
-              x: Math.round(piIcon.sz - piIcon.u - piIcon.bw)
-              y: Math.round(piIcon.sz - piIcon.u * 6)
-              width: piIcon.bw
-              height: Math.round(piIcon.u * 5)
-              color: Color.accent
-            }
-            Rectangle {  // tray: floor
-              x: Math.round(piIcon.u)
-              y: Math.round(piIcon.sz - piIcon.u * 2)
-              width: Math.round(piIcon.sz - piIcon.u * 2)
-              height: piIcon.bw
-              color: Color.accent
-            }
           }
 
           Column {
