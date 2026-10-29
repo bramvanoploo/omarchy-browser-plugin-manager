@@ -740,21 +740,28 @@ Panel {
 
       // Manage buttons: from live local state only, enabled once the list
       // read landed, so the dropdown can never offer a stale action set.
-      Row {
+      // Two visible buttons (the common case) each take half the panel row.
+      GridLayout {
         visible: root.popupLive
-        spacing: Style.spacing.controlGap
+        width: popupColumn.width
+        columns: 2
+        columnSpacing: Style.spacing.controlGap
 
         BWButton {
           visible: root.statusChecked && !root.pluginInstalled
           enabled: root.statusChecked
           primary: true
           label: "Install"
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(30)
           onClickedBw: root.summonWizard("install")
         }
         BWButton {
           visible: root.statusChecked && root.pluginInstalled && root.hasUpdate
           enabled: root.statusChecked
           label: "Update"
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(30)
           onClickedBw: root.summonWizard("update")
         }
         BWButton {
@@ -762,12 +769,16 @@ Panel {
           enabled: root.statusChecked
           primary: true
           label: "Enable"
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(30)
           onClickedBw: root.setEnabledForWatch(true)
         }
         BWButton {
           visible: root.statusChecked && root.pluginInstalled && root.pluginEnabled
           enabled: root.statusChecked
           label: "Disable"
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(30)
           onClickedBw: root.setEnabledForWatch(false)
         }
         BWButton {
@@ -775,6 +786,8 @@ Panel {
           enabled: root.statusChecked
           danger: true
           label: "Uninstall"
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(30)
           onClickedBw: root.summonWizard("uninstall")
         }
       }
