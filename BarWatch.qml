@@ -131,6 +131,12 @@ Panel {
   }
 
   function applyWatch(raw, fileGone) {
+    // The popup is frozen while open: opening the menu blurs the browser
+    // window (which by design ends the beacon with an unwatch), and the
+    // menu must never lose its content mid-interaction. The popup shows
+    // the state captured when it was opened; the 2s poll resumes updates
+    // the moment it closes.
+    if (root.opened) return
     var s = String(raw || "").trim()
     var obj = null
     if (s) {
