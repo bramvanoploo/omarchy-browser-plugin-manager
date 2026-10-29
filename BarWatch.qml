@@ -495,7 +495,7 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "\uF05C5"
+    text: "󰟅"
     active: root.beaconLive
     tooltipText: root.beaconLive
       ? root.watchedName() + " \u00b7 open in browser \u00b7 click to manage"
