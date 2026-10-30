@@ -454,9 +454,13 @@
   // Ribbon kind for a card the extension cannot operate (no mounted button):
   // an available update wins, otherwise an installed plugin (e.g. installed
   // on the desktop via CLI) shows the passive INSTALLED banner.
-  async function passiveRibbonKind(pluginId) {
-    if (updateStatusFor(pluginId)) return "update";
-    return (await isInstalled(pluginId)) ? "installed" : null;
+  async function passiveRibbonKind(plugin) {
+    // For cards the extension cannot operate (no mounted button): "Manual",
+    // "Preview only", built-in, unavailable.  No catalog entry (built-in
+    // plugins) -> null.
+    if (!plugin || plugin.builtIn) return null;
+    if (updateStatusFor(plugin.id)) return "update";
+    return (await isInstalled(plugin.id)) ? "installed" : null;
   }
 
   function makeCardButton(plugin, installed, update) {
@@ -512,6 +516,20 @@
           (catalog.plugins || []).filter(Boolean).map((plugin) => [plugin.id, plugin])
         );
       }
+      // Cards the extension cannot install (no copy button: "Manual", "Preview
+      // only", built-in, unavailable).  Mark them so the polling refresh can
+      // keep a passive INSTALLED/UPDATE ribbon in sync with the host state;
+      // the ribbon is purely visual (no button to click).
+      for (const card of document.querySelectorAll("article[data-card-plugin]")) {
+        if (card.querySelector("button.card-install[data-copy-command]")) continue;
+        if (card.dataset.piPassiveRibbon === "1") continue;
+        card.dataset.piPassiveRibbon = "1";
+        card.dataset.piSeen = "1";
+        const pluginId = card.dataset.cardPlugin;
+        const cardPlugin = pluginId ? pluginsById.get(pluginId) : null;
+        setRibbon(card, await passiveRibbonKind(cardPlugin));
+      }
+
       const targets = document.querySelectorAll(
         "button.card-install[data-copy-command]:not([data-pi-seen])"
       );
@@ -525,7 +543,7 @@
           // CLI-installed plugins are recognizable at a glance.
           const card = cardFor(copy);
           card.dataset.piPassiveRibbon = "1";
-          setRibbon(card, await passiveRibbonKind(copy.dataset.pluginId));
+          setRibbon(card, await passiveRibbonKind(pluginsById.get(copy.dataset.pluginId)));
           continue;
         }
         const update = updateStatusFor(plugin.id);
@@ -579,12 +597,13 @@
     }
     // Passive (non-installable) cards have no mounted button, so refresh
     // their banners from the same batch snapshot the buttons just got
-    // (statuses is non-null here, so passiveRibbonKind stays local).
+    // (statuses is non-null here, so passiveRibbonKind stays local).  The
+    // card's data-card-plugin (site template) identifies the plugin; copy
+    // buttons on non-installable cards carry the same id.
     for (const card of document.querySelectorAll("[data-pi-passive-ribbon]")) {
-      const copy = card.querySelector("button.card-install[data-copy-command]");
-      if (copy && copy.dataset.pluginId) {
-        setRibbon(card, await passiveRibbonKind(copy.dataset.pluginId));
-      }
+      const pluginId = card.dataset.cardPlugin;
+      const plugin = pluginId ? pluginsById.get(pluginId) : null;
+      setRibbon(card, await passiveRibbonKind(plugin));
     }
   }
 
@@ -593,7 +612,7 @@
     if (syncing || document.hidden) return;
     syncing = true;
     try {
-      if (await refreshStatuses()) syncRendered();
+      if (await refreshStatuses()) await syncRendered();
     } finally {
       syncing = false;
     }
