@@ -186,6 +186,9 @@
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.14em;
+  /* letter-spacing adds trailing space after the last glyph, which pulls the
+   * centered text visibly to the left; indent the first line to compensate. */
+  text-indent: 0.14em;
   line-height: 1.8;
   text-align: center;
   box-shadow: 0 4px 14px rgb(0 0 0 / 30%);

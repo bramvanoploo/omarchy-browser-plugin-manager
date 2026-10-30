@@ -41,7 +41,7 @@
 /* Installed-state buttons carry their text (icon + verb); they replace the
  * page's copy-command button, so the width opens up from the icon square. */
 .card-install.pi-card-button.pi-labelled { width: auto; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; }
-.pi-card-label { font-size: 11px; letter-spacing: 0.02em; white-space: nowrap; }
+.pi-card-label { font-size: 11px; letter-spacing: 0.02em; white-space: nowrap; text-transform: none; }
 .card-install.pi-card-install { color: var(--stable, #b4c96f); }
 .card-install.pi-card-install:hover { color: var(--stable, #b4c96f); background: var(--panel-2, rgba(127, 127, 127, 0.12)); }
 .card-install.pi-card-uninstall { color: var(--accent, #ffcead); }
@@ -88,6 +88,9 @@
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.14em;
+  /* letter-spacing adds trailing space after the last glyph, which pulls the
+   * centered text visibly to the left; indent the first line to compensate. */
+  text-indent: 0.14em;
   line-height: 1.8;
   text-align: center;
   box-shadow: 0 4px 14px rgb(0 0 0 / 30%);
