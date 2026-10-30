@@ -95,6 +95,12 @@ Panel {
   // plugin popup (one open at a time). Its outside-click dismissal routes
   // through settingsOwner.close(), the PopupCard owner contract.
   property bool settingsOpen: false
+  // Opening the panel (right-click, any path) refreshes the update lists
+  // immediately so the shown state is current, not the last poll's.
+  onSettingsOpenChanged: {
+    if (settingsOpen)
+      root.checkForUpdates()
+  }
   readonly property QtObject settingsOwner: QtObject {
     function close() { root.settingsOpen = false }
   }
@@ -164,8 +170,15 @@ Panel {
   }
 
   function setAllowUnverified(on) {
-    root.allowUnverified = on === true
+    var next = on === true
+    if (root.allowUnverified === next) return
+    root.allowUnverified = next
     root.saveSettings()
+    // The verified/unverified lists the user watches change meaning with
+    // this toggle, so refresh the available updates immediately. A check
+    // already running fetches the full verified-flagged set and applies it
+    // under the new setting when it lands, so skipping then is correct.
+    root.checkForUpdates()
   }
 
   // ---- update poll -------------------------------------------------------
