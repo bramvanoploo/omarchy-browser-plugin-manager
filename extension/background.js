@@ -176,7 +176,8 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // couple of seconds; the host records it in browser-tabs.json for the bar
 // widget. When the widget asks for a marketplace tab, the host answers that
 // tab's visit with activate:true and the worker raises it: focus the window,
-// select the tab.
+// select the tab — unless the window already shows a marketplace tab, in
+// which case only the window is focused and the active tab stays put.
 
 const PRESENCE_INTERVAL_MS = 2000;
 const PRESENCE_URL_PATTERN = "https://plugins.omarchy.org/*";
@@ -203,6 +204,13 @@ async function detectSource() {
 async function activateTab(tab) {
   try {
     await api.windows.update(tab.windowId, { focused: true });
+    // If the window's active tab is already a marketplace page, the click's
+    // goal (be looking at the marketplace) is met: leave the tab as it is,
+    // even when some background marketplace tab answered the request.
+    const [active] = await api.tabs.query({ windowId: tab.windowId, active: true });
+    if (active && typeof active.url === "string"
+      && active.url.indexOf("https://plugins.omarchy.org/") === 0)
+      return;
     await api.tabs.update(tab.id, { active: true });
   } catch (_e) { /* window closed mid-focus: nothing to do */ }
 }
