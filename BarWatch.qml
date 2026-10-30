@@ -145,8 +145,13 @@ Panel {
 
   function saveSettings() {
     if (root.settingsSaving || !root.settingsLoaded) return
+    var content = JSON.stringify(root.settingsObject(), null, 2) + "\n"
+    // Identical content: FileView.setText writes nothing and no save signal
+    // ever arrives, so the save-wait timer would flag a false write failure
+    // (the file already holds exactly these values: nothing to persist).
+    if (settingsFile.text() === content) return
     root.settingsSaving = true
-    settingsFile.setText(JSON.stringify(root.settingsObject(), null, 2) + "\n")
+    settingsFile.setText(content)
   }
 
   function setPollInterval(minutes) {
@@ -655,7 +660,11 @@ Panel {
   Timer {
     interval: 3000
     running: root.settingsSaving
-    onTriggered: root.settingsSaveFailed = true
+    onTriggered: {
+      // Release the saving flag so the next user action can retry the write.
+      root.settingsSaving = false
+      root.settingsSaveFailed = true
+    }
   }
 
   // This plugin's own manifest: the settings header shows the manager
@@ -1326,7 +1335,7 @@ Panel {
     bar: root.bar
     open: root.settingsOpen
     padding: Style.space(24)
-    contentWidth: settingsPopup.fittedContentWidth(Style.space(360))
+    contentWidth: settingsPopup.fittedContentWidth(Style.space(430))
     contentHeight: settingsPopup.fittedContentHeight(settingsColumn.implicitHeight, Style.space(560))
 
     Column {
@@ -1506,8 +1515,12 @@ Panel {
       // highlighted in accent, above half-width buttons that open the
       // store page in the first installed browser of that family. One
       // grid (text row, button row) so the rows size to their tallest
-      // cell and the buttons align.
+      // cell and the buttons align. The cells take an explicit equal
+      // half width (the grid's fill alone sizes columns to content, which
+      // makes the two store buttons uneven). RichText is required: the
+      // StyledText format silently drops the span color.
       GridLayout {
+        id: spStoreGrid
         width: settingsColumn.width
         columns: 2
         columnSpacing: Style.spacing.controlGap
@@ -1515,8 +1528,9 @@ Panel {
 
         Text {
           Layout.fillWidth: true
+          Layout.preferredWidth: (spStoreGrid.width - spStoreGrid.columnSpacing) / 2
           wrapMode: Text.Wrap
-          textFormat: Text.StyledText
+          textFormat: Text.RichText
           text: root.chromeSupportHtml
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -1524,8 +1538,9 @@ Panel {
         }
         Text {
           Layout.fillWidth: true
+          Layout.preferredWidth: (spStoreGrid.width - spStoreGrid.columnSpacing) / 2
           wrapMode: Text.Wrap
-          textFormat: Text.StyledText
+          textFormat: Text.RichText
           text: root.firefoxSupportHtml
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -1534,12 +1549,14 @@ Panel {
 
         BWButton {
           Layout.fillWidth: true
+          Layout.preferredWidth: (spStoreGrid.width - spStoreGrid.columnSpacing) / 2
           Layout.preferredHeight: Style.space(30)
           label: "Chrome Web Store"
           onClickedBw: root.openStore(root.chromeStoreUrl, root.chromeLaunchBin)
         }
         BWButton {
           Layout.fillWidth: true
+          Layout.preferredWidth: (spStoreGrid.width - spStoreGrid.columnSpacing) / 2
           Layout.preferredHeight: Style.space(30)
           label: "Firefox Add-ons"
           onClickedBw: root.openStore(root.firefoxStoreUrl, root.firefoxLaunchBin)
