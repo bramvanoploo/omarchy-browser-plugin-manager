@@ -1344,7 +1344,9 @@ Panel {
     Rectangle {
       width: bwSection.width
       radius: Style.cornerRadius
-      color: "#15151c"
+      // Same surface as the panel behind it (PopupCard draws
+      // Color.popups.background), so the list reads as part of the panel.
+      color: Color.popups.background
       height: Math.min(secColumn.implicitHeight + Style.space(16), Style.space(190))
       clip: true
       Flickable {
@@ -1375,14 +1377,17 @@ Panel {
                 id: secVersions
                 anchors.verticalCenter: parent.verticalCenter
                 text: modelData.installed + " \u2192 " + modelData.latest
-                color: Color.muted
+                // Highlighted (accent, bold) so the version bump and the
+                // arrow between them stand out in every updatable row.
+                color: Color.accent
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
+                font.bold: true
               }
               BWIconButton {
                 id: secButton
                 anchors.verticalCenter: parent.verticalCenter
-                label: "\uE2C9" // install (download) icon
+                label: "\uF148" // level-up (upgrade) icon
                 primary: true
                 onClickedBw: bwSection.pluginPicked(String(modelData.id))
               }
@@ -1835,15 +1840,6 @@ Panel {
         }
       }
 
-      BWLine {
-        width: settingsColumn.width
-        visible: root.updateCount > 0
-        text: root.updateCount + " installed plugin" + (root.updateCount === 1 ? " has" : "s have")
-          + " updates"
-          + (root.eligibleCount < root.updateCount
-            ? " \u00b7 " + root.eligibleCount + " updatable with the current verification setting"
-            : "")
-      }
       BWLine {
         width: settingsColumn.width
         visible: !root.updateChecking && !root.updateCheckFailed
