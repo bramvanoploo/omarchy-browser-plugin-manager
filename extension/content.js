@@ -144,6 +144,126 @@
 .pi-icon-uninstall::after {
   transform: rotate(-45deg);
 }
+/* Update: clockwise circular arrow (open ring + chevron head at the gap),
+ * same 13px currentColor line-art idiom as the other icons. */
+.pi-icon-update::before {
+  inset: 1px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  border-bottom-color: transparent;
+}
+.pi-icon-update::after {
+  right: 1px;
+  bottom: 2px;
+  width: 5px;
+  height: 5px;
+  border-bottom: 1px solid currentColor;
+  border-right: 1px solid currentColor;
+  transform: rotate(-45deg);
+}
+/* Diagonal UPDATE ribbon in the card's top-right corner. The corner box
+ * clips the rotated banner; overflow stays local to the box so the site's
+ * own tooltips (which overflow the card) are never cut off. */
+.pi-ribbon {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 96px;
+  height: 96px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 6;
+}
+.pi-ribbon > span {
+  position: absolute;
+  top: 16px;
+  right: -34px;
+  width: 128px;
+  transform: rotate(45deg);
+  background: var(--accent, #ffcead);
+  color: #17120d;
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  line-height: 1.8;
+  text-align: center;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 30%);
+}
+/* Update info panel: the desktop wizard shows no version details, so the
+ * extension owns the dialog. Page CSS tokens, square corners, mono type:
+ * it reads like the marketplace's own panels. */
+.pi-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgb(0 0 0 / 55%);
+}
+.pi-panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9001;
+  width: min(430px, calc(100vw - 48px));
+  box-sizing: border-box;
+  padding: 18px;
+  border: 1px solid var(--line-strong, #666666);
+  border-radius: 0;
+  background: var(--panel, #1b1b21);
+  color: var(--text, #dddddd);
+  font-family: var(--mono, monospace);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+}
+.pi-panel h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text, #dddddd);
+}
+.pi-panel-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+.pi-panel-badge {
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.pi-panel-badge-verified {
+  color: var(--stable, #b4c96f);
+}
+.pi-panel-badge-unverified {
+  color: var(--accent, #ffcead);
+}
+.pi-panel-desc {
+  margin: 12px 0 0;
+  font-family: var(--sans, sans-serif);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted, #999999);
+}
+.pi-panel-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.pi-panel-note {
+  margin: 12px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--stable, #b4c96f);
+}
+.pi-panel-note[data-error="1"] {
+  color: var(--accent, #ffcead);
+}
 /* Tooltip mirroring the marketplace's .control-tooltip: shown on hover/
  * focus of the button, anchored above its right edge. */
 .pi-tooltip {
@@ -297,6 +417,142 @@
     });
   }
 
+  // ---- Update ribbon + info panel ---------------------------------------
+  // An updatable card gets a diagonal UPDATE banner in its top-right corner
+  // (only when the host reports updateAvailable, i.e. the plugin is behind
+  // origin AND the "Update to unverified version" setting allows it: the
+  // host hides unverified updates entirely when the setting is off, so the
+  // extension never sees them). Clicking Update opens the info panel; its
+  // Update button summons the desktop wizard in update mode via the host.
+
+  function setRibbon(card, on) {
+    if (!card) return;
+    const existing = card.querySelector(":scope > .pi-ribbon");
+    if (!on) {
+      if (existing) existing.remove();
+      if (card.dataset.piRibbonPos) {
+        card.style.position = "";
+        delete card.dataset.piRibbonPos;
+      }
+      return;
+    }
+    if (existing) return;
+    if (getComputedStyle(card).position === "static") {
+      card.style.position = "relative";
+      card.dataset.piRibbonPos = "1";
+    }
+    const ribbon = document.createElement("span");
+    ribbon.className = "pi-ribbon";
+    ribbon.setAttribute("aria-hidden", "true");
+    const banner = document.createElement("span");
+    banner.textContent = "UPDATE";
+    ribbon.append(banner);
+    card.append(ribbon);
+  }
+
+  let panelNodes = null;
+  let panelKeydown = null;
+
+  function closePanel() {
+    if (!panelNodes) return;
+    panelNodes.backdrop.remove();
+    panelNodes.panel.remove();
+    if (panelKeydown) document.removeEventListener("keydown", panelKeydown);
+    panelKeydown = null;
+    panelNodes = null;
+  }
+
+  function openUpdatePanel(plugin, status) {
+    closePanel();
+    const backdrop = document.createElement("div");
+    backdrop.className = "pi-panel-backdrop";
+    const panel = document.createElement("div");
+    panel.className = "pi-panel";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    panel.setAttribute("aria-label", `Update ${plugin.name}`);
+
+    const title = document.createElement("h2");
+    title.textContent = plugin.name;
+
+    const row = document.createElement("div");
+    row.className = "pi-panel-row";
+    const versions = document.createElement("span");
+    versions.textContent = `Installed v${status.installedVersion || "?"} → Update to v${status.latestVersion || "?"}`;
+    const badge = document.createElement("span");
+    badge.className = "pi-panel-badge "
+      + (status.verified ? "pi-panel-badge-verified" : "pi-panel-badge-unverified");
+    badge.textContent = status.verified ? "verified" : "unverified";
+    row.append(versions, badge);
+
+    panel.append(title, row);
+    if (plugin.description) {
+      const desc = document.createElement("p");
+      desc.className = "pi-panel-desc";
+      desc.textContent = plugin.description;
+      panel.append(desc);
+    }
+
+    const foot = document.createElement("div");
+    foot.className = "pi-panel-foot";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "pi-button";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", closePanel);
+    const update = document.createElement("button");
+    update.type = "button";
+    update.className = "pi-button pi-button-danger";
+    update.textContent = "Update";
+    foot.append(cancel, update);
+
+    const note = document.createElement("p");
+    note.className = "pi-panel-note";
+    note.hidden = true;
+
+    panel.append(foot, note);
+    document.body.append(backdrop, panel);
+
+    const dismiss = (event) => {
+      if (event.key === "Escape") closePanel();
+    };
+    document.addEventListener("keydown", dismiss);
+    panelKeydown = dismiss;
+    backdrop.addEventListener("click", closePanel);
+
+    update.addEventListener("click", async () => {
+      update.disabled = true;
+      cancel.disabled = true;
+      const response = await talkToHost({
+        type: "update",
+        id: plugin.id,
+        repo: plugin.repo,
+        name: plugin.name,
+      }, HOST_ACTION_TIMEOUT_MS);
+      note.hidden = false;
+      if (response && response.ok) {
+        foot.remove();
+        note.textContent = "Confirm the update in the Omarchy window.";
+        setTimeout(closePanel, 4000);
+      } else {
+        update.disabled = false;
+        cancel.disabled = false;
+        note.dataset.error = "1";
+        note.textContent = `Could not start the update (${(response && response.reason) || "no-response"}).`;
+      }
+    });
+    update.focus();
+  }
+
+  function wireUpdateButton(button, plugin, status) {
+    button.addEventListener("click", () => openUpdatePanel(plugin, status));
+  }
+
+  function detailCardFor(copy) {
+    return copy.closest(".command-panel, .panel, .card, section, article, li")
+      || copy.parentElement;
+  }
+
   function mountButtons(plugin, state) {
     // The marketplace renders a Copy button in the command panel head; we
     // group our buttons directly left of it and let it keep its own node
@@ -327,13 +583,23 @@
         enabled ? "pi-icon-disable" : "pi-icon-enable"
       );
       wireAction(toggle, plugin, () => (enabled ? "disable" : "enable"));
-      const uninstall = makeButton("Uninstall", "Uninstall this plugin", "pi-button-danger", "pi-icon-uninstall");
-      wireAction(uninstall, plugin, "uninstall");
-      buttons.push(toggle, uninstall);
+      buttons.push(toggle);
+      if (state.updateAvailable) {
+        // Updatable (and allowed by the verification setting, see the host):
+        // Update replaces Uninstall and opens the info panel first.
+        const update = makeButton("Update", "Update this plugin", "pi-button-danger", "pi-icon-update");
+        wireUpdateButton(update, plugin, state);
+        buttons.push(update);
+      } else {
+        const uninstall = makeButton("Uninstall", "Uninstall this plugin", "pi-button-danger", "pi-icon-uninstall");
+        wireAction(uninstall, plugin, "uninstall");
+        buttons.push(uninstall);
+      }
     }
 
     head.insertBefore(group, copy);
     group.append(...buttons, copy);
+    setRibbon(detailCardFor(copy), Boolean(state.installed && state.updateAvailable));
     mounted = true;
     lastState = state;
   }
@@ -355,6 +621,7 @@
       group.parentElement.insertBefore(copy, group);
       group.remove();
     }
+    setRibbon(detailCardFor(copy), false);
     mounted = false;
     mountButtons(plugin, state);
   }
@@ -365,7 +632,9 @@
     try {
       const state = await talkToHost({ type: "status", id: PLUGIN_ID }, HOST_STATUS_TIMEOUT_MS);
       if (!state || !state.ok || !lastState) return;
-      if (state.installed !== lastState.installed || state.enabled !== lastState.enabled) {
+      if (state.installed !== lastState.installed
+        || state.enabled !== lastState.enabled
+        || state.updateAvailable !== lastState.updateAvailable) {
         lastState = state;
         remountButtons(plugin, state);
       }

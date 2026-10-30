@@ -42,7 +42,135 @@
 .card-install.pi-card-install:hover { color: var(--stable, #b4c96f); background: var(--panel-2, rgba(127, 127, 127, 0.12)); }
 .card-install.pi-card-uninstall { color: var(--accent, #ffcead); }
 .card-install.pi-card-uninstall:hover { color: var(--accent, #ffcead); background: var(--panel-2, rgba(127, 127, 127, 0.12)); }
+.card-install.pi-card-update { color: var(--accent, #ffcead); }
+.card-install.pi-card-update:hover { color: var(--accent, #ffcead); background: var(--panel-2, rgba(127, 127, 127, 0.12)); }
 .card-install.pi-card-button:disabled { opacity: 0.55; cursor: default; }
+/* Update icon + ribbon + info panel: identical line-art, banner and dialog
+ * to the plugin pages (icons draw with currentColor). */
+.pi-icon-update::before {
+  inset: 1px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  border-bottom-color: transparent;
+}
+.pi-icon-update::after {
+  right: 1px;
+  bottom: 2px;
+  width: 5px;
+  height: 5px;
+  border-bottom: 1px solid currentColor;
+  border-right: 1px solid currentColor;
+  transform: rotate(-45deg);
+}
+.pi-ribbon {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 96px;
+  height: 96px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 6;
+}
+.pi-ribbon > span {
+  position: absolute;
+  top: 16px;
+  right: -34px;
+  width: 128px;
+  transform: rotate(45deg);
+  background: var(--accent, #ffcead);
+  color: #17120d;
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  line-height: 1.8;
+  text-align: center;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 30%);
+}
+.pi-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgb(0 0 0 / 55%);
+}
+.pi-panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9001;
+  width: min(430px, calc(100vw - 48px));
+  box-sizing: border-box;
+  padding: 18px;
+  border: 1px solid var(--line-strong, #666666);
+  border-radius: 0;
+  background: var(--panel, #1b1b21);
+  color: var(--text, #dddddd);
+  font-family: var(--mono, monospace);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+}
+.pi-panel h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text, #dddddd);
+}
+.pi-panel-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+.pi-panel-badge {
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.pi-panel-badge-verified { color: var(--stable, #b4c96f); }
+.pi-panel-badge-unverified { color: var(--accent, #ffcead); }
+.pi-panel-desc {
+  margin: 12px 0 0;
+  font-family: var(--sans, sans-serif);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted, #999999);
+}
+.pi-panel-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.pi-panel-foot .pi-panel-button {
+  display: inline-flex;
+  position: relative;
+  min-height: 25px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong, #666666);
+  border-radius: 0;
+  background: transparent;
+  align-items: center;
+  color: var(--text, #dddddd);
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+.pi-panel-foot .pi-panel-button:hover { background: var(--panel-2, rgba(127, 127, 127, 0.12)); }
+.pi-panel-foot .pi-panel-button:disabled { opacity: 0.55; }
+.pi-panel-foot .pi-panel-button-update { color: var(--accent, #ffcead); }
+.pi-panel-note {
+  margin: 12px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--stable, #b4c96f);
+}
+.pi-panel-note[data-error="1"] { color: var(--accent, #ffcead); }
 `;
 
   function injectStyles() {
@@ -170,17 +298,156 @@
     });
   }
 
-  function makeCardButton(plugin, installed) {
-    const verb = installed ? "Uninstall" : "Install";
+  // ---- Update ribbon + info panel ---------------------------------------
+  // An updatable card gets a diagonal UPDATE banner in its top-right corner
+  // and an Update icon-button (replacing Uninstall) that opens the info
+  // panel. updateAvailable comes from the host only when the plugin is
+  // behind origin AND the "Update to unverified version" setting allows it
+  // (the host hides unverified updates entirely when the setting is off).
+
+  function cardFor(node) {
+    return node.closest("li, .card, article, section, .command-panel, .panel")
+      || node.parentElement;
+  }
+
+  function setRibbon(card, on) {
+    if (!card) return;
+    const existing = card.querySelector(":scope > .pi-ribbon");
+    if (!on) {
+      if (existing) existing.remove();
+      if (card.dataset.piRibbonPos) {
+        card.style.position = "";
+        delete card.dataset.piRibbonPos;
+      }
+      return;
+    }
+    if (existing) return;
+    if (getComputedStyle(card).position === "static") {
+      card.style.position = "relative";
+      card.dataset.piRibbonPos = "1";
+    }
+    const ribbon = document.createElement("span");
+    ribbon.className = "pi-ribbon";
+    ribbon.setAttribute("aria-hidden", "true");
+    const banner = document.createElement("span");
+    banner.textContent = "UPDATE";
+    ribbon.append(banner);
+    card.append(ribbon);
+  }
+
+  let panelNodes = null;
+  let panelKeydown = null;
+
+  function closePanel() {
+    if (!panelNodes) return;
+    panelNodes.backdrop.remove();
+    panelNodes.panel.remove();
+    if (panelKeydown) document.removeEventListener("keydown", panelKeydown);
+    panelKeydown = null;
+    panelNodes = null;
+  }
+
+  function openUpdatePanel(plugin, status) {
+    closePanel();
+    const backdrop = document.createElement("div");
+    backdrop.className = "pi-panel-backdrop";
+    const panel = document.createElement("div");
+    panel.className = "pi-panel";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    panel.setAttribute("aria-label", `Update ${plugin.name}`);
+
+    const title = document.createElement("h2");
+    title.textContent = plugin.name;
+
+    const row = document.createElement("div");
+    row.className = "pi-panel-row";
+    const versions = document.createElement("span");
+    versions.textContent = `Installed v${status.installedVersion || "?"} → Update to v${status.latestVersion || "?"}`;
+    const badge = document.createElement("span");
+    badge.className = "pi-panel-badge "
+      + (status.verified ? "pi-panel-badge-verified" : "pi-panel-badge-unverified");
+    badge.textContent = status.verified ? "verified" : "unverified";
+    row.append(versions, badge);
+
+    panel.append(title, row);
+    if (plugin.description) {
+      const desc = document.createElement("p");
+      desc.className = "pi-panel-desc";
+      desc.textContent = plugin.description;
+      panel.append(desc);
+    }
+
+    const foot = document.createElement("div");
+    foot.className = "pi-panel-foot";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "pi-panel-button";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", closePanel);
+    const update = document.createElement("button");
+    update.type = "button";
+    update.className = "pi-panel-button pi-panel-button-update";
+    update.textContent = "Update";
+    foot.append(cancel, update);
+
+    const note = document.createElement("p");
+    note.className = "pi-panel-note";
+    note.hidden = true;
+
+    panel.append(foot, note);
+    document.body.append(backdrop, panel);
+
+    const dismiss = (event) => {
+      if (event.key === "Escape") closePanel();
+    };
+    document.addEventListener("keydown", dismiss);
+    panelKeydown = dismiss;
+    backdrop.addEventListener("click", closePanel);
+
+    update.addEventListener("click", async () => {
+      update.disabled = true;
+      cancel.disabled = true;
+      const response = await talkToHost({
+        type: "update",
+        id: plugin.id,
+        repo: plugin.repo,
+        name: plugin.name,
+      }, HOST_ACTION_TIMEOUT_MS);
+      note.hidden = false;
+      if (response && response.ok) {
+        foot.remove();
+        note.textContent = "Confirm the update in the Omarchy window.";
+        setTimeout(closePanel, 4000);
+      } else {
+        update.disabled = false;
+        cancel.disabled = false;
+        note.dataset.error = "1";
+        note.textContent = `Could not start the update (${(response && response.reason) || "no-response"}).`;
+      }
+    });
+    update.focus();
+  }
+
+  // The card's live update state: installed + behind, gate already applied
+  // by the host. Old hosts send no update fields: plain uninstall button.
+  function updateStatusFor(pluginId) {
+    const status = statuses && statuses.get(pluginId);
+    return status && status.installed && status.updateAvailable ? status : null;
+  }
+
+  function makeCardButton(plugin, installed, update) {
+    const verb = update ? "Update" : installed ? "Uninstall" : "Install";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "card-install has-control-tooltip pi-card-button "
-      + (installed ? "pi-card-uninstall" : "pi-card-install");
-    button.dataset.piState = installed ? "uninstall" : "install";
+      + (update ? "pi-card-update" : installed ? "pi-card-uninstall" : "pi-card-install");
+    button.dataset.piState = update ? "update" : installed ? "uninstall" : "install";
     button.dataset.pluginId = plugin.id;
     button.setAttribute("aria-label", `${verb} ${plugin.name}`);
     const icon = document.createElement("span");
-    icon.className = "pi-icon " + (installed ? "pi-icon-uninstall" : "pi-icon-install");
+    icon.className = "pi-icon "
+      + (update ? "pi-icon-update" : installed ? "pi-icon-uninstall" : "pi-icon-install");
     icon.setAttribute("aria-hidden", "true");
     const tip = document.createElement("span");
     tip.className = "control-tooltip";
@@ -188,7 +455,13 @@
     tip.setAttribute("aria-hidden", "true");
     tip.textContent = verb + " directly";
     button.append(icon, tip);
-    wireCardAction(button, plugin);
+    if (update) {
+      // Update goes through the info panel first (version + verification
+      // details); the panel's Update button summons the desktop wizard.
+      button.addEventListener("click", () => openUpdatePanel(plugin, update));
+    } else {
+      wireCardAction(button, plugin);
+    }
     return button;
   }
 
@@ -221,9 +494,11 @@
         copy.dataset.piSeen = "1";
         const plugin = pluginsById.get(copy.dataset.pluginId);
         if (!installable(plugin)) continue;
-        const installed = await isInstalled(plugin);
+        const update = updateStatusFor(plugin.id);
+        const installed = update ? true : await isInstalled(plugin);
         if (!copy.parentElement) continue;
-        copy.parentElement.insertBefore(makeCardButton(plugin, installed), copy);
+        copy.parentElement.insertBefore(makeCardButton(plugin, installed, update), copy);
+        setRibbon(cardFor(copy), Boolean(update));
       }
     } catch (_e) {
       pluginsById = null;
@@ -256,15 +531,17 @@
   function syncRendered() {
     if (!statuses || !pluginsById) return;
     const buttons = document.querySelectorAll(
-      'button.card-install[data-pi-state="install"], button.card-install[data-pi-state="uninstall"]'
+      'button.card-install[data-pi-state="install"], button.card-install[data-pi-state="uninstall"], button.card-install[data-pi-state="update"]'
     );
     for (const button of buttons) {
       const status = statuses.get(button.dataset.pluginId);
       const installed = Boolean(status && status.installed);
-      const wanted = installed ? "uninstall" : "install";
+      const update = updateStatusFor(button.dataset.pluginId);
+      const wanted = update ? "update" : installed ? "uninstall" : "install";
+      setRibbon(cardFor(button), Boolean(update));
       if (wanted === button.dataset.piState) continue;
       const plugin = pluginsById.get(button.dataset.pluginId);
-      if (plugin) button.replaceWith(makeCardButton(plugin, installed));
+      if (plugin) button.replaceWith(makeCardButton(plugin, installed, update));
     }
   }
 

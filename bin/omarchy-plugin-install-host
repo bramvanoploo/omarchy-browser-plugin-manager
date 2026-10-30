@@ -13,6 +13,16 @@
 #   {"type":"watch","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
 #   {"type":"watch","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather","paused":true}
 #   {"type":"unwatch","id":"acme.weather"}
+#   {"type":"update","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
+#   {"type":"updates"}
+#
+# "updates" answers the behind-set from a cached git-ancestry check (the same
+# omaplug-parity model the bar widget polls: fetch origin HEAD + merge-base),
+# decorated with the catalog's latest version and verification status. The
+# cache lives in the state dir and is refreshed by a detached worker behind
+# a non-blocking lock (status polling must never block on git). The
+# "Update to unverified version" setting (the bar's settings.json) is applied
+# here: with it off, unverified updates are hidden from every reply.
 #
 # This host NEVER installs anything itself. It validates a request against a
 # fresh fetch of the marketplace catalog, then summons the wizard overlay,
@@ -36,7 +46,7 @@ set -euo pipefail
 export LC_ALL=C.UTF-8
 
 HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
-HOST_VERSION="0.6.0"
+HOST_VERSION="0.7.0"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
 MAX_FRAME_BYTES=65536
@@ -45,6 +55,21 @@ MAX_FRAME_BYTES=65536
 # "unwatch" and by the host's exit trap.
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/$WIZARD_ID"
 WATCH_FILE="$STATE_DIR/browser-watch.json"
+# Update-detection cache: {checked, plugins:[{id,name,installedVersion,
+# latestVersion,verified}]} for every plugin whose git HEAD is behind origin
+# (all checks are cheap file reads for the extension; the git work runs in a
+# detached refresher). settings.json is the bar widget's file (shared):
+# {pollMinutes, allowUnverified}.
+UPDATE_CACHE_FILE="$STATE_DIR/update-cache.json"
+UPDATE_LOCK_FILE="$STATE_DIR/update-cache.lock"
+SETTINGS_FILE="$STATE_DIR/settings.json"
+UPDATE_TTL_SECONDS=300
+# After an action is summoned (install/uninstall/update/toggle) the wizard
+# does the git work over the next seconds, so the behind-set is rechecked in
+# a fast window instead of waiting out the 5-minute TTL.
+UPDATE_ACTION_STAMP="$STATE_DIR/update-action.stamp"
+UPDATE_FAST_TTL_SECONDS=5
+UPDATE_FAST_WINDOW_SECONDS=120
 
 byte_length() {
   local LC_ALL=C
@@ -85,6 +110,149 @@ plugin_status() {
       end
   ' <<<"$raw" 2>/dev/null) || out='{"installed":false,"enabled":false,"firstParty":false}'
   [[ -n $out ]] || out='{"installed":false,"enabled":false,"firstParty":false}'
+  printf '%s\n' "$out"
+}
+
+# The bar widget's "Update to unverified version" toggle (settings.json in
+# the state dir, written by BarWatch.qml). Prints "true" or "false"; a
+# missing or corrupt file means the default: verified-only.
+allow_unverified_setting() {
+  local v
+  v=$(jq -r '.allowUnverified == true' "$SETTINGS_FILE" 2>/dev/null) || v="false"
+  [[ $v == "true" ]] || v="false"
+  printf '%s' "$v"
+}
+
+# Age of the update cache in seconds (huge when absent/corrupt → refresh).
+update_cache_age() {
+  local ts now
+  ts=$(jq -r '.checked // 0' "$UPDATE_CACHE_FILE" 2>/dev/null) || ts=0
+  [[ $ts =~ ^[0-9]+$ ]] || ts=0
+  now=$(date +%s)
+  printf '%s' "$(( now - ts ))"
+}
+
+# The behind-set as [{id,name,installedVersion,latestVersion,verified}]:
+# omaplug's git-ancestry model (identical rules to the bar widget's poll):
+# skip symlinks, non-git dirs, detached HEADs, dirty trees; fetch origin
+# HEAD; behind = HEAD is a strict ancestor of the fetched HEAD. The
+# 15 MB catalog rides in on stdin (--argjson on argv fails E2BIG) and only
+# decorates: latest version + verified flag. A failed catalog fetch keeps
+# the last-good cache (offline never invents an update).
+run_update_check() {
+  local list="" catalog="" rows="" id d head_sha remote ver name plugins tmp ts
+  export GIT_TERMINAL_PROMPT=0
+  export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}"
+  local plug_dir="$HOME/.config/omarchy/plugins"
+  list=$(omarchy plugin list --json 2>/dev/null) || list="[]"
+  [[ -n $list ]] || list="[]"
+  catalog=$(curl -fsSL --proto '=https' --max-time 30 --max-filesize 16777216 "$CATALOG_URL" 2>/dev/null) || catalog=""
+  [[ -n $catalog ]] || return 0
+  rows=""
+  for id in $(jq -r '(if type == "array" then . else [] end)[] | select(type == "object" and ((.firstParty // false) | not)) | .id // empty' <<<"$list" 2>/dev/null); do
+    case "$id" in *[!a-z0-9.-]*|.*|*..*) continue ;; esac
+    d="$plug_dir/$id"
+    [[ -L $d ]] && continue
+    [[ -d $d/.git ]] || continue
+    head_sha=$(git -C "$d" rev-parse HEAD 2>/dev/null) || continue
+    git -C "$d" remote get-url origin >/dev/null 2>&1 || continue
+    git -C "$d" symbolic-ref --quiet HEAD >/dev/null 2>&1 || continue
+    [[ -z "$(git -C "$d" status --porcelain --untracked-files=normal 2>/dev/null)" ]] || continue
+    timeout 15 git -C "$d" fetch --quiet origin HEAD 2>/dev/null || continue
+    remote=$(git -C "$d" rev-parse --verify FETCH_HEAD 2>/dev/null) || continue
+    if [[ -n $remote && $head_sha != "$remote" ]] && git -C "$d" merge-base --is-ancestor "$head_sha" "$remote" 2>/dev/null; then
+      ver=$(jq -r '.version // ""' "$d/manifest.json" 2>/dev/null) || ver=""
+      name=$(jq -r '.name // ""' "$d/manifest.json" 2>/dev/null | tr -d '\t\r\n') || name=""
+      rows+=$(printf '%s\t%s\t%s' "$id" "$ver" "$name")$'\n'
+    fi
+  done
+  plugins=$(printf '%s' "$catalog" | jq -c --arg rows "$rows" '
+    (.plugins // []) as $pl
+    | [ $rows | split("\n")[] | select(length > 0) | split("\t")
+        | {id: .[0], installedVersion: .[1], name: (if length > 2 then .[2] else "" end)}
+      ]
+    | map(. as $p
+      | ($pl | map(select(type == "object" and .id == $p.id)) | first) as $e
+      | {id: $p.id,
+        name: (if $p.name != "" then $p.name else $p.id end),
+        installedVersion: ($p.installedVersion | tostring),
+        latestVersion: ((if $e == null then "" else ($e.version // "") end) | tostring),
+        verified: ((if $e == null then "" else ($e.verificationStatus // "") end) | tostring) == "verified"})
+  ' 2>/dev/null) || plugins="[]"
+  [[ ${plugins:0:1} == "[" ]] || plugins="[]"
+  ts=$(date +%s)
+  mkdir -p "$STATE_DIR" || return 0
+  tmp="$UPDATE_CACHE_FILE.tmp.$$"
+  jq -cn --argjson ts "$ts" --argjson plugins "$plugins" \
+    '{checked:$ts, plugins:$plugins}' >"$tmp" 2>/dev/null && mv -f "$tmp" "$UPDATE_CACHE_FILE"
+  return 0
+}
+
+# Effective cache TTL: the normal 5 minutes, shortened to a few seconds for
+# two minutes after an action was summoned (the wizard is doing git work in
+# the background right then). The stamp cleans itself up when the window ends.
+effective_update_ttl() {
+  local now mtime
+  [[ -e $UPDATE_ACTION_STAMP ]] || { printf '%s' "$UPDATE_TTL_SECONDS"; return 0; }
+  now=$(date +%s)
+  mtime=$(stat -c %Y "$UPDATE_ACTION_STAMP" 2>/dev/null) || mtime=0
+  if (( now - mtime < UPDATE_FAST_WINDOW_SECONDS )); then
+    printf '%s' "$UPDATE_FAST_TTL_SECONDS"
+  else
+    rm -f "$UPDATE_ACTION_STAMP" 2>/dev/null || true
+    printf '%s' "$UPDATE_TTL_SECONDS"
+  fi
+}
+
+# Kick a detached refresh when the cache is stale. The non-blocking flock
+# keeps concurrent polls to a single refresher (status polls arrive every
+# second); the child must never inherit the native-messaging stdin/stdout.
+maybe_refresh_updates() {
+  (( $(update_cache_age) < $(effective_update_ttl) )) && return 0
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+  (
+    exec 9>"$UPDATE_LOCK_FILE" 2>/dev/null || exit 0
+    flock -n 9 || exit 0
+    run_update_check
+  ) </dev/null >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+  return 0
+}
+
+# Cached behind-set as compact JSON array (all entries are behind; the
+# verification gate is applied by the caller/merges).
+cached_update_plugins() {
+  local out
+  out=$(jq -c '.plugins // []' "$UPDATE_CACHE_FILE" 2>/dev/null) || out="[]"
+  [[ ${out:0:1} == "[" ]] || out="[]"
+  printf '%s\n' "$out"
+}
+
+# Merge cached update info into one status object (or an array of them).
+# With allowUnverified off, unverified updates are hidden entirely: the
+# extension never learns the plugin is behind, exactly like the bar badge.
+merge_updates_into() {
+  local json="$1" allow="$2" cache="$3"
+  local out
+  out=$(jq -c --argjson allow "$allow" --argjson cache "$cache" '
+    def decorate($u):
+      . + (if $u != null and ($allow or ($u.verified == true)) then
+             {updateAvailable: true,
+              installedVersion: ($u.installedVersion // ""),
+              latestVersion: ($u.latestVersion // ""),
+              verified: ($u.verified == true)}
+           else {updateAvailable: false} end);
+    if type == "array" then
+      map(. as $p
+        | ($cache | map(select(type == "object" and .id == $p.id)) | first) as $u
+        | decorate($u))
+    else
+      . as $s
+      | ($cache | map(select(type == "object" and .id == ($s.id // ""))) | first) as $u
+      | decorate($u)
+    end
+  ' <<<"$json" 2>/dev/null) || out="$json"
+  [[ -n $out ]] || out="$json"
   printf '%s\n' "$out"
 }
 
@@ -142,6 +310,12 @@ validate_action() {
       }
       ;;
     uninstall)
+      jq -e '.installed == true' >/dev/null <<<"$status" || {
+        echo "not-installed"
+        return 1
+      }
+      ;;
+    update)
       jq -e '.installed == true' >/dev/null <<<"$status" || {
         echo "not-installed"
         return 1
@@ -312,21 +486,46 @@ main() {
       status)
         id=$(jq -r 'if type == "object" and (.id | type) == "string" then .id else "" end' <<<"$payload" 2>/dev/null || true)
         local_status=$(plugin_status "$id")
+        maybe_refresh_updates
+        # plugin_status has no id field; bind the requested id so the
+        # update-info merge can match the cache entry.
+        local_status=$(jq -c --arg id "$id" '. + {id: $id}' <<<"$local_status" 2>/dev/null) || local_status=$(plugin_status "$id")
+        local_status=$(merge_updates_into "$local_status" "$(allow_unverified_setting)" "$(cached_update_plugins)")
         send_frame "$(jq -c '. + {ok:true}' <<<"$local_status")"
         ;;
       status_all)
         # Batch report for the catalog page: every installed user (non
-        # first-party) plugin in one call. Plugins missing from the list
-        # are not installed.
+        # first-party) plugin in one call, decorated with the cached
+        # update info (verification setting applied). Plugins missing
+        # from the list are not installed.
         all_status=$(omarchy plugin list --json 2>/dev/null | jq -c \
           '[ (if type == "array" then . else [] end)[] | select(type == "object" and ((.firstParty // false) | not)) | {id: .id, installed: true, enabled: (.enabled == true)} ]' \
           2>/dev/null) || all_status="[]"
         [[ ${all_status:-} == "["* ]] || all_status="[]"
+        maybe_refresh_updates
+        all_status=$(merge_updates_into "$all_status" "$(allow_unverified_setting)" "$(cached_update_plugins)")
         send_frame "{\"ok\":true,\"plugins\":$all_status}"
         ;;
-      install|uninstall|enable|disable)
+      updates)
+        # The behind-set for the extension's update UI: the cached
+        # git-ancestry check, gate applied (unverified entries dropped
+        # when the setting is off). A stale cache answers immediately and
+        # kicks the detached refresher; the next poll sees fresh data.
+        maybe_refresh_updates
+        local_status=$(jq -cn --argjson allow "$(allow_unverified_setting)" \
+          --argjson plugins "$(cached_update_plugins)" \
+          '{ok:true, plugins: ($plugins | map(select($allow or (.verified == true))))}' 2>/dev/null) \
+          || local_status='{"ok":true,"plugins":[]}'
+        send_frame "$local_status"
+        ;;
+      install|uninstall|enable|disable|update)
         if reason=$(validate_action "$payload" "$type"); then
           if summon_wizard "$payload" "$type"; then
+            # The wizard will mutate the plugin clone: drop the cache and
+            # enter the fast recheck window so the badge follows within
+            # seconds of the wizard finishing.
+            rm -f "$UPDATE_CACHE_FILE" 2>/dev/null || true
+            touch "$UPDATE_ACTION_STAMP" 2>/dev/null || true
             reply_ok
           else
             reply_err "wizard-not-available (is bramvanoploo.omarchy-browser-plugin-manager enabled in the shell?)"
