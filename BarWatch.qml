@@ -113,9 +113,12 @@ Panel {
 
   // Marketplace catalog entry for the watched plugin (display only: the
   // preview thumbnail, description, author, version). Fetched while the
-  // popup is open, cached per plugin id.
+  // popup is open, cached per plugin id. catalogLoading marks the fetch in
+  // flight: the thumbnail box shows its 16:9 loading placeholder while true,
+  // so the panel height is reserved and never jumps when the image lands.
   property var catalogEntry: null
   property string catalogForId: ""
+  property bool catalogLoading: false
 
   readonly property string catalogThumb: {
     var e = root.catalogEntry
@@ -242,6 +245,7 @@ Panel {
     if (root.catalogForId === id) return
     root.catalogForId = id
     root.catalogEntry = null
+    root.catalogLoading = true
     catalogProc.running = true
   }
 
@@ -436,10 +440,14 @@ Panel {
           entry = null
         }
         root.catalogEntry = entry
+        root.catalogLoading = false
       }
     }
     onExited: function (exitCode) {
-      if (exitCode !== 0) root.catalogEntry = null
+      if (exitCode !== 0) {
+        root.catalogEntry = null
+        root.catalogLoading = false
+      }
     }
   }
 
@@ -656,13 +664,19 @@ Panel {
       }
 
       // Preview thumbnail from the marketplace catalog, card proportions.
+      // The box is shown from the moment the panel opens on a live plugin
+      // (loading placeholder) and keeps its height until the image has
+      // landed: the panel never jumps mid-read.
       Rectangle {
-        visible: root.popupLive && root.catalogThumb !== ""
+        id: thumbBox
+        visible: root.popupLive && (root.catalogThumb !== "" || root.catalogLoading)
         width: popupColumn.width
         // Proportional height at the full panel width, capped at the
         // marketplace card's 16:9: wide-short thumbs (e.g. 499x48 banners)
         // get their own short box; taller images (e.g. 320x720) cap here
-        // and overflow, hidden by clip.
+        // and overflow, hidden by clip. While the catalog entry is not in
+        // yet, catalogThumbNative is the cap itself, so the placeholder
+        // reserves exactly the 16:9 box most cards end up having.
         height: visible
           ? Math.round((width - 2) * Math.min(root.catalogThumbNative, root.catalogThumbRatio)) + 2
           : 0
@@ -673,6 +687,7 @@ Panel {
         clip: true
 
         Image {
+          id: thumbImage
           // Full-width, proportional (h/w from the catalog entry), anchored
           // at the TOP: only images that exceed the capped box height
           // overflow, and the box's clip hides the BOTTOM overflow, so the
@@ -687,6 +702,44 @@ Panel {
           asynchronous: true
           cache: true
           smooth: true
+        }
+
+        // Loading placeholder: a soft highlight band sweeping over the box
+        // while the catalog entry is being fetched and the thumbnail image
+        // is still decoding; it disappears the moment the image is Ready.
+        Rectangle {
+          id: thumbShimmer
+          anchors.fill: parent
+          radius: Style.cornerRadius
+          color: "transparent"
+          clip: true
+          visible: thumbBox.visible
+            && (root.catalogLoading
+                || root.catalogThumb === ""
+                || thumbImage.status !== Image.Ready)
+
+          Rectangle {
+            id: shimmerBand
+            width: Math.round(thumbBox.width * 0.45)
+            height: parent.height
+            gradient: Gradient {
+              orientation: Gradient.Horizontal
+              GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0) }
+              GradientStop { position: 0.5; color: Util.alpha(Color.foreground, 0.07) }
+              GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, 0) }
+            }
+            SequentialAnimation on x {
+              running: thumbShimmer.visible
+              loops: Animation.Infinite
+              NumberAnimation {
+                from: -shimmerBand.width
+                to: thumbBox.width
+                duration: 1100
+                easing: Easing.InOutQuad
+              }
+              PauseAnimation { duration: 350 }
+            }
+          }
         }
       }
 
