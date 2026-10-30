@@ -1432,86 +1432,82 @@ Panel {
 
       // Browser stores: half-width buttons opening the extension listing
       // for each family, with the supported browsers named above and an
-      // installed indicator from the PATH probe.
+      // installed indicator from the PATH probe. One grid (text row,
+      // indicator row, button row) so the buttons align at the same
+      // height: rows size to their tallest cell, and the indicator keeps
+      // its space when a family is not installed (opacity placeholder,
+      // since invisible items drop out of the grid).
       GridLayout {
         width: settingsColumn.width
         columns: 2
         columnSpacing: Style.spacing.controlGap
+        rowSpacing: Style.space(6)
 
-        Column {
+        Text {
           Layout.fillWidth: true
-          spacing: Style.space(6)
+          wrapMode: Text.Wrap
+          text: root.chromeSupportText
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          color: Color.muted
+        }
+        Text {
+          Layout.fillWidth: true
+          wrapMode: Text.Wrap
+          text: root.firefoxSupportText
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          color: Color.muted
+        }
 
+        Row {
+          opacity: root.chromeInstalled ? 1 : 0
+          spacing: Style.space(6)
+          Rectangle {
+            width: Style.space(7)
+            height: width
+            radius: width / 2
+            color: Color.accent
+            anchors.verticalCenter: parent.verticalCenter
+          }
           Text {
-            width: parent.width
-            wrapMode: Text.Wrap
-            text: root.chromeSupportText
+            text: "installed on this system"
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
-            color: Color.muted
+            color: Color.accent
+            anchors.verticalCenter: parent.verticalCenter
           }
-          Row {
-            spacing: Style.space(6)
-            visible: root.chromeInstalled
-            Rectangle {
-              width: Style.space(7)
-              height: width
-              radius: width / 2
-              color: Color.accent
-              anchors.verticalCenter: parent.verticalCenter
-            }
-            Text {
-              text: "installed on this system"
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-              color: Color.accent
-              anchors.verticalCenter: parent.verticalCenter
-            }
+        }
+        Row {
+          opacity: root.firefoxInstalled ? 1 : 0
+          spacing: Style.space(6)
+          Rectangle {
+            width: Style.space(7)
+            height: width
+            radius: width / 2
+            color: Color.accent
+            anchors.verticalCenter: parent.verticalCenter
           }
-          BWButton {
-            width: parent.width
-            height: Style.space(30)
-            label: "Chrome Web Store"
-            onClickedBw: root.openStore(root.chromeStoreUrl)
+          Text {
+            text: "installed on this system"
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            color: Color.accent
+            anchors.verticalCenter: parent.verticalCenter
           }
         }
 
-        Column {
+        BWButton {
           Layout.fillWidth: true
-          spacing: Style.space(6)
-
-          Text {
-            width: parent.width
-            wrapMode: Text.Wrap
-            text: root.firefoxSupportText
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            color: Color.muted
-          }
-          Row {
-            spacing: Style.space(6)
-            visible: root.firefoxInstalled
-            Rectangle {
-              width: Style.space(7)
-              height: width
-              radius: width / 2
-              color: Color.accent
-              anchors.verticalCenter: parent.verticalCenter
-            }
-            Text {
-              text: "installed on this system"
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-              color: Color.accent
-              anchors.verticalCenter: parent.verticalCenter
-            }
-          }
-          BWButton {
-            width: parent.width
-            height: Style.space(30)
-            label: "Firefox Add-ons"
-            onClickedBw: root.openStore(root.firefoxStoreUrl)
-          }
+          Layout.preferredHeight: Style.space(30)
+          label: "Chrome Web Store"
+          onClickedBw: root.openStore(root.chromeStoreUrl)
+        }
+        BWButton {
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(30)
+          label: "Firefox Add-ons"
+          onClickedBw: root.openStore(root.firefoxStoreUrl)
         }
       }
     }
