@@ -1,9 +1,19 @@
 # Install without the browser stores
 
-Use this archive when you do not want to install the browser extension from
-the Chrome Web Store or AMO (the stores carry identical code). Unpack it
-wherever you want to keep it, e.g. `~/apps/`; all paths below are relative
-to the unpacked directory.
+Use this when you do not want to install the browser extension from the
+Chrome Web Store or AMO (the stores carry identical code). Download the
+packages from the [GitHub releases page](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/latest):
+
+- `omarchy-browser-plugin-manager-<version>-<date>.zip` — full source +
+  native host setup (this is "this archive" below). Unpack it wherever you
+  want to keep it, e.g. `~/apps/`; all paths below are relative to the
+  unpacked directory.
+- `omarchy-browser-plugin-manager-<version>-signed.xpi` — Firefox add-on
+  signed for release Firefox builds (see step 2).
+- `omarchy-browser-plugin-manager-<version>.xpi` — unsigned Firefox add-on
+  for ESR / Developer Edition / Nightly (see step 2).
+- `omarchy-browser-plugin-manager-<version>-chrome.zip` — Chrome-family
+  packed build with the pinned key (see step 2).
 
 ## 1. Register the native messaging host
 
