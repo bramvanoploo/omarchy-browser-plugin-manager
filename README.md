@@ -2,6 +2,13 @@
 
 One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org).
 
+> **Note:** The Firefox and Chromium browser extensions are currently under
+> review and will be available soon from their respective official sources
+> (Firefox Add-ons and the Chrome Web Store). Until then, both extensions can
+> be downloaded from the assets section of the
+> [latest release](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/latest)
+> and installed manually — see [INSTALL.md](INSTALL.md).
+
 ![Omarchy Browser Plugin Manager](preview.png)
 
 Clicking **Install** on a plugin page opens a wizard overlay on the desktop:
