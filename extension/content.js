@@ -161,8 +161,8 @@
   border-right: 1px solid currentColor;
   transform: rotate(-45deg);
 }
-/* Diagonal UPDATE ribbon in the card's top-right corner. The corner box
- * clips the rotated banner; overflow stays local to the box so the site's
+/* Diagonal UPDATE/INSTALLED ribbon in the card's top-right corner. The corner
+ * box clips the rotated banner; overflow stays local to the box so the site's
  * own tooltips (which overflow the card) are never cut off. */
 .pi-ribbon {
   position: absolute;
@@ -189,6 +189,9 @@
   line-height: 1.8;
   text-align: center;
   box-shadow: 0 4px 14px rgb(0 0 0 / 30%);
+}
+.pi-ribbon--stable > span {
+  background: var(--stable, #b4c96f);
 }
 /* Update info panel: the desktop wizard shows no version details, so the
  * extension owns the dialog. Page CSS tokens, square corners, mono type:
@@ -425,10 +428,13 @@
   // extension never sees them). Clicking Update opens the info panel; its
   // Update button summons the desktop wizard in update mode via the host.
 
-  function setRibbon(card, on) {
+  // Diagonal corner banner: kind is "update" (behind origin), "installed"
+  // (installed, up to date), or null to remove.  Kind changes swap the banner
+  // in place (same corner box, different color and text).
+  function setRibbon(card, kind) {
     if (!card) return;
     const existing = card.querySelector(":scope > .pi-ribbon");
-    if (!on) {
+    if (!kind) {
       if (existing) existing.remove();
       if (card.dataset.piRibbonPos) {
         card.style.position = "";
@@ -436,18 +442,63 @@
       }
       return;
     }
-    if (existing) return;
+    const className = kind === "installed" ? "pi-ribbon pi-ribbon--stable" : "pi-ribbon";
+    const text = kind === "update" ? "UPDATE" : "INSTALLED";
+    if (existing) {
+      if (existing.className === className) return;
+      existing.className = className;
+      existing.firstChild.textContent = text;
+      return;
+    }
     if (getComputedStyle(card).position === "static") {
       card.style.position = "relative";
       card.dataset.piRibbonPos = "1";
     }
     const ribbon = document.createElement("span");
-    ribbon.className = "pi-ribbon";
+    ribbon.className = className;
     ribbon.setAttribute("aria-hidden", "true");
     const banner = document.createElement("span");
-    banner.textContent = "UPDATE";
+    banner.textContent = text;
     ribbon.append(banner);
     card.append(ribbon);
+  }
+
+  // The detail page's ribbon host: the big preview image (top-right corner,
+  // where the site shows "Expand image"), falling back to the Copy button.
+  function detailRibbonTarget() {
+    return document.querySelector("#detail-content .detail-preview")
+      || document.querySelector("#detail-content [data-install-copy]");
+  }
+
+  // Size gate: the corner box is 96x96, so a preview smaller than that gets
+  // no ribbon.  A ResizeObserver keeps the gate honest through responsive
+  // relayout.
+  const RIBBON_MIN_SIZE = 96;
+  let ribbonTarget = null;
+  let ribbonKind = null;
+  let ribbonResizeObserver = null;
+
+  function applyRibbonSize() {
+    if (!ribbonTarget) return;
+    const fits = ribbonTarget.offsetWidth >= RIBBON_MIN_SIZE
+      && ribbonTarget.offsetHeight >= RIBBON_MIN_SIZE;
+    setRibbon(ribbonTarget, fits ? ribbonKind : null);
+  }
+
+  function mountDetailRibbon(target, kind) {
+    if (ribbonTarget && ribbonTarget !== target) setRibbon(ribbonTarget, null);
+    ribbonTarget = target || null;
+    ribbonKind = kind || null;
+    if (ribbonResizeObserver) {
+      ribbonResizeObserver.disconnect();
+      ribbonResizeObserver = null;
+    }
+    if (!ribbonTarget) return;
+    applyRibbonSize();
+    if (typeof ResizeObserver === "function") {
+      ribbonResizeObserver = new ResizeObserver(() => applyRibbonSize());
+      ribbonResizeObserver.observe(ribbonTarget);
+    }
   }
 
   let panelNodes = null;
@@ -548,11 +599,6 @@
     button.addEventListener("click", () => openUpdatePanel(plugin, status));
   }
 
-  function detailCardFor(copy) {
-    return copy.closest(".command-panel, .panel, .card, section, article, li")
-      || copy.parentElement;
-  }
-
   function mountButtons(plugin, state) {
     // The marketplace renders a Copy button in the command panel head; we
     // group our buttons directly left of it and let it keep its own node
@@ -599,7 +645,8 @@
 
     head.insertBefore(group, copy);
     group.append(...buttons, copy);
-    setRibbon(detailCardFor(copy), Boolean(state.installed && state.updateAvailable));
+    mountDetailRibbon(detailRibbonTarget(),
+      state.installed && state.updateAvailable ? "update" : state.installed ? "installed" : null);
     mounted = true;
     lastState = state;
   }
@@ -621,7 +668,7 @@
       group.parentElement.insertBefore(copy, group);
       group.remove();
     }
-    setRibbon(detailCardFor(copy), false);
+    setRibbon(detailRibbonTarget(), null);
     mounted = false;
     mountButtons(plugin, state);
   }
@@ -748,7 +795,22 @@
       // light the beacon when the local host reports it installed. No page
       // buttons: those require the marketplace's installability rule.
       const state = await talkToHost({ type: "status", id: PLUGIN_ID }, HOST_STATUS_TIMEOUT_MS);
-      if (state && state.ok && !state.firstParty && state.installed) startBeacon(plugin);
+      if (state && state.ok && !state.firstParty) {
+        if (state.installed) startBeacon(plugin);
+        // Passive corner banner on the big preview image (no page buttons
+        // here: the marketplace's installability rule), like the catalog's
+        // non-installable cards.  The detail section renders async, so
+        // mount once the preview image appears.
+        const detailHost = document.querySelector("#detail-content") || document.documentElement;
+        const detailObserver = new MutationObserver(() => {
+          const preview = document.querySelector("#detail-content .detail-preview");
+          if (!preview) return;
+          detailObserver.disconnect();
+          mountDetailRibbon(preview,
+            state.installed && state.updateAvailable ? "update" : state.installed ? "installed" : null);
+        });
+        detailObserver.observe(detailHost, { childList: true, subtree: true });
+      }
       return;
     }
 
