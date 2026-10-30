@@ -38,6 +38,10 @@
 .pi-icon-uninstall::before { transform: rotate(45deg); }
 .pi-icon-uninstall::after { transform: rotate(-45deg); }
 .card-install.pi-card-button { width: 25px; height: 25px; min-height: 0; padding: 0; justify-content: center; }
+/* Installed-state buttons carry their text (icon + verb); they replace the
+ * page's copy-command button, so the width opens up from the icon square. */
+.card-install.pi-card-button.pi-labelled { width: auto; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; }
+.pi-card-label { font-size: 11px; letter-spacing: 0.02em; white-space: nowrap; }
 .card-install.pi-card-install { color: var(--stable, #b4c96f); }
 .card-install.pi-card-install:hover { color: var(--stable, #b4c96f); background: var(--panel-2, rgba(127, 127, 127, 0.12)); }
 .card-install.pi-card-uninstall { color: var(--accent, #ffcead); }
@@ -463,6 +467,28 @@
     return (await isInstalled(plugin.id)) ? "installed" : null;
   }
 
+  // The site renders non-installable cards with a text-only
+  // span.card-install.unavailable ("Manual", "Preview only", "Unavailable").
+  // When the host reports such a plugin installed, we replace that span with
+  // a real Uninstall/Update button and stash the span on the card so an
+  // uninstall can restore the page's original look.
+  function passiveSpanFor(card) {
+    return card.querySelector("span.card-install.unavailable, span.card-install");
+  }
+
+  async function passiveCardControl(card, plugin) {
+    // Built-in plugins get no ribbon and no control (marketplace rule).
+    if (!plugin || plugin.builtIn) return;
+    const update = updateStatusFor(plugin.id);
+    const installed = update ? true : await isInstalled(plugin.id);
+    setRibbon(card, update ? "update" : installed ? "installed" : null);
+    if (!installed) return;
+    const span = passiveSpanFor(card);
+    if (!span) return;
+    card._piPassiveSpan = span;
+    span.replaceWith(makeCardButton(plugin, true, update));
+  }
+
   function makeCardButton(plugin, installed, update) {
     const verb = update ? "Update" : installed ? "Uninstall" : "Install";
     const button = document.createElement("button");
@@ -481,7 +507,18 @@
     tip.setAttribute("role", "tooltip");
     tip.setAttribute("aria-hidden", "true");
     tip.textContent = verb + " directly";
-    button.append(icon, tip);
+    button.append(icon);
+    if (installed) {
+      // Installed-state buttons carry their text label (the copy-command
+      // button they replace is removed); the install state stays icon-only
+      // next to the page's own copy button.
+      const label = document.createElement("span");
+      label.className = "pi-card-label";
+      label.textContent = verb;
+      button.classList.add("pi-labelled");
+      button.append(label);
+    }
+    button.append(tip);
     if (update) {
       // Update goes through the info panel first (version + verification
       // details); the panel's Update button summons the desktop wizard.
@@ -518,16 +555,16 @@
       }
       // Cards the extension cannot install (no copy button: "Manual", "Preview
       // only", built-in, unavailable).  Mark them so the polling refresh can
-      // keep a passive INSTALLED/UPDATE ribbon in sync with the host state;
-      // the ribbon is purely visual (no button to click).
+      // keep them in sync with the host state: a passive INSTALLED/UPDATE
+      // ribbon, and when the plugin is installed the site's "Manual" span is
+      // replaced by a real Uninstall/Update button (icon + text).
       for (const card of document.querySelectorAll("article[data-card-plugin]")) {
         if (card.querySelector("button.card-install[data-copy-command]")) continue;
         if (card.dataset.piPassiveRibbon === "1") continue;
         card.dataset.piPassiveRibbon = "1";
         card.dataset.piSeen = "1";
         const pluginId = card.dataset.cardPlugin;
-        const cardPlugin = pluginId ? pluginsById.get(pluginId) : null;
-        setRibbon(card, await passiveRibbonKind(cardPlugin));
+        await passiveCardControl(card, pluginId ? pluginsById.get(pluginId) : null);
       }
 
       const targets = document.querySelectorAll(
@@ -550,6 +587,9 @@
         const installed = update ? true : await isInstalled(plugin.id);
         if (!copy.parentElement) continue;
         copy.parentElement.insertBefore(makeCardButton(plugin, installed, update), copy);
+        // Installed: the labelled Uninstall/Update button replaces the
+        // page's copy-install-command button.
+        if (installed) copy.remove();
         setRibbon(cardFor(copy), update ? "update" : installed ? "installed" : null);
       }
     } catch (_e) {
@@ -593,17 +633,31 @@
       setRibbon(cardFor(button), update ? "update" : installed ? "installed" : null);
       if (wanted === button.dataset.piState) continue;
       const plugin = pluginsById.get(button.dataset.pluginId);
-      if (plugin) button.replaceWith(makeCardButton(plugin, installed, update));
+      if (!plugin) continue;
+      if (wanted === "install") {
+        if (!installable(plugin)) {
+          // A plugin the marketplace cannot install (we replaced its "Manual"
+          // span) went back to not-installed: restore the page's own span.
+          const span = cardFor(button)._piPassiveSpan;
+          if (span) button.replaceWith(span);
+          else button.remove();
+          continue;
+        }
+        button.replaceWith(makeCardButton(plugin, false, null));
+        continue;
+      }
+      // Installed states: the labelled button replaces the page's own
+      // copy-command button (present when the card showed Install).
+      const copy = button.nextElementSibling;
+      if (copy && copy.matches("button[data-copy-command]")) copy.remove();
+      button.replaceWith(makeCardButton(plugin, installed, update));
     }
-    // Passive (non-installable) cards have no mounted button, so refresh
-    // their banners from the same batch snapshot the buttons just got
-    // (statuses is non-null here, so passiveRibbonKind stays local).  The
-    // card's data-card-plugin (site template) identifies the plugin; copy
-    // buttons on non-installable cards carry the same id.
+    // Passive (non-installable) cards: keep banner and "Manual"-span
+    // replacement in sync from the same batch snapshot the buttons just
+    // got (statuses is non-null here, so no network round-trips).
     for (const card of document.querySelectorAll("[data-pi-passive-ribbon]")) {
       const pluginId = card.dataset.cardPlugin;
-      const plugin = pluginId ? pluginsById.get(pluginId) : null;
-      setRibbon(card, await passiveRibbonKind(plugin));
+      await passiveCardControl(card, pluginId ? pluginsById.get(pluginId) : null);
     }
   }
 
