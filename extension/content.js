@@ -4,6 +4,10 @@
 //   not installed            -> "Install"
 //   installed, enabled       -> "Disable" + "Uninstall"
 //   installed, not enabled   -> "Enable" + "Uninstall"
+// Installable plugins anchor these to the command panel's Copy button; a
+// manual-setup (non-installable) plugin that is installed on this machine
+// gets the same installed-state buttons at the right end of its tag row
+// under the preview (the host validates every action against local state).
 // Gated on:
 //   1. the marketplace's own availability rule for this plugin (catalog.json),
 //   2. a live ping to the local native messaging host.
@@ -27,6 +31,10 @@
 
   let hostAvailable = false;
   let mounted = false;
+  // Which flavor of detail page this is: true = manual-setup page (the
+  // group anchors to the tag row, buttons only while installed), false =
+  // installable page (the group anchors to the Copy button).
+  let passiveMount = false;
 
   // Styles are injected as a <style> node by this script instead of the
   // manifest's content_css pipeline: in Firefox the manifest CSS injection
@@ -38,6 +46,13 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
+}
+/* Manual-setup pages: the group sits in the plugin tag row (a flex row of
+   tag chips) under the preview; margin-left:auto pushes it to the right
+   edge, align-self:center keeps it level with the chips (min-height 28px). */
+.plugin-tags > .pi-group {
+  margin-left: auto;
+  align-self: center;
 }
 .pi-button {
   display: inline-flex;
@@ -603,6 +618,37 @@
     button.addEventListener("click", () => openUpdatePanel(plugin, status));
   }
 
+  // The installed-state buttons, shared by the installable page (anchored
+  // beside the Copy button) and the manual-setup page (anchored in the tag
+  // row). Label, icon and tone come from the live state; the state-sync poll
+  // (1s) rebuilds the buttons when the host's answer changes, so the
+  // wizard, the desktop, and the page can never drift apart.
+  function installedButtons(plugin, state) {
+    const buttons = [];
+    const enabled = Boolean(state.enabled);
+    const verb = enabled ? "Disable" : "Enable";
+    const tip = verb + " this plugin";
+    const toggle = makeButton(
+      verb, tip,
+      enabled ? "pi-button-danger" : "pi-button-install",
+      enabled ? "pi-icon-disable" : "pi-icon-enable"
+    );
+    wireAction(toggle, plugin, () => (enabled ? "disable" : "enable"));
+    buttons.push(toggle);
+    if (state.updateAvailable) {
+      // Updatable (and allowed by the verification setting, see the host):
+      // Update replaces Uninstall and opens the info panel first.
+      const update = makeButton("Update", "Update this plugin", "pi-button-danger", "pi-icon-update");
+      wireUpdateButton(update, plugin, state);
+      buttons.push(update);
+    } else {
+      const uninstall = makeButton("Uninstall", "Uninstall this plugin", "pi-button-danger", "pi-icon-uninstall");
+      wireAction(uninstall, plugin, "uninstall");
+      buttons.push(uninstall);
+    }
+    return buttons;
+  }
+
   function mountButtons(plugin, state) {
     // The marketplace renders a Copy button in the command panel head; we
     // group our buttons directly left of it and let it keep its own node
@@ -621,30 +667,7 @@
       wireAction(install, plugin, "install");
       buttons.push(install);
     } else {
-      // Label, icon and tone come from the live state; the state-sync poll
-      // (1s) rebuilds the buttons when the host's answer changes, so the
-      // wizard, the desktop, and the page can never drift apart.
-      const enabled = Boolean(state.enabled);
-      const verb = enabled ? "Disable" : "Enable";
-      const tip = verb + " this plugin";
-      const toggle = makeButton(
-        verb, tip,
-        enabled ? "pi-button-danger" : "pi-button-install",
-        enabled ? "pi-icon-disable" : "pi-icon-enable"
-      );
-      wireAction(toggle, plugin, () => (enabled ? "disable" : "enable"));
-      buttons.push(toggle);
-      if (state.updateAvailable) {
-        // Updatable (and allowed by the verification setting, see the host):
-        // Update replaces Uninstall and opens the info panel first.
-        const update = makeButton("Update", "Update this plugin", "pi-button-danger", "pi-icon-update");
-        wireUpdateButton(update, plugin, state);
-        buttons.push(update);
-      } else {
-        const uninstall = makeButton("Uninstall", "Uninstall this plugin", "pi-button-danger", "pi-icon-uninstall");
-        wireAction(uninstall, plugin, "uninstall");
-        buttons.push(uninstall);
-      }
+      buttons.push(...installedButtons(plugin, state));
     }
 
     head.insertBefore(group, copy);
@@ -652,6 +675,25 @@
     mountDetailRibbon(detailRibbonTarget(),
       state.installed && state.updateAvailable ? "update" : state.installed ? "installed" : null);
     mounted = true;
+    lastState = state;
+  }
+
+  // Manual-setup (non-installable) pages: the same installed-state buttons,
+  // appended to the plugin tag row under the preview (the injected CSS
+  // right-aligns the group). Only mounted while the plugin is installed:
+  // these pages carry no install path, so there is nothing to offer before
+  // the wizard/desktop has installed it.
+  function mountPassiveButtons(plugin, state) {
+    const tags = document.querySelector(
+      "#detail-content .plugin-detail-article > .plugin-tags");
+    if (!tags || !state.installed) return;
+    const group = document.createElement("span");
+    group.className = "pi-group";
+    group.append(...installedButtons(plugin, state));
+    tags.appendChild(group);
+    mountDetailRibbon(detailRibbonTarget(), state.updateAvailable ? "update" : "installed");
+    mounted = true;
+    passiveMount = true;
     lastState = state;
   }
 
@@ -665,6 +707,24 @@
   let lastState = null;
 
   function remountButtons(plugin, state) {
+    if (passiveMount) {
+      // Manual page: the group lives in the tag row (no Copy button to
+      // restore). Rebuild it while installed; drop the group, the ribbon,
+      // and the beacon on the uninstall transition. The poll keeps running
+      // (it is what noticed), so a reinstall remounts everything.
+      const group = document.querySelector(
+        "#detail-content .plugin-detail-article > .plugin-tags > .pi-group");
+      if (group) group.remove();
+      setRibbon(detailRibbonTarget(), null);
+      mounted = false;
+      if (state.installed) {
+        mountPassiveButtons(plugin, state);
+        startBeacon(plugin);
+      } else {
+        stopBeacon(plugin);
+      }
+      return;
+    }
     const group = document.querySelector(".pi-group");
     const copy = document.querySelector("#detail-content [data-install-copy]");
     if (!copy) return;
@@ -719,6 +779,7 @@
   const BEACON_STALE_MS = 12000;
   let beaconTimer = null;
   let beaconActive = false;
+  let beaconHandlers = null;
   // Window activation: blur/focus fire when the browser window gains or
   // loses OS focus to another application.
   let windowFocused = document.hasFocus();
@@ -768,14 +829,45 @@
       if (beaconActive) sendBeacon(plugin, false, false);
       else setBeacon(plugin, beaconShouldBeActive());
     }, BEACON_REFRESH_MS);
-    document.addEventListener("visibilitychange", () => {
+    const onVisibility = () => {
       if (document.hidden) leave();
       else refresh();
-    });
-    window.addEventListener("focus", () => { windowFocused = true; refresh(); });
-    window.addEventListener("blur", () => { windowFocused = false; refresh(); });
+    };
+    const onFocus = () => { windowFocused = true; refresh(); };
+    const onBlur = () => { windowFocused = false; refresh(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
     window.addEventListener("pageshow", refresh);
     window.addEventListener("pagehide", leave);
+    // Keep the listener references: a passive page whose plugin gets
+    // uninstalled stops the beacon (stopBeacon), and listeners the
+    // closures left behind would revive it on the next focus or tab switch.
+    beaconHandlers = {
+      onVisibility, onFocus, onBlur, onPageshow: refresh, onPagehide: leave,
+    };
+  }
+
+  // Full beacon teardown (used when a passive page's plugin transitions to
+  // uninstalled): stop renewing, drop the live record, and remove the
+  // listeners so nothing can restart the beacon while the plugin is gone.
+  function stopBeacon(plugin) {
+    if (beaconHandlers) {
+      document.removeEventListener("visibilitychange", beaconHandlers.onVisibility);
+      window.removeEventListener("focus", beaconHandlers.onFocus);
+      window.removeEventListener("blur", beaconHandlers.onBlur);
+      window.removeEventListener("pageshow", beaconHandlers.onPageshow);
+      window.removeEventListener("pagehide", beaconHandlers.onPagehide);
+      beaconHandlers = null;
+    }
+    if (beaconTimer) {
+      clearInterval(beaconTimer);
+      beaconTimer = null;
+    }
+    if (beaconActive) {
+      beaconActive = false;
+      sendBeacon(plugin, true);
+    }
   }
 
   async function init() {
@@ -794,34 +886,43 @@
     }
     if (!installable(plugin)) {
       // Not installable from the browser (no install command, built-in,
-      // failed upstream check): the bar panel can still manage a plugin
-      // that is installed on this machine (update/uninstall/move icon), so
-      // light the beacon when the local host reports it installed. No page
-      // buttons: those require the marketplace's installability rule.
+      // failed upstream check): a plugin installed on this machine is fully
+      // manageable — the host validates enable/disable/update/uninstall
+      // generically against local state for every installed plugin — so
+      // mirror the live state here: the corner banner on the preview, the
+      // installed-state action buttons in the tag row, and the bar-icon
+      // beacon. Not installed: nothing to show, but keep polling so an
+      // install from the wizard or the desktop mounts everything.
       const state = await talkToHost({ type: "status", id: PLUGIN_ID }, HOST_STATUS_TIMEOUT_MS);
       if (state && state.ok && !state.firstParty) {
-        if (state.installed) startBeacon(plugin);
-        // Passive corner banner on the big preview image (no page buttons
-        // here: the marketplace's installability rule), like the catalog's
-        // non-installable cards.  The detail section renders async: try the
-        // existing DOM first (the page usually finished before this script's
-        // host ping resolved), and only wait via observer when the preview
-        // is not there yet.
-        const ribbonKind = state.installed && state.updateAvailable
-          ? "update" : state.installed ? "installed" : null;
-        const tryMountDetailRibbon = () => {
-          const preview = document.querySelector("#detail-content .detail-preview");
-          if (!preview) return false;
-          mountDetailRibbon(preview, ribbonKind);
-          return true;
-        };
-        if (!tryMountDetailRibbon()) {
-          const detailHost = document.querySelector("#detail-content") || document.documentElement;
-          const detailObserver = new MutationObserver(() => {
-            if (tryMountDetailRibbon()) detailObserver.disconnect();
-          });
-          detailObserver.observe(detailHost, { childList: true, subtree: true });
+        // Mark the page flavor and seed the sync baseline now, so the 1s
+        // state poll is alive even before anything is mounted (an install
+        // from the wizard or the desktop must mount the ribbon + buttons).
+        passiveMount = true;
+        lastState = state;
+        if (state.installed) {
+          startBeacon(plugin);
+          // The detail section renders async: try the existing DOM first
+          // (the page usually finished before this script's host ping
+          // resolved), and only wait via observer until the preview and
+          // the tag row are there.
+          const tryMountPassive = () => {
+            const preview = document.querySelector("#detail-content .detail-preview");
+            const tags = document.querySelector(
+              "#detail-content .plugin-detail-article > .plugin-tags");
+            if (!preview || !tags) return false;
+            mountPassiveButtons(plugin, state);
+            return true;
+          };
+          if (!tryMountPassive()) {
+            const detailHost = document.querySelector("#detail-content") || document.documentElement;
+            const detailObserver = new MutationObserver(() => {
+              if (tryMountPassive()) detailObserver.disconnect();
+            });
+            detailObserver.observe(detailHost, { childList: true, subtree: true });
+          }
         }
+        startStateSync(plugin);
       }
       return;
     }
