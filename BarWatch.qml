@@ -29,11 +29,11 @@ import qs.Ui
 // for updating to unverified latest versions (default: verified only), and
 // the two browser-store links with per-family installed indicators. The poll
 // detects outdated plugins exactly like omaplug does (git HEAD behind
-// origin/HEAD via fetch + merge-base); the bar icon carries a counter of
-// outdated plugins as an omaplug-identical accent pill in its top-right
-// corner (hidden at 0), a poll that finds
-// new outdated plugins sends a notification offering the update, and the
-// settings persist to settings.json in the state dir.
+// origin/HEAD via fetch + merge-base); the bar icon carries an
+// omaplug-identical accent pill counting the updates the verification
+// setting allows to apply, in its top-right corner (hidden at 0), a poll
+// that finds new outdated plugins sends a notification offering the update,
+// and the settings persist to settings.json in the state dir.
 Panel {
   id: root
   moduleName: "bramvanoploo.omarchy-browser-plugin-manager"
@@ -169,8 +169,8 @@ Panel {
   // Every installed user (non-first-party) plugin whose git HEAD is behind
   // origin (omaplug's fetch/merge-base model, so both widgets count the same
   // set). updateList holds the outdated ones ({id, name, installed, latest,
-  // verified}); the bar badge shows its size (hidden at 0) and eligibleCount
-  // is the subset the verification setting allows to update (all when
+  // verified}); the bar badge and tooltip show the eligibleCount size (hidden
+  // at 0) — the subset the verification setting allows to update (all when
   // unverified is on, verified-only otherwise).
   property var updateList: []
   readonly property int updateCount: root.updateList.length
@@ -204,7 +204,8 @@ Panel {
       // Offer the update when a check finds a new outdated set: the
       // notification is how this widget "offers" anything (the button lives
       // in the settings panel). Held-back updates (verified-only setting
-      // off-locks them) stay counted on the badge and explain in the body.
+      // off-locks them) stay in the list and explain in the body; the badge
+      // counts only the eligible ones.
       var ids = res.plugins.map(function (p) { return String(p.id) }).sort().join(",")
       if (ids !== root.lastNotifiedKey) {
         root.lastNotifiedKey = ids
@@ -974,11 +975,14 @@ Panel {
     active: root.beaconLive
     tooltipText: (root.beaconLive
       ? root.watchedName() + " \u00b7 open in browser \u00b7 click to manage"
-      : "Browser Plugin Manager \u00b7 lights up on manageable plugin pages")
-      + (root.updateCount > 0
-        ? " \u00b7 " + root.updateCount + " plugin" + (root.updateCount === 1 ? " has" : "s have")
+      : "Browser Plugin Manager")
+      + (root.eligibleCount > 0
+        ? " \u00b7 " + root.eligibleCount + " plugin" + (root.eligibleCount === 1 ? " has" : "s have")
           + " updates (right-click)"
-        : "")
+        : root.updateCount > 0
+          ? " \u00b7 " + root.updateCount + " plugin" + (root.updateCount === 1 ? " has" : "s have")
+            + " updates, all unverified (right-click)"
+          : "")
 
     onPressed: function (code) {
       // Left: the plugin popup; right: the settings panel (mutually
@@ -990,14 +994,15 @@ Panel {
     // Update counter badge: pixel-identical to omaplug's pending-update
     // indicator — accent pill anchored to the icon's top-right corner with a
     // bar-background border, white bold caption*0.85 text, "9+" cap, hidden
-    // at 0.
+    // at 0. It counts the updates the verification setting actually allows to
+    // apply (eligibleCount), not every outdated plugin.
     Rectangle {
       id: updateBadge
-      visible: root.updateCount > 0
+      visible: root.eligibleCount > 0
       anchors.top: parent.top
       anchors.right: parent.right
       z: 10
-      readonly property string countText: root.updateCount > 9 ? "9+" : String(root.updateCount)
+      readonly property string countText: root.eligibleCount > 9 ? "9+" : String(root.eligibleCount)
       implicitWidth: Math.max(Style.space(14), updateBadgeText.implicitWidth + Style.space(6))
       implicitHeight: Style.space(14)
       radius: height / 2
