@@ -802,17 +802,25 @@
         if (state.installed) startBeacon(plugin);
         // Passive corner banner on the big preview image (no page buttons
         // here: the marketplace's installability rule), like the catalog's
-        // non-installable cards.  The detail section renders async, so
-        // mount once the preview image appears.
-        const detailHost = document.querySelector("#detail-content") || document.documentElement;
-        const detailObserver = new MutationObserver(() => {
+        // non-installable cards.  The detail section renders async: try the
+        // existing DOM first (the page usually finished before this script's
+        // host ping resolved), and only wait via observer when the preview
+        // is not there yet.
+        const ribbonKind = state.installed && state.updateAvailable
+          ? "update" : state.installed ? "installed" : null;
+        const tryMountDetailRibbon = () => {
           const preview = document.querySelector("#detail-content .detail-preview");
-          if (!preview) return;
-          detailObserver.disconnect();
-          mountDetailRibbon(preview,
-            state.installed && state.updateAvailable ? "update" : state.installed ? "installed" : null);
-        });
-        detailObserver.observe(detailHost, { childList: true, subtree: true });
+          if (!preview) return false;
+          mountDetailRibbon(preview, ribbonKind);
+          return true;
+        };
+        if (!tryMountDetailRibbon()) {
+          const detailHost = document.querySelector("#detail-content") || document.documentElement;
+          const detailObserver = new MutationObserver(() => {
+            if (tryMountDetailRibbon()) detailObserver.disconnect();
+          });
+          detailObserver.observe(detailHost, { childList: true, subtree: true });
+        }
       }
       return;
     }
