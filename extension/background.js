@@ -155,23 +155,6 @@ function talkToHost(payload) {
 
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!isTrustedSender(sender)) return false;
-  if (message && message.type === "activate-tab") {
-    // Focus jump: the host answered this tab's visit heartbeat with
-    // activate:true (the bar widget asked for a marketplace tab), so the
-    // content script asks to be raised. sender.tab is the content script's
-    // own tab: no tabs.query and no "tabs" permission needed.
-    const tab = sender.tab;
-    if (tab && typeof tab.id === "number" && typeof tab.windowId === "number") {
-      Promise.resolve()
-        .then(() => api.windows.update(tab.windowId, { focused: true }))
-        .then(() => api.tabs.update(tab.id, { active: true }))
-        .then(() => sendResponse({ ok: true }))
-        .catch(() => sendResponse({ ok: false, reason: "activate-failed" }));
-      return true;
-    }
-    sendResponse({ ok: false, reason: "no-sender-tab" });
-    return false;
-  }
   const payload = sanitizeMessage(message);
   if (!payload) return false;
   talkToHost(payload)
@@ -179,3 +162,112 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch(() => sendResponse({ ok: false, reason: "host-error" }));
   return true; // keep the message channel open for the async response
 });
+
+// Presence heartbeat and focus jump (bar widget left click).
+//
+// The heartbeat lives in the service worker, not in page scripts: a
+// backgrounded tab's page timers are throttled hard by the browser (Firefox:
+// one timer per minute), which made the tab records go stale exactly when the
+// marketplace tab is not the active tab — the failing case. The worker is
+// driven by tab events and its own interval, so presence stays fresh for
+// every marketplace tab regardless of which tab is focused.
+//
+// Every open plugins.omarchy.org tab sends "visit" (per-tab random key) every
+// couple of seconds; the host records it in browser-tabs.json for the bar
+// widget. When the widget asks for a marketplace tab, the host answers that
+// tab's visit with activate:true and the worker raises it: focus the window,
+// select the tab.
+
+const PRESENCE_INTERVAL_MS = 2000;
+const PRESENCE_URL_PATTERN = "https://plugins.omarchy.org/*";
+
+const presenceKeys = new Map(); // tabId -> per-load random key
+let presenceTimer = null;
+let presenceSource = null; // "firefox" | "chrome" (host field), resolved lazily
+
+function makePresenceKey() {
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function detectSource() {
+  if (presenceSource) return presenceSource;
+  try {
+    const info = await api.runtime.getBrowserInfo();
+    presenceSource = info && info.name === "Firefox" ? "firefox" : "chrome";
+  } catch (_e) {
+    presenceSource = "chrome";
+  }
+  return presenceSource;
+}
+
+async function activateTab(tab) {
+  try {
+    await api.windows.update(tab.windowId, { focused: true });
+    await api.tabs.update(tab.id, { active: true });
+  } catch (_e) { /* window closed mid-focus: nothing to do */ }
+}
+
+async function syncPresence() {
+  let tabs = [];
+  try {
+    tabs = await api.tabs.query({ url: PRESENCE_URL_PATTERN });
+  } catch (_e) {
+    return; // API unavailable: keep existing records, retry on next tick
+  }
+  const seen = new Set(tabs.map((tab) => tab.id));
+  for (const [tabId, key] of presenceKeys) {
+    if (!seen.has(tabId)) {
+      presenceKeys.delete(tabId);
+      talkToHost({ type: "unvisit", key }).catch(() => {});
+    }
+  }
+  if (tabs.length === 0) {
+    stopPresenceLoop();
+    return;
+  }
+  const source = await detectSource();
+  for (const tab of tabs) {
+    if (typeof tab.id !== "number" || typeof tab.url !== "string") continue;
+    let key = presenceKeys.get(tab.id);
+    if (!key) {
+      key = makePresenceKey();
+      presenceKeys.set(tab.id, key);
+    }
+    try {
+      const response = await talkToHost({
+        type: "visit",
+        source,
+        key,
+        url: tab.url.slice(0, 512),
+      });
+      if (response && response.activate === true) await activateTab(tab);
+    } catch (_e) { /* host down: retry next tick */ }
+  }
+}
+
+function stopPresenceLoop() {
+  if (presenceTimer !== null) {
+    clearInterval(presenceTimer);
+    presenceTimer = null;
+  }
+}
+
+function schedulePresenceSync() {
+  if (presenceTimer === null) {
+    presenceTimer = setInterval(() => { void syncPresence(); }, PRESENCE_INTERVAL_MS);
+  }
+  void syncPresence();
+}
+
+api.tabs.onCreated.addListener(() => schedulePresenceSync());
+api.tabs.onRemoved.addListener(() => schedulePresenceSync());
+api.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  // A completed navigation replaced the page: the old presence key belongs
+  // to the previous document, so mint a fresh one for the new load.
+  if (changeInfo.status === "complete") presenceKeys.set(tabId, makePresenceKey());
+  schedulePresenceSync();
+});
+
+if (api.runtime.onStartup) api.runtime.onStartup.addListener(() => schedulePresenceSync());
+if (api.runtime.onInstalled) api.runtime.onInstalled.addListener(() => schedulePresenceSync());
+schedulePresenceSync(); // worker boot (also covers browser start on Firefox)

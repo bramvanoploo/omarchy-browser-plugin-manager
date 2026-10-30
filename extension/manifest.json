@@ -4,7 +4,8 @@
   "version": "0.7.0",
   "description": "Adds Install/Uninstall buttons to installable plugins on plugins.omarchy.org. Requires the Omarchy shell plugin and native host.",
   "permissions": [
-    "nativeMessaging"
+    "nativeMessaging",
+    "tabs"
   ],
   "background": {
     "service_worker": "background.js",
