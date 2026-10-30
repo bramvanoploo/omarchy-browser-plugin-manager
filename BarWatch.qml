@@ -1130,9 +1130,8 @@ Panel {
     text: ""
     active: root.beaconLive
     tooltipText: (root.beaconLive
-      ? root.watchedName() + " \u00b7 open in browser \u00b7 click to focus the tab"
-      : "Browser Plugin Manager"
-        + (root.liveTabCount > 0 ? " \u00b7 click to focus the marketplace tab" : ""))
+      ? root.watchedName() + " \u00b7 open in browser"
+      : "Browser Plugin Manager")
       + (root.eligibleCount > 0
         ? " \u00b7 " + root.eligibleCount + " plugin" + (root.eligibleCount === 1 ? " has" : "s have")
           + " updates (right-click)"
