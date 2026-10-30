@@ -43,9 +43,11 @@ poll every **10m / 30m / 1h / 5h / Daily** with a refresh button to check
 immediately, an **Update N plugins now** button (shown only while updates
 are available), a toggle to also update plugins to their *unverified*
 latest versions (default: latest verified only), and links to the Chrome
-Web Store and Firefox Add-ons pages with the supported browsers named and
-the installed families indicated. The poll compares every installed user
-plugin's version against the marketplace catalog; while plugins have
+Web Store and Firefox Add-ons pages: the supported browsers are listed with
+the installed ones highlighted, and each button names the browser it opens
+the page in (the first installed browser of that family). The poll compares
+every installed user plugin's version against the marketplace catalog;
+while plugins have
 updates, the bar icon shows a counter in its top-right corner (accent when
 the updates are updatable, muted when held back by the verified-only
 setting; hidden at 0), and a poll that finds new updates sends a

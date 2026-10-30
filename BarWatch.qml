@@ -284,6 +284,22 @@ Panel {
     return ""
   }
 
+  // Display name of the browser a store button launches, for the button
+  // label; "" means the family is not installed, so xdg-open opens the
+  // system default browser.
+  function firstInstalledLabel(families, installed) {
+    for (var i = 0; i < families.length; i++)
+      if (installed[families[i].key]) return String(families[i].label)
+    return ""
+  }
+
+  function storeButtonLabel(base, launchLabel) {
+    // The list label "Firefox incl. ESR" is only the ESR clarification, which
+    // the list line above already carries; the button keeps the short name.
+    var short = String(launchLabel || "").split(" incl.")[0]
+    return base + " (" + (short !== "" ? short : "default browser") + ")"
+  }
+
   // Support list as rich text: installed names get the accent color. The
   // hex form is required because styled text carries no Color objects.
   function supportHtml(families, installed) {
@@ -301,6 +317,8 @@ Panel {
   readonly property string firefoxSupportHtml: supportHtml(firefoxBrowsers, firefoxInstalledBins)
   readonly property string chromeLaunchBin: firstInstalledBin(chromeBrowsers, chromeInstalledBins)
   readonly property string firefoxLaunchBin: firstInstalledBin(firefoxBrowsers, firefoxInstalledBins)
+  readonly property string chromeLaunchLabel: firstInstalledLabel(chromeBrowsers, chromeInstalledBins)
+  readonly property string firefoxLaunchLabel: firstInstalledLabel(firefoxBrowsers, firefoxInstalledBins)
 
   function openStore(url, bin) {
     // The store page must open in its own family, so the browser found by
@@ -1551,14 +1569,14 @@ Panel {
           Layout.fillWidth: true
           Layout.preferredWidth: (spStoreGrid.width - spStoreGrid.columnSpacing) / 2
           Layout.preferredHeight: Style.space(30)
-          label: "Chrome Web Store"
+          label: root.storeButtonLabel("Chrome Web Store", root.chromeLaunchLabel)
           onClickedBw: root.openStore(root.chromeStoreUrl, root.chromeLaunchBin)
         }
         BWButton {
           Layout.fillWidth: true
           Layout.preferredWidth: (spStoreGrid.width - spStoreGrid.columnSpacing) / 2
           Layout.preferredHeight: Style.space(30)
-          label: "Firefox Add-ons"
+          label: root.storeButtonLabel("Firefox Add-ons", root.firefoxLaunchLabel)
           onClickedBw: root.openStore(root.firefoxStoreUrl, root.firefoxLaunchBin)
         }
       }
