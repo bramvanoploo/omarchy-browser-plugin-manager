@@ -925,6 +925,14 @@ Panel {
         root.updateCheckFailed = true
       }
     }
+    // Spawn failure emits no exit code: release the checking flag so the
+    // button and "checking…" label do not stick until the next poll.
+    onFailed: {
+      if (root.updateChecking) {
+        root.updateChecking = false
+        root.updateCheckFailed = true
+      }
+    }
   }
 
   // Browser install probe: every supported browser's launcher names are
@@ -1065,6 +1073,12 @@ Panel {
         root.catalogEntry = null
         root.catalogLoading = false
       }
+    }
+    // Spawn failure emits no exit code: drop the loading flag so the
+    // thumbnail placeholder does not spin forever.
+    onFailed: {
+      root.catalogEntry = null
+      root.catalogLoading = false
     }
   }
 

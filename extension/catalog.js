@@ -441,7 +441,11 @@
       if (response && response.ok) {
         foot.remove();
         note.textContent = "Confirm the update in the Omarchy window.";
-        setTimeout(closePanel, 4000);
+        // Identity guard: a stale timer must not close a panel that the
+        // user opened again within the 4s window.
+        setTimeout(() => {
+          if (panelNodes && panelNodes.backdrop === backdrop) closePanel();
+        }, 4000);
       } else {
         update.disabled = false;
         cancel.disabled = false;

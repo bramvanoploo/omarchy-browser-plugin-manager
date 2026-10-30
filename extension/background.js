@@ -184,6 +184,10 @@ const PRESENCE_URL_PATTERN = "https://plugins.omarchy.org/*";
 
 const presenceKeys = new Map(); // tabId -> per-load random key
 let presenceTimer = null;
+// Single-flight guard: a sync with a slow host (4s timeouts on every call)
+// outlives the 2s tick. Without this, ticks overlap and every cycle queues
+// another full round of host messages behind the first.
+let presenceRunning = false;
 let presenceSource = null; // "firefox" | "chrome" (host field), resolved lazily
 
 function makePresenceKey() {
@@ -260,11 +264,19 @@ function stopPresenceLoop() {
   }
 }
 
+function runPresenceSync() {
+  if (presenceRunning) return;
+  presenceRunning = true;
+  syncPresence()
+    .catch(() => {})
+    .finally(() => { presenceRunning = false; });
+}
+
 function schedulePresenceSync() {
   if (presenceTimer === null) {
-    presenceTimer = setInterval(() => { void syncPresence(); }, PRESENCE_INTERVAL_MS);
+    presenceTimer = setInterval(runPresenceSync, PRESENCE_INTERVAL_MS);
   }
-  void syncPresence();
+  runPresenceSync();
 }
 
 api.tabs.onCreated.addListener(() => schedulePresenceSync());

@@ -58,7 +58,7 @@ set -euo pipefail
 export LC_ALL=C.UTF-8
 
 HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
-HOST_VERSION="0.7.0"
+HOST_VERSION="0.7.1"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
 MAX_FRAME_BYTES=65536
@@ -549,7 +549,11 @@ main() {
   while :; do
     length=$(head -c4 | od -An -v -tu4 --endian=little | tr -d ' \n')
     [[ -n ${length:-} ]] && (( length > 0 && length <= MAX_FRAME_BYTES )) || exit 0
-    payload=$(head -c "$length")
+    # Command substitution strips trailing newlines; Firefox appends one to
+    # every frame. The sentinel keeps the payload bytes exact so the
+    # byte-length check below compares against the real frame.
+    payload=$(head -c "$length"; printf x)
+    payload=${payload%x}
     (( $(byte_length "$payload") == length )) || exit 0
 
     type=$(jq -r 'if type == "object" and (.type | type) == "string" then .type else "" end' <<<"$payload" 2>/dev/null || true)
