@@ -15,8 +15,13 @@ import qs.Ui
 // gone) right away, a blurred window stamps the record "paused" (dropped on
 // the next poll), and a killed browser leaves the record to staleness.
 //
-// Left click opens a dropdown with the watched plugin's header title (the
-// same identity line the wizard dialogs show) and buttons to manage it:
+// Left click focuses the browser and selects the first open marketplace
+// tab (plugins.omarchy.org) when one is present — the extension keeps the
+// host posted with every open tab, and the click routes through a focus
+// request the tab answers — and the dropdown stays closed for that click.
+// Without a marketplace tab, left click opens a dropdown with the watched
+// plugin's header title (the same identity line the wizard dialogs show)
+// and buttons to manage it:
 // Install, Uninstall, Update, and moving its bar icon (Left/Center/Right).
 // Install, Uninstall, and Update summon the wizard overlay: the beacon
 // record is a display hint only, and every action is re-validated and
@@ -56,6 +61,25 @@ Panel {
     return base + "/omarchy/" + managerId
   }
   readonly property string watchPath: stateDir + "/browser-watch.json"
+  readonly property string tabsPath: stateDir + "/browser-tabs.json"
+  readonly property string focusPath: stateDir + "/browser-focus.json"
+
+  // Presence heartbeats: every open marketplace tab (catalog or detail,
+  // focused or not) renews a record in browser-tabs.json every ~2s. A
+  // fresh record means a left click can jump the browser to that tab
+  // instead of opening the dropdown. Records age out by ts (host prunes
+  // on write; killed browsers simply stop renewing).
+  readonly property int tabStaleMs: 10000
+  property int liveTabCount: 0
+
+  // Focus jump request: written to browser-focus.json; the host stamps
+  // consumedBy with the key of the visiting tab that answers, and that tab
+  // asks the browser to focus its window and select itself. The popup
+  // stays closed for that click. A request nobody answers is dropped by
+  // the host as stale; the local timer forgets it in parallel.
+  property bool focusPending: false
+  property int focusNonce: 0
+  readonly property int focusRequestTimeoutMs: 6000
 
   // Parsed beacon record ({id, repo, name, pid, ts, paused?}) or null.
   // "paused" is stamped by the host when the tab's browser window loses
@@ -575,6 +599,48 @@ Panel {
     }
   }
 
+  // Presence records: count the tabs with a fresh heartbeat. Shape-checked
+  // (the file is host-written, a corrupt/foreign file must not light the
+  // click path).
+  function applyTabs(raw) {
+    var count = 0
+    var s = String(raw || "").trim()
+    if (s) {
+      var obj = null
+      try { obj = JSON.parse(s) } catch (e) { obj = null }
+      var tabs = obj && Array.isArray(obj.tabs) ? obj.tabs : []
+      var nowSec = Date.now() / 1000
+      for (var i = 0; i < tabs.length; ++i) {
+        var t = tabs[i]
+        if (t && typeof t === "object" && typeof t.key === "string" && t.key !== ""
+          && typeof t.url === "string" && t.url.indexOf("https://plugins.omarchy.org/") === 0
+          && Number(t.ts) > 0 && (nowSec - Number(t.ts)) * 1000 < root.tabStaleMs)
+          count++
+      }
+    }
+    root.liveTabCount = count
+  }
+
+  // Ask the browser to raise the first live marketplace tab: write the
+  // focus request; the next visit heartbeat from any tab answers it (the
+  // host stamps consumedBy) and that tab focuses its window and selects
+  // itself. This click never opens the dropdown.
+  function requestFocusTab() {
+    root.focusNonce += 1
+    root.focusPending = true
+    focusFile.setText(JSON.stringify({ ts: Date.now(), nonce: root.focusNonce, consumedBy: "" }))
+    focusTimer.restart()
+  }
+
+  function clearFocusRequest() {
+    focusTimer.stop()
+    if (root.focusPending) {
+      root.focusPending = false
+      if (focusFile.text() !== "")
+        focusFile.setText("") // atomicWrites: empty content removes the file
+    }
+  }
+
   function refreshStatus() {
     if (!root.opened || !root.watchState) return
     root.statusForId = String(root.watchState.id)
@@ -668,6 +734,40 @@ Panel {
       // FileNotFound means the host deliberately removed the record
       // (unwatch); any other failure is a transient read hiccup.
       root.applyWatch("", error === FileViewError.FileNotFound)
+    }
+  }
+
+  // Presence records (visited marketplace tabs). Like the beacon, the host
+  // rewrites atomically, so this is polled on the 2s timer, not watched.
+  FileView {
+    id: tabFile
+    path: root.tabsPath
+    printErrors: false
+    onLoaded: root.applyTabs(text())
+    onLoadFailed: function (_error) {
+      root.applyTabs("")
+    }
+  }
+
+  // Focus jump request round-trip: we write it, the host stamps consumedBy
+  // when a visiting tab answers, and our polls see that and remove the
+  // file. The host removes an unanswered request as stale (FileNotFound
+  // here), which also ends the request locally.
+  FileView {
+    id: focusFile
+    path: root.focusPath
+    printErrors: false
+    atomicWrites: true
+    onLoaded: {
+      if (!root.focusPending) return
+      var obj = null
+      try { obj = JSON.parse(String(text() || "{}")) } catch (e) { obj = null }
+      if (obj && typeof obj === "object" && String(obj.consumedBy || "") !== "")
+        root.clearFocusRequest()
+    }
+    onLoadFailed: function (error) {
+      if (root.focusPending && error === FileViewError.FileNotFound)
+        root.clearFocusRequest()
     }
   }
 
@@ -869,7 +969,18 @@ Panel {
     onTriggered: {
       root.nowMs = Date.now()
       watchFile.reload()
+      tabFile.reload()
+      if (root.focusPending) focusFile.reload()
     }
+  }
+
+  // Backstop for a focus request nobody answers (all tabs just closed):
+  // forget it so the next click behaves normally again. The host drops the
+  // file itself as stale around the same time.
+  Timer {
+    id: focusTimer
+    interval: root.focusRequestTimeoutMs
+    onTriggered: root.clearFocusRequest()
   }
 
   onOpenedChanged: {
@@ -1019,8 +1130,9 @@ Panel {
     text: ""
     active: root.beaconLive
     tooltipText: (root.beaconLive
-      ? root.watchedName() + " \u00b7 open in browser \u00b7 click to manage"
-      : "Browser Plugin Manager")
+      ? root.watchedName() + " \u00b7 open in browser \u00b7 click to focus the tab"
+      : "Browser Plugin Manager"
+        + (root.liveTabCount > 0 ? " \u00b7 click to focus the marketplace tab" : ""))
       + (root.eligibleCount > 0
         ? " \u00b7 " + root.eligibleCount + " plugin" + (root.eligibleCount === 1 ? " has" : "s have")
           + " updates (right-click)"
@@ -1030,10 +1142,17 @@ Panel {
           : "")
 
     onPressed: function (code) {
-      // Left: the plugin popup; right: the settings panel (mutually
+      // Left: with a live marketplace tab, jump the browser to it (focus
+      // the window, select the tab) and do NOT open the dropdown; without
+      // one, the plugin popup. Right: the settings panel (mutually
       // exclusive, both route through the toggle helpers).
-      if (code === Qt.LeftButton) root.toggleLeft()
-      else if (code === Qt.RightButton) root.toggleSettings()
+      if (code === Qt.LeftButton) {
+        if (root.liveTabCount > 0) {
+          root.requestFocusTab()
+          return
+        }
+        root.toggleLeft()
+      } else if (code === Qt.RightButton) root.toggleSettings()
     }
 
     // Update counter badge: pixel-identical to omaplug's pending-update

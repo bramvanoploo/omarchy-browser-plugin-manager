@@ -14,6 +14,8 @@
 #   {"type":"watch","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather","paused":true}
 #   {"type":"unwatch","id":"acme.weather"}
 #   {"type":"update","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
+#   {"type":"visit","source":"firefox","key":"a1b2c3","url":"https://plugins.omarchy.org/plugin.html?id=x"}
+#   {"type":"unvisit","key":"a1b2c3"}
 #   {"type":"updates"}
 #
 # "updates" answers the behind-set from a cached git-ancestry check (the same
@@ -38,6 +40,16 @@
 # dropdown routes every action through the wizard, which re-validates.
 # "unwatch" removes the record right away (the widget shows its placeholder);
 # a lost beacon (browser killed) goes stale on its own.
+#
+# "visit" is the presence heartbeat: any tab on a plugins.omarchy.org page
+# (catalog or detail, focused or not) sends it every couple of seconds with
+# its browser source, a per-page-load key, and its url. The host keeps a
+# per-tab record in browser-tabs.json (stale entries age out) so the bar
+# widget knows a marketplace tab is open; a left click on the bar icon then
+# writes a focus request to browser-focus.json. The next visit heartbeat
+# consumes that request (stamps consumedBy, answers activate:true) and the
+# extension raises its tab and focuses the window. "unvisit" drops the
+# tab's record when the page closes.
 
 set -euo pipefail
 # Qt (used by omarchy-shell / omarchy plugin list) writes a warning to stdout
@@ -55,6 +67,12 @@ MAX_FRAME_BYTES=65536
 # "unwatch" and by the host's exit trap.
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/$WIZARD_ID"
 WATCH_FILE="$STATE_DIR/browser-watch.json"
+# Presence heartbeats from every marketplace tab (browser-tabs.json) and the
+# bar widget's focus request (browser-focus.json). Neither is removed by the
+# exit trap: tab records age out by ts, and a focus request is consumed by
+# the next heartbeat (or discarded as stale).
+TABS_FILE="$STATE_DIR/browser-tabs.json"
+FOCUS_FILE="$STATE_DIR/browser-focus.json"
 # Update-detection cache: {checked, plugins:[{id,name,installedVersion,
 # latestVersion,verified}]} for every plugin whose git HEAD is behind origin
 # (all checks are cheap file reads for the extension; the git work runs in a
@@ -446,8 +464,68 @@ clear_watch_for_id() {
   clear_watch
 }
 
+# Presence heartbeat record: one entry per open marketplace tab, keyed by
+# the tab's per-load random key. Entries older than the freshness window
+# are pruned on every write (a killed browser's tab simply ages out).
+# Echoes "activate" when this visit consumes a pending bar-widget focus
+# request, so the dispatch answers activate:true and the extension raises
+# the tab.
+record_visit() {
+  local payload="$1" source="" key="" url="" ts="" tmp="" merged=""
+  source=$(jq -r 'if type == "object" and (.source | type) == "string" then .source[0:32] else "" end' <<<"$payload" 2>/dev/null) || source=""
+  key=$(jq -r 'if type == "object" and (.key | type) == "string" then .key[0:64] else "" end' <<<"$payload" 2>/dev/null) || key=""
+  url=$(jq -r 'if type == "object" and (.url | type) == "string" then .url[0:512] else "" end' <<<"$payload" 2>/dev/null) || url=""
+  [[ -n $key && -n $url ]] || return 1
+  ts=$(date +%s)
+  local entry
+  entry=$(jq -cn --arg source "$source" --arg key "$key" --arg url "$url" --argjson ts "$ts" \
+    '{source:$source, key:$key, url:$url, ts:$ts}') || return 1
+  mkdir -p "$STATE_DIR" || return 1
+  merged=$(jq -c --argjson entry "$entry" --argjson fresh "$((ts - 30))" '
+    ((.tabs // []) + [$entry]
+     | unique_by(.source + "|" + .key)
+     | map(select((.ts // 0) >= $fresh))) as $tabs
+    | {tabs: $tabs}' "$TABS_FILE" 2>/dev/null) ||
+    merged=$(jq -cn --argjson entry "$entry" '{tabs: [$entry]}')
+  tmp="$TABS_FILE.tmp.$$"
+  printf '%s\n' "$merged" >"$tmp" && mv -f "$tmp" "$TABS_FILE"
+  drain_focus_request "$key"
+}
+
+# Remove a tab's presence record (page closed / navigated away).
+clear_visit() {
+  local payload="$1" key="" tmp="" json=""
+  key=$(jq -r 'if type == "object" and (.key | type) == "string" then .key[0:64] else "" end' <<<"$payload" 2>/dev/null) || key=""
+  [[ -n $key && -f $TABS_FILE ]] || return 0
+  json=$(jq -c --arg key "$key" '{tabs: ((.tabs // []) | map(select(.key != $key)))}' "$TABS_FILE" 2>/dev/null) || return 0
+  tmp="$TABS_FILE.tmp.$$"
+  printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$TABS_FILE"
+}
+
+# Consume a pending focus request from the bar widget: the request is live
+# for a few seconds (the widget suppresses its popup meanwhile) and is
+# answered by exactly one visiting tab. The widget stamps ts in Unix
+# milliseconds (Date.now), so the staleness math runs in ms too. Echoes
+# "activate" when consumed.
+drain_focus_request() {
+  local key="$1" ts="" now="" tmp="" json=""
+  [[ -f $FOCUS_FILE ]] || return 0
+  ts=$(jq -r '.ts // 0' "$FOCUS_FILE" 2>/dev/null) || ts=0
+  now=$(( $(date +%s) * 1000 ))
+  if (( now - ts > 8000 )); then
+    # Nobody answered in time (no live tab): drop it, the widget cleans up
+    # its own state on timeout.
+    rm -f "$FOCUS_FILE" 2>/dev/null || true
+    return 0
+  fi
+  [[ "$(jq -r '.consumedBy // empty' "$FOCUS_FILE" 2>/dev/null)" == "" ]] || return 0
+  json=$(jq -c --arg by "$key" '. + {consumedBy: $by}' "$FOCUS_FILE" 2>/dev/null) || return 0
+  tmp="$FOCUS_FILE.tmp.$$"
+  printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$FOCUS_FILE" && echo activate
+}
+
 main() {
-  local length payload type id local_status all_status reason
+  local length payload type id local_status all_status reason activated
   # Message trace: opt-in diagnostic (enable with PI_NATIVE_TRACE=<path>,
   # one line per received frame) for debugging beacon traffic. Off by
   # default: the shell and browsers run this host constantly.
@@ -544,6 +622,25 @@ main() {
       unwatch)
         id=$(jq -r 'if type == "object" and (.id | type) == "string" then .id else "" end' <<<"$payload" 2>/dev/null || true)
         clear_watch_for_id "$id"
+        reply_ok
+        ;;
+      visit)
+        # Presence heartbeat; record_visit echoes "activate" when this tab
+        # must raise itself (the bar widget asked for the marketplace tab).
+        # The assignment sits in the if so a failing record does not trip
+        # set -e.
+        if activated=$(record_visit "$payload"); then
+          if [[ $activated == "activate" ]]; then
+            send_frame '{"ok":true,"activate":true}'
+          else
+            reply_ok
+          fi
+        else
+          reply_err "invalid-visit"
+        fi
+        ;;
+      unvisit)
+        clear_visit "$payload"
         reply_ok
         ;;
       *)

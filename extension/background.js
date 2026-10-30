@@ -23,9 +23,11 @@ const ALLOWED_TYPES = new Set([
   "updates",
   "watch",
   "unwatch",
+  "visit",
+  "unvisit",
 ]);
 
-const FAST_TYPES = new Set(["ping", "status", "status_all", "updates", "watch", "unwatch"]);
+const FAST_TYPES = new Set(["ping", "status", "status_all", "updates", "watch", "unwatch", "visit", "unvisit"]);
 
 let activePort = null;
 let currentTask = null;
@@ -132,6 +134,9 @@ function sanitizeMessage(message) {
   if (typeof message.id === "string") payload.id = message.id.slice(0, 128);
   if (typeof message.repo === "string") payload.repo = message.repo.slice(0, 256);
   if (typeof message.name === "string") payload.name = message.name.slice(0, 128);
+  if (typeof message.source === "string") payload.source = message.source.slice(0, 32);
+  if (typeof message.key === "string") payload.key = message.key.slice(0, 64);
+  if (typeof message.url === "string") payload.url = message.url.slice(0, 512);
   return payload;
 }
 
@@ -150,6 +155,23 @@ function talkToHost(payload) {
 
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!isTrustedSender(sender)) return false;
+  if (message && message.type === "activate-tab") {
+    // Focus jump: the host answered this tab's visit heartbeat with
+    // activate:true (the bar widget asked for a marketplace tab), so the
+    // content script asks to be raised. sender.tab is the content script's
+    // own tab: no tabs.query and no "tabs" permission needed.
+    const tab = sender.tab;
+    if (tab && typeof tab.id === "number" && typeof tab.windowId === "number") {
+      Promise.resolve()
+        .then(() => api.windows.update(tab.windowId, { focused: true }))
+        .then(() => api.tabs.update(tab.id, { active: true }))
+        .then(() => sendResponse({ ok: true }))
+        .catch(() => sendResponse({ ok: false, reason: "activate-failed" }));
+      return true;
+    }
+    sendResponse({ ok: false, reason: "no-sender-tab" });
+    return false;
+  }
   const payload = sanitizeMessage(message);
   if (!payload) return false;
   talkToHost(payload)
