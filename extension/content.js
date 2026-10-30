@@ -186,9 +186,10 @@
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.14em;
-  /* letter-spacing adds trailing space after the last glyph, which pulls the
-   * centered text visibly to the left; indent the first line to compensate. */
-  text-indent: 0.14em;
+  /* letter-spacing adds trailing space after the last glyph, so centered
+   * text sits visibly left of true center; padding-left shifts the text
+   * area right by exactly that space, recentering the ink. */
+  padding-left: 0.14em;
   line-height: 1.8;
   text-align: center;
   box-shadow: 0 4px 14px rgb(0 0 0 / 30%);
@@ -777,6 +778,38 @@
     window.addEventListener("pagehide", leave);
   }
 
+  // Presence heartbeat: every marketplace tab (detail page here) tells the
+  // host it is open, once per couple of seconds, keyed by a per-load random
+  // key. The host keeps these in browser-tabs.json; when the bar icon is
+  // clicked with a live marketplace tab, the host marks a focus request and
+  // the next heartbeat answers with activate:true — then this tab asks the
+  // background worker to focus its window and select it (no dropdown). A
+  // killed browser's records simply age out.
+  const PRESENCE_INTERVAL_MS = 2000;
+  const presenceKey = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  const presenceSource = /firefox|gecko/i.test(navigator.userAgent) ? "firefox" : "chrome";
+
+  function presenceTick() {
+    talkToHost(
+      { type: "visit", source: presenceSource, key: presenceKey, url: window.location.href },
+      HOST_STATUS_TIMEOUT_MS
+    ).then((response) => {
+      if (response && response.activate === true) {
+        talkToHost({ type: "activate-tab" }, HOST_STATUS_TIMEOUT_MS);
+      }
+    });
+  }
+
+  function startPresence() {
+    presenceTick();
+    setInterval(presenceTick, PRESENCE_INTERVAL_MS);
+    window.addEventListener("pagehide", () => {
+      // Best effort: drop this tab's record immediately so the bar widget
+      // stops offering a focus jump to a closed page.
+      try { api.runtime.sendMessage({ type: "unvisit", key: presenceKey }); } catch (_e) { /* unloading */ }
+    });
+  }
+
   async function init() {
     if (!PLUGIN_ID) return;
     injectStyles();
@@ -843,5 +876,6 @@
     observer.observe(target, { childList: true, subtree: true });
   }
 
+  startPresence(); // runs even without a host: presence keeps the host warm
   init();
 })();
