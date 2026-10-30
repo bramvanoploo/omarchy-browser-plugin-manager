@@ -1038,8 +1038,9 @@ Panel {
 
     // Update counter badge: pixel-identical to omaplug's pending-update
     // indicator — accent pill anchored to the icon's top-right corner with a
-    // bar-background border, white bold caption*0.85 text, "9+" cap, hidden
-    // at 0. It counts the updates the verification setting actually allows to
+    // bar-background border, bold caption*0.85 text in the theme background
+    // tone (dark on the light accent; flips with the theme), "9+" cap,
+    // hidden at 0. It counts the updates the verification setting actually allows to
     // apply (eligibleCount), not every outdated plugin.
     Rectangle {
       id: updateBadge
@@ -1059,7 +1060,7 @@ Panel {
         id: updateBadgeText
         anchors.centerIn: parent
         text: updateBadge.countText
-        color: "white"
+        color: Color.background
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.caption * 0.85
         font.bold: true
