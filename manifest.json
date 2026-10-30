@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "bramvanoploo.omarchy-browser-plugin-manager",
   "name": "Browser Plugin Manager",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "author": "Bram van Oploo",
   "description": "Installation wizard for Omarchy plugins, summoned from the browser extension's Install button; bar-icon watcher mode lights up on manageable plugin pages",
   "kinds": [

@@ -72,6 +72,12 @@ Panel {
   readonly property int tabStaleMs: 10000
   property int liveTabCount: 0
 
+  // True while a fresh heartbeat marks the tab the user is looking at (the
+  // active tab of a focused browser window) as a plugin detail page. The
+  // bar icon's left click then opens the popup panel straight away: the
+  // plugin is on screen, so there is nothing to jump to.
+  property bool activePluginPage: false
+
   // Focus jump request: written to browser-focus.json; the host stamps
   // consumedBy with the key of the visiting tab that answers, and that tab
   // asks the browser to focus its window and select itself. The popup
@@ -604,6 +610,7 @@ Panel {
   // click path).
   function applyTabs(raw) {
     var count = 0
+    var activePage = false
     var s = String(raw || "").trim()
     if (s) {
       var obj = null
@@ -614,11 +621,19 @@ Panel {
         var t = tabs[i]
         if (t && typeof t === "object" && typeof t.key === "string" && t.key !== ""
           && typeof t.url === "string" && t.url.indexOf("https://plugins.omarchy.org/") === 0
-          && Number(t.ts) > 0 && (nowSec - Number(t.ts)) * 1000 < root.tabStaleMs)
+          && Number(t.ts) > 0 && (nowSec - Number(t.ts)) * 1000 < root.tabStaleMs) {
           count++
+          // The heartbeat flags the tab the user is looking at (active tab
+          // of a focused window); on a plugin detail page that is the
+          // left-click-opens-the-panel case.
+          if (t.active === true
+            && t.url.indexOf("https://plugins.omarchy.org/plugin.html") === 0)
+            activePage = true
+        }
       }
     }
     root.liveTabCount = count
+    root.activePluginPage = activePage
   }
 
   // Ask the browser to raise the first live marketplace tab: write the
@@ -1142,11 +1157,13 @@ Panel {
 
     onPressed: function (code) {
       // Left: with a live marketplace tab, jump the browser to it (focus
-      // the window, select the tab) and do NOT open the dropdown; without
-      // one, the plugin popup. Right: the settings panel (mutually
+      // the window, select the tab) and do NOT open the dropdown — except
+      // when the tab the user is looking at already is a plugin page: the
+      // plugin is on screen, so the click shows the plugin popup. Without
+      // a live tab, the plugin popup. Right: the settings panel (mutually
       // exclusive, both route through the toggle helpers).
       if (code === Qt.LeftButton) {
-        if (root.liveTabCount > 0) {
+        if (root.liveTabCount > 0 && !root.activePluginPage) {
           root.requestFocusTab()
           return
         }

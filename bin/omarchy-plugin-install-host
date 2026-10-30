@@ -58,7 +58,7 @@ set -euo pipefail
 export LC_ALL=C.UTF-8
 
 HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
-HOST_VERSION="0.7.1"
+HOST_VERSION="0.8.0"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
 MAX_FRAME_BYTES=65536
@@ -471,15 +471,16 @@ clear_watch_for_id() {
 # request, so the dispatch answers activate:true and the extension raises
 # the tab.
 record_visit() {
-  local payload="$1" source="" key="" url="" ts="" tmp="" merged=""
+  local payload="$1" source="" key="" url="" active="" ts="" tmp="" merged=""
   source=$(jq -r 'if type == "object" and (.source | type) == "string" then .source[0:32] else "" end' <<<"$payload" 2>/dev/null) || source=""
   key=$(jq -r 'if type == "object" and (.key | type) == "string" then .key[0:64] else "" end' <<<"$payload" 2>/dev/null) || key=""
   url=$(jq -r 'if type == "object" and (.url | type) == "string" then .url[0:512] else "" end' <<<"$payload" 2>/dev/null) || url=""
+  active=$(jq -r 'if type == "object" and (.active | type) == "boolean" then .active else false end' <<<"$payload" 2>/dev/null) || active=false
   [[ -n $key && -n $url ]] || return 1
   ts=$(date +%s)
   local entry
-  entry=$(jq -cn --arg source "$source" --arg key "$key" --arg url "$url" --argjson ts "$ts" \
-    '{source:$source, key:$key, url:$url, ts:$ts}') || return 1
+  entry=$(jq -cn --arg source "$source" --arg key "$key" --arg url "$url" --argjson ts "$ts" --argjson active "$active" \
+    '{source:$source, key:$key, url:$url, ts:$ts, active:$active}') || return 1
   mkdir -p "$STATE_DIR" || return 1
   merged=$(jq -c --argjson entry "$entry" --argjson fresh "$((ts - 30))" '
     ((.tabs // []) + [$entry]

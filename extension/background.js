@@ -238,6 +238,16 @@ async function syncPresence() {
     return;
   }
   const source = await detectSource();
+  // Focused windows: a heartbeat marks a tab active only while the user is
+  // actually looking at it (active tab of a focused window), so the bar
+  // widget can open its panel straight away when the visible tab is a
+  // plugin page instead of jumping the browser to a marketplace tab.
+  const focusedWindows = new Set();
+  try {
+    for (const win of await api.windows.getAll()) {
+      if (win.focused === true) focusedWindows.add(win.id);
+    }
+  } catch (_e) { /* window info unavailable: beats stay active:false */ }
   for (const tab of tabs) {
     if (typeof tab.id !== "number" || typeof tab.url !== "string") continue;
     let key = presenceKeys.get(tab.id);
@@ -251,6 +261,7 @@ async function syncPresence() {
         source,
         key,
         url: tab.url.slice(0, 512),
+        active: tab.active === true && focusedWindows.has(tab.windowId),
       });
       if (response && response.activate === true) await activateTab(tab);
     } catch (_e) { /* host down: retry next tick */ }
