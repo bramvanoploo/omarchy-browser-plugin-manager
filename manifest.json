@@ -4,7 +4,7 @@
   "name": "Browser Plugin Manager",
   "version": "0.8.0",
   "author": "Bram van Oploo",
-  "description": "Installation wizard for Omarchy plugins, summoned from the browser extension's Install button; bar-icon watcher mode lights up on manageable plugin pages",
+  "description": "I prefer browsing Omarchy plugins through the official marketplace. It feels a bit primitive to not have the option to manage plugins from that marketplace. This plugin, combined with browser extensions for Firefox and Chromium-based browsers, solves that (hopefully). Early development, so expect bugs and evolution!",
   "kinds": [
     "overlay",
     "bar-widget"
