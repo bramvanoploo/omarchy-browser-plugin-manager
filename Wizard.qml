@@ -439,14 +439,6 @@ Item {
         root.catalogLoaded = true
       }
     }
-    // Spawn failure emits no exit code: settle the flag so the wizard does
-    // not sit on "Loading marketplace data…" forever.
-    onFailed: {
-      if (!root.catalogLoaded) {
-        root.catalogError = "Marketplace catalog could not be fetched"
-        root.catalogLoaded = true
-      }
-    }
   }
 
   Process {
@@ -478,14 +470,6 @@ Item {
     }
     onExited: function (exitCode) {
       if (exitCode !== 0 && !root.manifestLoaded) {
-        root.manifestError = "Plugin manifest.json could not be fetched"
-        root.manifestLoaded = true
-      }
-    }
-    // Spawn failure emits no exit code: settle the flag so the wizard does
-    // not sit on "Loading marketplace data…" forever.
-    onFailed: {
-      if (!root.manifestLoaded) {
         root.manifestError = "Plugin manifest.json could not be fetched"
         root.manifestLoaded = true
       }
@@ -534,11 +518,6 @@ Item {
       if (exitCode !== 0 && root.stage === "review") {
         root.catalogError = "Could not read the local plugin list"
       }
-    }
-    // Spawn failure emits no exit code: explain on the review stage.
-    onFailed: {
-      if (root.stage === "review")
-        root.catalogError = "Could not read the local plugin list"
     }
   }
 
@@ -592,12 +571,6 @@ Item {
         root.defaultBrowserId = ""
         root.defaultBrowserLoaded = true
       }
-    }
-    // Spawn failure emits no exit code: settle with the empty (Firefox)
-    // fallback so the prompt stage renders.
-    onFailed: {
-      root.defaultBrowserId = ""
-      root.defaultBrowserLoaded = true
     }
   }
 
