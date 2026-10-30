@@ -1730,13 +1730,13 @@ Panel {
     bar: root.bar
     open: root.settingsOpen
     padding: Style.space(24)
-    contentWidth: settingsPopup.fittedContentWidth(Style.space(430))
+    contentWidth: settingsPopup.fittedContentWidth(Style.space(480))
     contentHeight: settingsPopup.fittedContentHeight(settingsColumn.implicitHeight, Style.space(560))
 
     Column {
       id: settingsColumn
       width: parent ? parent.width : 0
-      spacing: Style.space(14)
+      spacing: Style.space(20)
 
       Row {
         width: settingsColumn.width
