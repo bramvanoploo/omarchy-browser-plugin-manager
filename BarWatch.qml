@@ -1267,7 +1267,7 @@ Panel {
         spacing: Style.space(14)
 
         Text {
-          text: ""
+          text: ""
           font.family: Style.font.family
           font.pixelSize: Math.max(Style.font.heading,
             Math.round(spHeaderTextCol.implicitHeight))
