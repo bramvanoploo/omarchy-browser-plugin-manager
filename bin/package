@@ -86,6 +86,8 @@ jq '.background = {scripts: ["background.js"]}
 mkdir -p "$STAGE/chrome"
 cp -r "$EXT_DIR/." "$STAGE/chrome/"
 rm -f "$STAGE/chrome/.amo-upload-uuid"
+jq 'del(.background.scripts)' "$STAGE/chrome/manifest.json" > "$STAGE/chrome/manifest.json.tmp" \
+  && mv "$STAGE/chrome/manifest.json.tmp" "$STAGE/chrome/manifest.json"
 ( cd "$STAGE/chrome" && \
   zip -qX "$DIST_DIR/$NAME-$VERSION-chrome.zip" manifest.json && \
   zip -qrX "$DIST_DIR/$NAME-$VERSION-chrome.zip" . -x manifest.json )
@@ -97,6 +99,7 @@ mkdir -p "$STAGE_SRC"
 git -C "$REPO_DIR" ls-files -z | xargs -0 -I{} cp -a --parents {} "$STAGE_SRC"/ 2>/dev/null \
   || cp -a "$REPO_DIR"/. "$STAGE_SRC"/
 rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist" "$STAGE_SRC/chrome-key.pem" "$STAGE_SRC"/chrome-key-*.pem.bak "$STAGE_SRC/.env"
+rm -f "$STAGE_SRC/extension/.amo-upload-uuid"
 ( cd "$STAGE/src" && zip -qr "$DIST_DIR/$NAME-$VERSION-$STAMP.zip" . )
 
 cat <<EOF

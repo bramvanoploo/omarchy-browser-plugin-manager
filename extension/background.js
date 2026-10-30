@@ -81,7 +81,7 @@ function ensurePort() {
   activePort = port;
 
   port.onMessage.addListener((response) => {
-    if (!currentTask) return;
+    if (activePort !== port || !currentTask) return;
     const task = currentTask;
     currentTask = null;
     clearTimeout(task.timer);
@@ -91,8 +91,10 @@ function ensurePort() {
 
   port.onDisconnect.addListener(() => {
     void api.runtime.lastError;
-    if (activePort === port) activePort = null;
-    dropPort("host-not-registered");
+    if (activePort === port) {
+      activePort = null;
+      dropPort("host-not-registered");
+    }
   });
 
   return port;
@@ -137,6 +139,7 @@ function sanitizeMessage(message) {
   if (typeof message.source === "string") payload.source = message.source.slice(0, 32);
   if (typeof message.key === "string") payload.key = message.key.slice(0, 64);
   if (typeof message.url === "string") payload.url = message.url.slice(0, 512);
+  if (typeof message.paused === "boolean") payload.paused = message.paused;
   return payload;
 }
 

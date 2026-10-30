@@ -27,11 +27,17 @@ for asset in wizard_install.png wizard_disable.png buttons_install.png buttons_d
   fi
 done
 
+CHROMIUM_BIN="$(command -v chromium || command -v google-chrome || command -v brave || true)"
+if [[ -z "$CHROMIUM_BIN" ]]; then
+  echo "Error: chromium, google-chrome, or brave not found on PATH" >&2
+  exit 1
+fi
+
 RENDER_HTML="$SCRIPT_DIR/index.rendered.html"
 sed "s/{{VERSION}}/$VERSION/g" "$SCRIPT_DIR/template.html" > "$RENDER_HTML"
 
-echo "==> Rendering 1920x1080 preview banner via Chromium headless..."
-chromium \
+echo "==> Rendering 1920x1080 preview banner via Chromium headless ($CHROMIUM_BIN)..."
+"$CHROMIUM_BIN" \
   --headless=new \
   --no-sandbox \
   --disable-gpu \

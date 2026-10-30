@@ -134,6 +134,9 @@ Item {
     manifestProc.running = false
     listProc.running = false
     verifyProc.running = false
+    enableProc.running = false
+    disableProc.running = false
+    browserProc.running = false
   }
 
   function validPluginId(id) {
@@ -365,7 +368,7 @@ Item {
 
   function runUninstall() {
     if (!root.canAct) return
-    root.spawnWorker("uninstall")
+    root.spawnWorker("uninstall", "")
   }
 
   // Update runs detached like install/uninstall: a git pull touches the
@@ -434,6 +437,7 @@ Item {
       }
     }
     onExited: function (exitCode) {
+      if (!root.opened) return
       if (exitCode !== 0 && !root.catalogLoaded) {
         root.catalogError = "Marketplace catalog could not be fetched"
         root.catalogLoaded = true
@@ -469,6 +473,7 @@ Item {
       }
     }
     onExited: function (exitCode) {
+      if (!root.opened) return
       if (exitCode !== 0 && !root.manifestLoaded) {
         root.manifestError = "Plugin manifest.json could not be fetched"
         root.manifestLoaded = true
@@ -515,6 +520,7 @@ Item {
       }
     }
     onExited: function (exitCode) {
+      if (!root.opened) return
       if (exitCode !== 0 && root.stage === "review") {
         root.catalogError = "Could not read the local plugin list"
       }
@@ -544,9 +550,9 @@ Item {
   Component.onDestruction: {
     Quickshell.execDetached(["bash", "-c",
       "sleep 3;"
-      + " d=\"$HOME/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager\";"
+      + " d=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager\";"
       + " [ -d \"$d\" ] && exit 0;"
-      + " s=\"$HOME/.local/state/omarchy/bramvanoploo.omarchy-browser-plugin-manager/plugin-installer-setup\";"
+      + " s=\"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager/plugin-installer-setup\";"
       + " [ -f \"$s\" ] && bash \"$s\" --uninstall >/dev/null 2>&1; true"])
   }
 
@@ -567,6 +573,7 @@ Item {
       }
     }
     onExited: function (exitCode) {
+      if (!root.opened) return
       if (exitCode !== 0 && !root.defaultBrowserLoaded) {
         root.defaultBrowserId = ""
         root.defaultBrowserLoaded = true
@@ -590,19 +597,22 @@ Item {
   function buildWorkerScript(kind) {
     var s = [
       "set -u",
+      "export PATH=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH\"",
       "ID=\"$1\"",
       "NAME=\"$2\"",
       "REPO=\"$3\"",
       "SECTION=\"$4\"",
+      "notify_cmd=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send\"",
+      "command -v \"$notify_cmd\" >/dev/null 2>&1 || notify_cmd=\"$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)\"",
       "notify() {",
-      "  omarchy-notification-send --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
+      "  \"$notify_cmd\" --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
       "}",
       "list() { omarchy plugin list --json 2>/dev/null; }",
       "enabled() { list | jq -e --arg id \"$ID\" 'any(.[]; .id == $id and .enabled == true)' >/dev/null 2>&1; }",
       // The bar layout entry is the real placement record; a missing
       // user config means defaults are in use and nothing verifies it.
       "placed() {",
-      "  local f=\"$HOME/.config/omarchy/shell.json\"",
+      "  local f=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json\"",
       "  [ -n \"$SECTION\" ] || return 0",
       "  [ -f \"$f\" ] || return 0",
       "  jq -e --arg id \"$ID\" --arg s \"$SECTION\" '(.bar.layout[$s] // []) | any(.[]; .id == $id)' \"$f\" >/dev/null 2>&1",
@@ -632,7 +642,7 @@ Item {
         "if ! OUT=\"$(omarchy plugin add \"$REPO\" --yes 2>&1)\"; then",
         "  # The clone can land while add fails on its own enable attempt;",
         "  # only re-add when the plugin directory did not arrive.",
-        "  if [ ! -d \"$HOME/.config/omarchy/plugins/$ID\" ]; then",
+        "  if [ ! -d \"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$ID\" ]; then",
         "    notify \"Plugin install failed\" \"$NAME: $OUT\"",
         "    exit 1",
         "  fi",
@@ -671,7 +681,7 @@ Item {
         "  # browser extension carries the Install buttons. Re-summon the",
         "  # (freshly reloaded) wizard on the browser-extension prompt.",
         "  if [ \"$ID\" = \"bramvanoploo.omarchy-browser-plugin-manager\" ]; then",
-        "    PAYLOAD=$(jq -cn --arg id \"$ID\" --arg repo \"$REPO\" --arg name \"$NAME\" '{source:\"worker\",mode:\"browser-prompt\",id:$id,repo:$repo,name:$name}')",
+        "    PAYLOAD=$(jq -cn --arg id \"$ID\" --arg repo \"$REPO\" --arg name \"$NAME\" '{source:\"worker\",mode:\"browser-prompt\",id:$id,repo:$repo,name:$name}' 2>/dev/null) || PAYLOAD=\"{\\\"source\\\":\\\"worker\\\",\\\"mode\\\":\\\"browser-prompt\\\",\\\"id\\\":\\\"$ID\\\",\\\"repo\\\":\\\"$REPO\\\",\\\"name\\\":\\\"$NAME\\\"}\"",
         "    omarchy-shell -q shell summon \"$ID\" \"$PAYLOAD\"",
         "  fi",
         "elif enabled; then",
@@ -685,7 +695,7 @@ Item {
         // Unregister the native messaging host while the plugin directory
         // still exists: the setup script lives inside it, and after removal
         // nothing can find it.
-        "PLUG=\"$HOME/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager\"",
+        "PLUG=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager\"",
         "if [ -x \"$PLUG/bin/plugin-installer-setup\" ]; then",
         "  \"$PLUG/bin/plugin-installer-setup\" --uninstall >/dev/null 2>&1 || true",
         "fi",
@@ -722,6 +732,7 @@ Item {
       onStreamFinished: root.enableOutput += "\n" + String(text || "")
     }
     onExited: function (exitCode) {
+      if (!root.opened) return
       if (exitCode !== 0) {
         // Same discovery race as the add's internal enable: the shell's
         // registry scan may not have reached the fresh clone yet. Retry
@@ -803,6 +814,7 @@ Item {
       }
     }
     onExited: function (exitCode) {
+      if (!root.opened) return
       if (exitCode !== 0) root.fail("omarchy plugin list exited with code " + exitCode)
     }
   }
@@ -812,6 +824,7 @@ Item {
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.enableOutput += "\n" + String(text || "") }
     stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.enableOutput += "\n" + String(text || "") }
     onExited: function (exitCode) {
+      if (!root.opened) return
       if (exitCode !== 0) {
         root.fail("omarchy plugin disable exited with code " + exitCode)
         return

@@ -123,7 +123,7 @@ main() {
 
   local chromium_id key_id chromium_manifest firefox_manifest dir ext_abs
   local id o skip
-  local -a origins ext_dirs
+  local -a origins ext_dirs firefox_addons
   ext_abs=$(realpath "$ext_dir")
 
   # Persist every extension dir ever registered: the shell plugin
@@ -136,7 +136,7 @@ main() {
   mkdir -p "$state_dir" 2>/dev/null || true
   ext_dirs=("$ext_abs")
   if [[ -f $origins_conf ]]; then
-    while IFS= read -r dir; do
+    while IFS= read -r dir || [[ -n $dir ]]; do
       [[ -n $dir && -f "$dir/manifest.json" ]] || continue
       skip=0
       for o in "${ext_dirs[@]}"; do [[ $o == "$dir" ]] && skip=1 && break; done
@@ -202,7 +202,6 @@ main() {
   # watcher that runs this copy with --uninstall. Manifest removal is
   # self-contained; the copy must never be run for registration from here
   # (its host path would point into the state dir, not the plugin folder).
-  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager"
   mkdir -p "$state_dir" && cp -f "$SCRIPT_PATH" "$state_dir/plugin-installer-setup"
 
   cat <<EOF

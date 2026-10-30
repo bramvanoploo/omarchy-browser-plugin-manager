@@ -420,6 +420,7 @@
 
     panel.append(foot, note);
     document.body.append(backdrop, panel);
+    panelNodes = { backdrop, panel };
 
     const dismiss = (event) => {
       if (event.key === "Escape") closePanel();
@@ -439,7 +440,7 @@
       }, HOST_ACTION_TIMEOUT_MS);
       note.hidden = false;
       if (response && response.ok) {
-        foot.remove();
+        if (foot.parentNode) foot.remove();
         note.textContent = "Confirm the update in the Omarchy window.";
         // Identity guard: a stale timer must not close a panel that the
         // user opened again within the 4s window.
@@ -480,6 +481,8 @@
   // When the host reports such a plugin installed, we replace that span with
   // a real Uninstall/Update button and stash the span on the card so an
   // uninstall can restore the page's original look.
+  const passiveSpans = new WeakMap();
+
   function passiveSpanFor(card) {
     return card.querySelector("span.card-install.unavailable, span.card-install");
   }
@@ -493,7 +496,7 @@
     if (!installed) return;
     const span = passiveSpanFor(card);
     if (!span) return;
-    card._piPassiveSpan = span;
+    passiveSpans.set(card, span);
     span.replaceWith(makeCardButton(plugin, true, update));
   }
 
@@ -646,7 +649,8 @@
         if (!installable(plugin)) {
           // A plugin the marketplace cannot install (we replaced its "Manual"
           // span) went back to not-installed: restore the page's own span.
-          const span = cardFor(button)._piPassiveSpan;
+          const card = cardFor(button);
+          const span = card ? passiveSpans.get(card) : null;
           if (span) button.replaceWith(span);
           else button.remove();
           continue;

@@ -398,10 +398,14 @@ Panel {
   // fires one real rescan after the whole batch, so the bar reloads once.
   readonly property string updateWorkerScript: [
     "set -u",
+    "export PATH=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH\"",
+    "notify_cmd=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send\"",
+    "command -v \"$notify_cmd\" >/dev/null 2>&1 || notify_cmd=\"$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)\"",
     "notify() {",
-    "  omarchy-notification-send --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
+    "  \"$notify_cmd\" --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
     "}",
-    "real_shell=/usr/share/omarchy/bin/omarchy-shell",
+    "real_shell=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell\"",
+    "command -v \"$real_shell\" >/dev/null 2>&1 || real_shell=\"$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)\"",
     "bin_dir=$(mktemp -d)",
     "printf '%s\\n' '#!/bin/bash' '[ \"${1:-}\" = shell ] && [ \"${2:-}\" = rescanPlugins ] && exit 0' 'exec '\"$real_shell\"' \"$@\"' > \"$bin_dir/omarchy-shell\"",
     "chmod +x \"$bin_dir/omarchy-shell\"",
@@ -452,8 +456,8 @@ Panel {
   property string installedVersion: ""
 
   readonly property string pluginsDir: {
-    var base = Quickshell.env("HOME") || "/tmp"
-    return base + "/.config/omarchy/plugins"
+    var base = Quickshell.env("XDG_CONFIG_HOME") || ((Quickshell.env("HOME") || "/tmp") + "/.config")
+    return base + "/omarchy/plugins"
   }
   readonly property string installedManifestPath: {
     var s = root.statusForId
@@ -472,8 +476,10 @@ Panel {
   }
 
   function compareVersions(a, b) {
-    var pa = String(a).split(".")
-    var pb = String(b).split(".")
+    var sa = String(a || "").trim().replace(/^v/i, "")
+    var sb = String(b || "").trim().replace(/^v/i, "")
+    var pa = sa.split(".")
+    var pb = sb.split(".")
     for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
       var na = parseInt(pa[i], 10)
       var nb = parseInt(pb[i], 10)
@@ -621,7 +627,9 @@ Panel {
         var t = tabs[i]
         if (t && typeof t === "object" && typeof t.key === "string" && t.key !== ""
           && typeof t.url === "string" && t.url.indexOf("https://plugins.omarchy.org/") === 0
-          && Number(t.ts) > 0 && (nowSec - Number(t.ts)) * 1000 < root.tabStaleMs) {
+          && Number(t.ts) > 0 && !isNaN(Number(t.ts))
+          && (nowSec - Number(t.ts)) * 1000 < root.tabStaleMs
+          && (Number(t.ts) - nowSec) * 1000 < root.tabStaleMs) {
           count++
           // The heartbeat flags the tab the user is looking at (active tab
           // of a focused window); on a plugin detail page that is the
@@ -882,11 +890,12 @@ Panel {
   readonly property string checkScript: [
     "set -u",
     "export GIT_TERMINAL_PROMPT=0",
+    "export GIT_ASKPASS=true",
     "export GIT_SSH_COMMAND=\"${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}\"",
-    "PLUG=\"$HOME/.config/omarchy/plugins\"",
+    "PLUG=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins\"",
     "list=$(omarchy plugin list --json 2>/dev/null) || list=\"[]\"",
     "catalog=$(curl -fsSL --proto '=https' --max-time 30 --max-filesize 16777216 \"https://plugins.omarchy.org/catalog.json\" 2>/dev/null) || catalog=\"\"",
-    "[ -n \"$catalog\" ] || catalog='{\"plugins\":[]}'",
+    "[ -n \"$catalog\" ] || { printf '%s' '{\"ok\":false,\"error\":\"catalog-unreachable\"}'; exit 0; }",
     "rows=\"\"",
     "for ID in $(jq -r '(if type == \"array\" then . else [] end)[] | select(type == \"object\" and ((.firstParty // false) | not)) | .id // empty' <<<\"$list\" 2>/dev/null); do",
     "  case \"$ID\" in *[!a-z0-9.-]*|.*|*..*) continue ;; esac",
@@ -901,7 +910,7 @@ Panel {
     "  REMOTE=$(git -C \"$D\" rev-parse --verify FETCH_HEAD 2>/dev/null) || continue",
     "  if [ -n \"$REMOTE\" ] && [ \"$HEAD_SHA\" != \"$REMOTE\" ] && git -C \"$D\" merge-base --is-ancestor \"$HEAD_SHA\" \"$REMOTE\" 2>/dev/null; then",
     "    M=\"$D/manifest.json\"",
-    "    VER=$(jq -r '.version // \"\"' \"$M\" 2>/dev/null)",
+    "    VER=$(jq -r '.version // \"\"' \"$M\" 2>/dev/null | tr -d '\\t\\r\\n')",
     "    NAME=$(jq -r '.name // \"\"' \"$M\" 2>/dev/null | tr -d '\\t\\r\\n')",
     "    rows+=$(printf '%s\\t%s\\t%s' \"$ID\" \"$VER\" \"$NAME\")$'\\n'",
     "  fi",

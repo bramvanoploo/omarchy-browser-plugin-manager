@@ -464,9 +464,9 @@
     const className = kind === "installed" ? "pi-ribbon pi-ribbon--stable" : "pi-ribbon";
     const text = kind === "update" ? "UPDATE" : "INSTALLED";
     if (existing) {
-      if (existing.className === className) return;
-      existing.className = className;
-      existing.firstChild.textContent = text;
+      if (existing.className !== className) existing.className = className;
+      const label = existing.firstElementChild;
+      if (label && label.textContent !== text) label.textContent = text;
       return;
     }
     if (getComputedStyle(card).position === "static") {
@@ -582,6 +582,7 @@
 
     panel.append(foot, note);
     document.body.append(backdrop, panel);
+    panelNodes = { backdrop, panel };
 
     const dismiss = (event) => {
       if (event.key === "Escape") closePanel();
@@ -601,7 +602,7 @@
       }, HOST_ACTION_TIMEOUT_MS);
       note.hidden = false;
       if (response && response.ok) {
-        foot.remove();
+        if (foot.parentNode) foot.remove();
         note.textContent = "Confirm the update in the Omarchy window.";
         // Identity guard: a stale timer must not close a panel that the
         // user opened again within the 4s window.

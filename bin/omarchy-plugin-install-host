@@ -73,6 +73,8 @@ WATCH_FILE="$STATE_DIR/browser-watch.json"
 # the next heartbeat (or discarded as stale).
 TABS_FILE="$STATE_DIR/browser-tabs.json"
 FOCUS_FILE="$STATE_DIR/browser-focus.json"
+TABS_LOCK_FILE="$STATE_DIR/browser-tabs.lock"
+WATCH_LOCK_FILE="$STATE_DIR/browser-watch.lock"
 # Update-detection cache: {checked, plugins:[{id,name,installedVersion,
 # latestVersion,verified}]} for every plugin whose git HEAD is behind origin
 # (all checks are cheap file reads for the extension; the git work runs in a
@@ -160,8 +162,9 @@ update_cache_age() {
 run_update_check() {
   local list="" catalog="" rows="" id d head_sha remote ver name plugins tmp ts
   export GIT_TERMINAL_PROMPT=0
+  export GIT_ASKPASS=true
   export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}"
-  local plug_dir="$HOME/.config/omarchy/plugins"
+  local plug_dir="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"
   list=$(omarchy plugin list --json 2>/dev/null) || list="[]"
   [[ -n $list ]] || list="[]"
   catalog=$(curl -fsSL --proto '=https' --max-time 30 --max-filesize 16777216 "$CATALOG_URL" 2>/dev/null) || catalog=""
@@ -179,7 +182,7 @@ run_update_check() {
     timeout 15 git -C "$d" fetch --quiet origin HEAD 2>/dev/null || continue
     remote=$(git -C "$d" rev-parse --verify FETCH_HEAD 2>/dev/null) || continue
     if [[ -n $remote && $head_sha != "$remote" ]] && git -C "$d" merge-base --is-ancestor "$head_sha" "$remote" 2>/dev/null; then
-      ver=$(jq -r '.version // ""' "$d/manifest.json" 2>/dev/null) || ver=""
+      ver=$(jq -r '.version // ""' "$d/manifest.json" 2>/dev/null | tr -d '\t\r\n') || ver=""
       name=$(jq -r '.name // ""' "$d/manifest.json" 2>/dev/null | tr -d '\t\r\n') || name=""
       rows+=$(printf '%s\t%s\t%s' "$id" "$ver" "$name")$'\n'
     fi
@@ -194,7 +197,9 @@ run_update_check() {
       | {id: $p.id,
         name: (if $p.name != "" then $p.name else $p.id end),
         installedVersion: ($p.installedVersion | tostring),
+        installed: ($p.installedVersion | tostring),
         latestVersion: ((if $e == null then "" else ($e.version // "") end) | tostring),
+        latest: ((if $e == null then "" else ($e.version // "") end) | tostring),
         verified: ((if $e == null then "" else ($e.verificationStatus // "") end) | tostring) == "verified"})
   ' 2>/dev/null) || plugins="[]"
   [[ ${plugins:0:1} == "[" ]] || plugins="[]"
@@ -426,29 +431,38 @@ record_watch() {
   name=$(jq -r 'if type == "object" and (.name | type) == "string" then .name[0:128] else "" end' <<<"$payload" 2>/dev/null) || name=""
   paused=$(jq -r 'if type == "object" and (.paused == true) then "true" else "false" end' <<<"$payload" 2>/dev/null) || paused="false"
   ts=$(date +%s)
-  if [[ $paused == "true" ]]; then
-    # Id-scoped pause (same rule as clear_watch_for_id): a late blur write
-    # from the tab that was switched away from must never pause the new
-    # tab's live record, and a pause must never create a record.
-    [[ -f $WATCH_FILE ]] || return 0
-    [[ "$(jq -r '.id // empty' "$WATCH_FILE" 2>/dev/null)" == "$_target_id" ]] || return 0
-    json=$(jq -c --argjson pid "$$" --argjson ts "$ts" \
-      '. + {paused:true, pid:$pid, ts:$ts}' "$WATCH_FILE" 2>/dev/null) || return 1
-  else
-    json=$(jq -cn --arg id "$_target_id" --arg repo "$_target_repo" --arg name "$name" \
-      --argjson pid "$$" --argjson ts "$ts" \
-      '{id:$id, repo:$repo, name:$name, pid:$pid, ts:$ts}') || return 1
-  fi
   mkdir -p "$STATE_DIR" || return 1
-  tmp="$WATCH_FILE.tmp.$$"
-  printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$WATCH_FILE"
+  (
+    exec 7>"$WATCH_LOCK_FILE" 2>/dev/null || exit 1
+    flock -x 7 || exit 1
+    if [[ $paused == "true" ]]; then
+      # Id-scoped pause (same rule as clear_watch_for_id): a late blur write
+      # from the tab that was switched away from must never pause the new
+      # tab's live record, and a pause must never create a record.
+      [[ -f $WATCH_FILE ]] || exit 0
+      [[ "$(jq -r '.id // empty' "$WATCH_FILE" 2>/dev/null)" == "$_target_id" ]] || exit 0
+      json=$(jq -c --argjson pid "$$" --argjson ts "$ts" \
+        '. + {paused:true, pid:$pid, ts:$ts}' "$WATCH_FILE" 2>/dev/null) || exit 1
+    else
+      json=$(jq -cn --arg id "$_target_id" --arg repo "$_target_repo" --arg name "$name" \
+        --argjson pid "$$" --argjson ts "$ts" \
+        '{id:$id, repo:$repo, name:$name, pid:$pid, ts:$ts}') || exit 1
+    fi
+    tmp="$WATCH_FILE.tmp.$$"
+    printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$WATCH_FILE"
+  )
 }
 
 # Remove the beacon record, but only when this host process wrote it: a
 # second running browser has its own host keeping its own beacon fresh.
 clear_watch() {
   [[ -f $WATCH_FILE ]] || return 0
-  [[ "$(jq -r '.pid // empty' "$WATCH_FILE" 2>/dev/null)" == "$$" ]] && rm -f "$WATCH_FILE"
+  (
+    exec 7>"$WATCH_LOCK_FILE" 2>/dev/null || exit 0
+    flock -x 7 || exit 0
+    [[ -f $WATCH_FILE ]] || exit 0
+    [[ "$(jq -r '.pid // empty' "$WATCH_FILE" 2>/dev/null)" == "$$" ]] && rm -f "$WATCH_FILE"
+  )
   return 0
 }
 
@@ -460,8 +474,14 @@ clear_watch() {
 clear_watch_for_id() {
   local id="$1"
   [[ -n $id && -f $WATCH_FILE ]] || return 0
-  [[ "$(jq -r '.id // empty' "$WATCH_FILE" 2>/dev/null)" == "$id" ]] || return 0
-  clear_watch
+  (
+    exec 7>"$WATCH_LOCK_FILE" 2>/dev/null || exit 0
+    flock -x 7 || exit 0
+    [[ -f $WATCH_FILE ]] || exit 0
+    [[ "$(jq -r '.id // empty' "$WATCH_FILE" 2>/dev/null)" == "$id" ]] || exit 0
+    [[ "$(jq -r '.pid // empty' "$WATCH_FILE" 2>/dev/null)" == "$$" ]] && rm -f "$WATCH_FILE"
+  )
+  return 0
 }
 
 # Presence heartbeat record: one entry per open marketplace tab, keyed by
@@ -482,14 +502,18 @@ record_visit() {
   entry=$(jq -cn --arg source "$source" --arg key "$key" --arg url "$url" --argjson ts "$ts" --argjson active "$active" \
     '{source:$source, key:$key, url:$url, ts:$ts, active:$active}') || return 1
   mkdir -p "$STATE_DIR" || return 1
-  merged=$(jq -c --argjson entry "$entry" --argjson fresh "$((ts - 30))" '
-    ((.tabs // []) + [$entry]
-     | unique_by(.source + "|" + .key)
-     | map(select((.ts // 0) >= $fresh))) as $tabs
-    | {tabs: $tabs}' "$TABS_FILE" 2>/dev/null) ||
-    merged=$(jq -cn --argjson entry "$entry" '{tabs: [$entry]}')
-  tmp="$TABS_FILE.tmp.$$"
-  printf '%s\n' "$merged" >"$tmp" && mv -f "$tmp" "$TABS_FILE"
+  (
+    exec 8>"$TABS_LOCK_FILE" 2>/dev/null || exit 1
+    flock -x 8 || exit 1
+    merged=$(jq -c --argjson entry "$entry" --argjson fresh "$((ts - 30))" '
+      ([$entry] + (.tabs // [])
+       | unique_by(.source + "|" + .key)
+       | map(select((.ts // 0) >= $fresh))) as $tabs
+      | {tabs: $tabs}' "$TABS_FILE" 2>/dev/null) ||
+      merged=$(jq -cn --argjson entry "$entry" '{tabs: [$entry]}')
+    tmp="$TABS_FILE.tmp.$$"
+    printf '%s\n' "$merged" >"$tmp" && mv -f "$tmp" "$TABS_FILE"
+  ) || return 1
   drain_focus_request "$key"
 }
 
@@ -498,9 +522,15 @@ clear_visit() {
   local payload="$1" key="" tmp="" json=""
   key=$(jq -r 'if type == "object" and (.key | type) == "string" then .key[0:64] else "" end' <<<"$payload" 2>/dev/null) || key=""
   [[ -n $key && -f $TABS_FILE ]] || return 0
-  json=$(jq -c --arg key "$key" '{tabs: ((.tabs // []) | map(select(.key != $key)))}' "$TABS_FILE" 2>/dev/null) || return 0
-  tmp="$TABS_FILE.tmp.$$"
-  printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$TABS_FILE"
+  (
+    exec 8>"$TABS_LOCK_FILE" 2>/dev/null || exit 0
+    flock -x 8 || exit 0
+    [[ -f $TABS_FILE ]] || exit 0
+    json=$(jq -c --arg key "$key" '{tabs: ((.tabs // []) | map(select(.key != $key)))}' "$TABS_FILE" 2>/dev/null) || exit 0
+    tmp="$TABS_FILE.tmp.$$"
+    printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$TABS_FILE"
+  )
+  return 0
 }
 
 # Consume a pending focus request from the bar widget: the request is live
@@ -511,18 +541,24 @@ clear_visit() {
 drain_focus_request() {
   local key="$1" ts="" now="" tmp="" json=""
   [[ -f $FOCUS_FILE ]] || return 0
-  ts=$(jq -r '.ts // 0' "$FOCUS_FILE" 2>/dev/null) || ts=0
-  now=$(( $(date +%s) * 1000 ))
-  if (( now - ts > 8000 )); then
-    # Nobody answered in time (no live tab): drop it, the widget cleans up
-    # its own state on timeout.
-    rm -f "$FOCUS_FILE" 2>/dev/null || true
-    return 0
-  fi
-  [[ "$(jq -r '.consumedBy // empty' "$FOCUS_FILE" 2>/dev/null)" == "" ]] || return 0
-  json=$(jq -c --arg by "$key" '. + {consumedBy: $by}' "$FOCUS_FILE" 2>/dev/null) || return 0
-  tmp="$FOCUS_FILE.tmp.$$"
-  printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$FOCUS_FILE" && echo activate
+  (
+    exec 9>"$FOCUS_FILE.lock" 2>/dev/null || exit 0
+    flock -x 9 || exit 0
+    [[ -f $FOCUS_FILE ]] || exit 0
+    ts=$(jq -r '.ts // 0' "$FOCUS_FILE" 2>/dev/null) || ts=0
+    now=$(( $(date +%s) * 1000 ))
+    if (( now - ts > 8000 )); then
+      # Nobody answered in time (no live tab): drop it, the widget cleans up
+      # its own state on timeout.
+      rm -f "$FOCUS_FILE" 2>/dev/null || true
+      exit 0
+    fi
+    json=$(jq -e --arg by "$key" '
+      if (.consumedBy // "") == "" then . + {consumedBy: $by} else error("already-consumed") end
+    ' "$FOCUS_FILE" 2>/dev/null) || exit 0
+    tmp="$FOCUS_FILE.tmp.$$"
+    printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$FOCUS_FILE" && echo activate
+  )
 }
 
 main() {
@@ -535,9 +571,10 @@ main() {
     : > "$trace"   # truncate on launch instead of growing forever
   fi
   on_host_exit() {
+    local rc=$?
     clear_watch
     if [[ -n $trace ]]; then
-      printf '%s exit pid=%s rc=%s\n' "$(date +%T)" "$$" "$?" >> "$trace" 2>/dev/null || true
+      printf '%s exit pid=%s rc=%s\n' "$(date +%T)" "$$" "$rc" >> "$trace" 2>/dev/null || true
     fi
   }
   trap on_host_exit EXIT

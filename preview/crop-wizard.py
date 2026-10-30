@@ -28,6 +28,9 @@ def run_len(px, get, start, step, n, ref, tol=120):
 
 
 def main():
+    if len(sys.argv) < 3:
+        print("Usage: crop-wizard.py <full-capture.png> <out.png>", file=sys.stderr)
+        sys.exit(1)
     src, dst = sys.argv[1], sys.argv[2]
     im = Image.open(src).convert("RGB")
     w, h = im.size
