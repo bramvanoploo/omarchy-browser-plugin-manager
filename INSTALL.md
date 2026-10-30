@@ -18,7 +18,7 @@ packages from the [GitHub releases page](https://github.com/bramvanoploo/omarchy
 ## 1. Register the native messaging host
 
 ```sh
-./bin/plugin-installer-setup --extension-dir ./extension
+./bin/plugin-installer-setup --extension-dir ./browser/extension
 ```
 
 This registers the host with Chrome, Chromium, Brave, and Firefox and prints
@@ -36,7 +36,7 @@ every shell start and this step is redundant.
 
 1. Open `chrome://extensions` (`brave://extensions`)
 2. Enable **Developer mode**
-3. **Load unpacked** -> select `extension/`
+3. **Load unpacked** -> select `browser/extension/`
 
 "Load unpacked" gets the path-derived ID. The store artifact
 `omarchy-browser-plugin-manager-<version>-chrome.zip` (built by `bin/package`)

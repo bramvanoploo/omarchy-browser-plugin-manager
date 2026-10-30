@@ -25,7 +25,7 @@ export LC_ALL=C
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
 REPO_DIR="$(dirname -- "$BIN_DIR")"
-EXT_DIR="$REPO_DIR/extension"
+EXT_DIR="$REPO_DIR/browser/extension"
 DIST_DIR="$REPO_DIR/dist"
 
 VERSION="$(jq -r .version "$EXT_DIR/manifest.json")"
@@ -99,7 +99,7 @@ mkdir -p "$STAGE_SRC"
 git -C "$REPO_DIR" ls-files -z | xargs -0 -I{} cp -a --parents {} "$STAGE_SRC"/ 2>/dev/null \
   || cp -a "$REPO_DIR"/. "$STAGE_SRC"/
 rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist" "$STAGE_SRC/chrome-key.pem" "$STAGE_SRC"/chrome-key-*.pem.bak "$STAGE_SRC/.env"
-rm -f "$STAGE_SRC/extension/.amo-upload-uuid"
+rm -f "$STAGE_SRC/browser/extension/.amo-upload-uuid"
 ( cd "$STAGE/src" && zip -qr "$DIST_DIR/$NAME-$VERSION-$STAMP.zip" . )
 
 cat <<EOF
@@ -110,7 +110,7 @@ Built in dist/:
   $NAME-$VERSION-$STAMP.zip                           (Chrome family / source)
 
 Store-free install (see INSTALL.md):
-  Chrome/Chromium/Brave: unzip, ./bin/plugin-installer-setup --extension-dir ./extension,
-                         then chrome://extensions -> Load unpacked -> extension/
+  Chrome/Chromium/Brave: unzip, ./bin/plugin-installer-setup --extension-dir ./browser/extension,
+                         then chrome://extensions -> Load unpacked -> browser/extension/
   Firefox ESR/Dev Edition/Nightly: about:addons -> Install Add-on From File -> the .xpi
 EOF

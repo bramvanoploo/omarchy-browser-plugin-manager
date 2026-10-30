@@ -37,7 +37,7 @@ the repo root (the directory containing `manifest.json` and `bin/`).
    - `bin/omarchy-plugin-install-host`: catalog + repo validation intact,
      request frames length-checked, and debug tracing stays opt-in (never
      default-on).
-   - `extension/manifest.json`: permissions and extension ID unchanged; no
+   - `browser/extension/manifest.json`: permissions and extension ID unchanged; no
      secrets, tokens, `.env` content, or machine-specific paths shipped.
    Prove it with the smallest checks that cover the change: `qmllint` on
    `Wizard.qml` (no new warning classes beyond the file's existing
@@ -56,10 +56,10 @@ the repo root (the directory containing `manifest.json` and `bin/`).
 
 2. **Version sync** — set the new version in all of:
    - `manifest.json` (shell plugin, `.version`)
-   - `extension/manifest.json` (browser extension, `.version`)
+   - `browser/extension/manifest.json` (browser extension, `.version`)
    - `bin/omarchy-plugin-install-host` (`HOST_VERSION="..."`)
    - `README.md` (the ping `# expect:` example line, `"version":"X.Y.Z"`)
-   Verify: `grep -rn "<old-version>" manifest.json extension/manifest.json bin/ README.md`
+   Verify: `grep -rn "<old-version>" manifest.json browser/extension/manifest.json bin/ README.md`
    must return nothing, and
    `printf '\x0f\x00\x00\x00{"type":"ping"}' | bin/omarchy-plugin-install-host | tail -c +5`
    must answer with the new version (the frame length must be exactly 15 bytes).
@@ -80,7 +80,7 @@ the repo root (the directory containing `manifest.json` and `bin/`).
      If `.env` is absent, skip the signed build and omit it from the release notes.
 
 5. **Commit** — the version-sync edits plus the refreshed preview as one commit:
-   `git add manifest.json extension/manifest.json bin/omarchy-plugin-install-host README.md preview.png`
+   `git add manifest.json browser/extension/manifest.json bin/omarchy-plugin-install-host README.md preview.png`
    (drop `bin/omarchy-plugin-install-host` from this list if its version line
    already went in with an earlier feature commit) then
    `git commit -m "Release X.Y.Z: version aligned in shell plugin, extension, and docs"`.

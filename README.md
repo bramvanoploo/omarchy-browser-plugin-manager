@@ -71,7 +71,7 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
                                                         confirm first, notify when done
 ```
 
-- **`extension/`** — MV3 WebExtension for Chrome, Chromium, Brave
+- **`browser/extension/`** — MV3 WebExtension for Chrome, Chromium, Brave
   (Firefox-compatible MV3; the source manifest carries no Chrome-only
   `"key"` — Firefox flags it and the CWS dashboard rejects it). Buttons are
   injected on `plugin.html?id=...` (button groups) and the catalog

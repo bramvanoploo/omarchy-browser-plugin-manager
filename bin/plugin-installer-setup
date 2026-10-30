@@ -29,7 +29,7 @@ SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
 REPO_DIR="$(dirname -- "$BIN_DIR")"
 HOST_PATH="$BIN_DIR/omarchy-plugin-install-host"
-EXT_DIR="${PLUGIN_INSTALLER_EXT_DIR:-$REPO_DIR/extension}"
+EXT_DIR="${PLUGIN_INSTALLER_EXT_DIR:-$REPO_DIR/browser/extension}"
 
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 CHROME_DIRS=(
@@ -50,7 +50,7 @@ usage() {
 Usage: plugin-installer-setup [--extension-dir PATH] [--uninstall]
 
   --extension-dir PATH  Directory that will be loaded as the unpacked
-                        extension (default: $REPO_DIR/extension).
+                        extension (default: $REPO_DIR/browser/extension).
                         The Chrome/Chromium/Brave native-messaging origin is
                         derived from this path, so the extension must be
                         loaded from exactly this directory. Extra dirs are

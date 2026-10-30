@@ -24,7 +24,7 @@ export LC_ALL=C
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
 REPO_DIR="$(dirname -- "$BIN_DIR")"
-EXT_DIR="$REPO_DIR/extension"
+EXT_DIR="$REPO_DIR/browser/extension"
 OUT_DIR="$REPO_DIR/dist/signed"
 
 [[ -n "${AMO_API_KEY:-}" && -n "${AMO_API_SECRET:-}" ]] || {
