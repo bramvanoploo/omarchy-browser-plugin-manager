@@ -217,17 +217,94 @@ Panel {
     }
   }
 
-  // The browser-extension store pages, and per-family install detection.
-  // The family list mirrors the README support matrix.
+  // The browser-extension store pages. The panel shows each family's
+  // supported-browser list (the list order doubles as launch priority);
+  // installed names are highlighted in accent, and each store button
+  // opens its page in the first installed browser of that family.
   readonly property string chromeStoreUrl: "https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf"
   readonly property string firefoxStoreUrl: "https://addons.mozilla.org/firefox/addon/omarchy-browser-plugin-manager/"
-  readonly property string chromeSupportText: "Chrome, Chromium, Brave, Edge, Vivaldi, Opera"
-  readonly property string firefoxSupportText: "Firefox incl. ESR, Waterfox, LibreWolf, Tor Browser, IceCat, Zen"
-  property bool chromeInstalled: false
-  property bool firefoxInstalled: false
+  readonly property var chromeBrowsers: [
+    { key: "chrome", label: "Chrome", bins: ["google-chrome", "google-chrome-stable"] },
+    { key: "chromium", label: "Chromium", bins: ["chromium", "chromium-browser"] },
+    { key: "brave", label: "Brave", bins: ["brave-browser", "brave"] },
+    { key: "edge", label: "Edge", bins: ["microsoft-edge", "edge"] },
+    { key: "vivaldi", label: "Vivaldi", bins: ["vivaldi-stable", "vivaldi"] },
+    { key: "opera", label: "Opera", bins: ["opera"] }
+  ]
+  readonly property var firefoxBrowsers: [
+    { key: "firefox", label: "Firefox incl. ESR", bins: ["firefox", "firefox-esr"] },
+    { key: "waterfox", label: "Waterfox", bins: ["waterfox"] },
+    { key: "librewolf", label: "LibreWolf", bins: ["librewolf"] },
+    { key: "tor", label: "Tor Browser", bins: ["torbrowser-launcher", "torbrowser"] },
+    { key: "icecat", label: "IceCat", bins: ["icecat"] },
+    { key: "zen", label: "Zen", bins: ["zen-browser", "zen"] }
+  ]
+  // Launcher binary per browser key, from the PATH probe ("" = not installed).
+  property var chromeInstalledBins: ({})
+  property var firefoxInstalledBins: ({})
 
-  function openStore(url) {
-    Quickshell.execDetached(["xdg-open", String(url)])
+  // Probe script: one line per browser "family key bin" (bin "-" when not
+  // on PATH). Keys and bins are fixed literals from the lists above, so the
+  // interpolation into the script is safe.
+  function browserProbeScript() {
+    var lines = []
+    var groups = [["chrome", root.chromeBrowsers], ["firefox", root.firefoxBrowsers]]
+    groups.forEach(function (g) {
+      g[1].forEach(function (b) {
+        lines.push('hit=""; for b in ' + b.bins.join(" ")
+          + '; do command -v "$b" >/dev/null 2>&1 && { hit="$b"; break; }; done;'
+          + " echo " + g[0] + " " + b.key + ' "${hit:--}"')
+      })
+    })
+    return lines.join("; ")
+  }
+
+  function applyProbeOutput(text) {
+    var chrome = {}
+    var firefox = {}
+    String(text || "").split("\n").forEach(function (line) {
+      var parts = String(line).trim().split(" ")
+      if (parts.length !== 3) return
+      var bin = parts[2] === "-" ? "" : parts[2]
+      if (parts[0] === "chrome") chrome[parts[1]] = bin
+      else if (parts[0] === "firefox") firefox[parts[1]] = bin
+    })
+    root.chromeInstalledBins = chrome
+    root.firefoxInstalledBins = firefox
+  }
+
+  function firstInstalledBin(families, installed) {
+    for (var i = 0; i < families.length; i++)
+      if (installed[families[i].key]) return String(installed[families[i].key])
+    return ""
+  }
+
+  // Support list as rich text: installed names get the accent color. The
+  // hex form is required because styled text carries no Color objects.
+  function supportHtml(families, installed) {
+    var s = String(Color.accent).replace("#", "")
+    var hex = "#" + s.substring(s.length - 6)
+    return families.map(function (b) {
+      var label = String(b.label)
+      if (installed[b.key])
+        return '<span style="color:' + hex + '">' + label + "</span>"
+      return label
+    }).join(", ")
+  }
+
+  readonly property string chromeSupportHtml: supportHtml(chromeBrowsers, chromeInstalledBins)
+  readonly property string firefoxSupportHtml: supportHtml(firefoxBrowsers, firefoxInstalledBins)
+  readonly property string chromeLaunchBin: firstInstalledBin(chromeBrowsers, chromeInstalledBins)
+  readonly property string firefoxLaunchBin: firstInstalledBin(firefoxBrowsers, firefoxInstalledBins)
+
+  function openStore(url, bin) {
+    // The store page must open in its own family, so the browser found by
+    // the probe is launched directly; xdg-open is only the fallback when
+    // the family is not installed at all.
+    var target = String(bin || "") !== ""
+      ? [String(bin), String(url)]
+      : ["xdg-open", String(url)]
+    Quickshell.execDetached(target)
   }
 
   // Batch update runs as a detached bash worker (the wizard's per-plugin
@@ -660,21 +737,16 @@ Panel {
     }
   }
 
-  // Browser-family install probe: chromium- and firefox-based browsers each
-  // answer through one of their launcher names; a family is "installed" when
-  // any of them is on PATH. Output lines: "chrome", "firefox".
+  // Browser install probe: every supported browser's launcher names are
+  // checked on PATH, one "family key bin" line per browser, feeding the
+  // accent highlighting in the panel's browser lists and the store
+  // buttons' launch targets.
   Process {
     id: browserCheckProc
-    command: ["bash", "-c",
-      "for b in google-chrome google-chrome-stable chromium chromium-browser brave-browser microsoft-edge vivaldi-stable vivaldi opera; do command -v \"$b\" >/dev/null 2>&1 && { echo chrome; break; }; done; "
-      + "for b in firefox firefox-esr waterfox librewolf torbrowser icecat zen-browser zen; do command -v \"$b\" >/dev/null 2>&1 && { echo firefox; break; }; done; exit 0"]
+    command: ["bash", "-c", root.browserProbeScript()]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: {
-        var out = String(text || "")
-        root.chromeInstalled = out.indexOf("chrome") !== -1
-        root.firefoxInstalled = out.indexOf("firefox") !== -1
-      }
+      onStreamFinished: root.applyProbeOutput(text)
     }
   }
 
@@ -1430,13 +1502,11 @@ Panel {
         }
       }
 
-      // Browser stores: half-width buttons opening the extension listing
-      // for each family, with the supported browsers named above and an
-      // installed indicator from the PATH probe. One grid (text row,
-      // indicator row, button row) so the buttons align at the same
-      // height: rows size to their tallest cell, and the indicator keeps
-      // its space when a family is not installed (opacity placeholder,
-      // since invisible items drop out of the grid).
+      // Browser stores: the supported-browser list with installed names
+      // highlighted in accent, above half-width buttons that open the
+      // store page in the first installed browser of that family. One
+      // grid (text row, button row) so the rows size to their tallest
+      // cell and the buttons align.
       GridLayout {
         width: settingsColumn.width
         columns: 2
@@ -1446,7 +1516,8 @@ Panel {
         Text {
           Layout.fillWidth: true
           wrapMode: Text.Wrap
-          text: root.chromeSupportText
+          textFormat: Text.StyledText
+          text: root.chromeSupportHtml
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
           color: Color.muted
@@ -1454,60 +1525,24 @@ Panel {
         Text {
           Layout.fillWidth: true
           wrapMode: Text.Wrap
-          text: root.firefoxSupportText
+          textFormat: Text.StyledText
+          text: root.firefoxSupportHtml
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
           color: Color.muted
-        }
-
-        Row {
-          opacity: root.chromeInstalled ? 1 : 0
-          spacing: Style.space(6)
-          Rectangle {
-            width: Style.space(7)
-            height: width
-            radius: width / 2
-            color: Color.accent
-            anchors.verticalCenter: parent.verticalCenter
-          }
-          Text {
-            text: "installed on this system"
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            color: Color.accent
-            anchors.verticalCenter: parent.verticalCenter
-          }
-        }
-        Row {
-          opacity: root.firefoxInstalled ? 1 : 0
-          spacing: Style.space(6)
-          Rectangle {
-            width: Style.space(7)
-            height: width
-            radius: width / 2
-            color: Color.accent
-            anchors.verticalCenter: parent.verticalCenter
-          }
-          Text {
-            text: "installed on this system"
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            color: Color.accent
-            anchors.verticalCenter: parent.verticalCenter
-          }
         }
 
         BWButton {
           Layout.fillWidth: true
           Layout.preferredHeight: Style.space(30)
           label: "Chrome Web Store"
-          onClickedBw: root.openStore(root.chromeStoreUrl)
+          onClickedBw: root.openStore(root.chromeStoreUrl, root.chromeLaunchBin)
         }
         BWButton {
           Layout.fillWidth: true
           Layout.preferredHeight: Style.space(30)
           label: "Firefox Add-ons"
-          onClickedBw: root.openStore(root.firefoxStoreUrl)
+          onClickedBw: root.openStore(root.firefoxStoreUrl, root.firefoxLaunchBin)
         }
       }
     }
