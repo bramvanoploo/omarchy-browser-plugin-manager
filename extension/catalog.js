@@ -88,6 +88,11 @@
   text-align: center;
   box-shadow: 0 4px 14px rgb(0 0 0 / 30%);
 }
+.pi-ribbon--stable > span {
+  /* Installed with no update: the same banner in the site's calm-green
+   * "stable" tone (the install button's tone). */
+  background: var(--stable, #b4c96f);
+}
 .pi-panel-backdrop {
   position: fixed;
   inset: 0;
@@ -299,21 +304,24 @@
   }
 
   // ---- Update ribbon + info panel ---------------------------------------
-  // An updatable card gets a diagonal UPDATE banner in its top-right corner
-  // and an Update icon-button (replacing Uninstall) that opens the info
-  // panel. updateAvailable comes from the host only when the plugin is
-  // behind origin AND the "Update to unverified version" setting allows it
-  // (the host hides unverified updates entirely when the setting is off).
+  // Cards get a diagonal corner banner driven by live host state:
+  //   installed + update available -> UPDATE banner (--accent)
+  //   installed + up to date       -> INSTALLED banner (--stable)
+  // updateAvailable comes from the host only when the plugin is behind
+  // origin AND the "Update to unverified version" setting allows it (the
+  // host hides unverified updates entirely when the setting is off).
 
   function cardFor(node) {
     return node.closest("li, .card, article, section, .command-panel, .panel")
       || node.parentElement;
   }
 
-  function setRibbon(card, on) {
+  // kind: "update" | "installed" | null. A kind change swaps the banner's
+  // text and class in place; the position bookkeeping stays untouched.
+  function setRibbon(card, kind) {
     if (!card) return;
     const existing = card.querySelector(":scope > .pi-ribbon");
-    if (!on) {
+    if (!kind) {
       if (existing) existing.remove();
       if (card.dataset.piRibbonPos) {
         card.style.position = "";
@@ -321,16 +329,23 @@
       }
       return;
     }
-    if (existing) return;
+    const className = kind === "installed" ? "pi-ribbon pi-ribbon--stable" : "pi-ribbon";
+    const text = kind === "installed" ? "INSTALLED" : "UPDATE";
+    if (existing) {
+      if (existing.className !== className) existing.className = className;
+      const label = existing.firstElementChild;
+      if (label && label.textContent !== text) label.textContent = text;
+      return;
+    }
     if (getComputedStyle(card).position === "static") {
       card.style.position = "relative";
       card.dataset.piRibbonPos = "1";
     }
     const ribbon = document.createElement("span");
-    ribbon.className = "pi-ribbon";
+    ribbon.className = className;
     ribbon.setAttribute("aria-hidden", "true");
     const banner = document.createElement("span");
-    banner.textContent = "UPDATE";
+    banner.textContent = text;
     ribbon.append(banner);
     card.append(ribbon);
   }
@@ -498,7 +513,7 @@
         const installed = update ? true : await isInstalled(plugin);
         if (!copy.parentElement) continue;
         copy.parentElement.insertBefore(makeCardButton(plugin, installed, update), copy);
-        setRibbon(cardFor(copy), Boolean(update));
+        setRibbon(cardFor(copy), update ? "update" : installed ? "installed" : null);
       }
     } catch (_e) {
       pluginsById = null;
@@ -538,7 +553,7 @@
       const installed = Boolean(status && status.installed);
       const update = updateStatusFor(button.dataset.pluginId);
       const wanted = update ? "update" : installed ? "uninstall" : "install";
-      setRibbon(cardFor(button), Boolean(update));
+      setRibbon(cardFor(button), update ? "update" : installed ? "installed" : null);
       if (wanted === button.dataset.piState) continue;
       const plugin = pluginsById.get(button.dataset.pluginId);
       if (plugin) button.replaceWith(makeCardButton(plugin, installed, update));
