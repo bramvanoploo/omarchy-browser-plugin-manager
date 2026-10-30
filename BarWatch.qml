@@ -1657,10 +1657,12 @@ Panel {
   // ---- right-click settings panel ----------------------------------------
   // Same header pattern as the plugin popup (glyph + title + version pill),
   // own PopupCard with the settingsOwner as dismissal owner. Content: the
-  // update-poll interval selector with an immediate-refresh button, status
-  // lines, the batch "Update N plugins now" action (hidden when nothing is
-  // updatable), the unverified-versions toggle, and the two browser-store
-  // links with per-family installed indicators.
+  // unverified-versions toggle directly under the header (it gates what the
+  // update lists and batch action below can act on), the update-poll
+  // interval selector with an immediate-refresh button, status lines, the
+  // per-plugin update lists, the batch "Update N plugins now" action (hidden
+  // when nothing is updatable), and the two browser-store links with
+  // per-family installed indicators.
   PopupCard {
     id: settingsPopup
     anchorItem: button
@@ -1737,6 +1739,43 @@ Panel {
             font.pixelSize: Style.font.caption
             color: Color.muted
           }
+        }
+      }
+
+      // Unverified toggle: default off (verified catalog entries only).
+      // Sits directly under the panel header: it gates which versions the
+      // update sections and the batch button below can act on, so it reads
+      // as the setting that shapes the whole panel.
+      Row {
+        width: settingsColumn.width
+        spacing: Style.space(10)
+
+        Column {
+          width: parent.width - spUnverifiedSwitch.implicitWidth - parent.spacing
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(2)
+
+          Text {
+            text: "Update to unverified versions"
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+            color: Color.foreground
+          }
+          Text {
+            width: parent.width
+            wrapMode: Text.Wrap
+            text: "Off: plugins only update to catalog-verified versions."
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            color: Color.muted
+          }
+        }
+
+        ToggleSwitch {
+          id: spUnverifiedSwitch
+          anchors.verticalCenter: parent.verticalCenter
+          checked: root.allowUnverified
+          onToggled: root.setAllowUnverified(!checked)
         }
       }
 
@@ -1826,40 +1865,6 @@ Panel {
         label: "Update " + root.eligibleCount + " plugin"
           + (root.eligibleCount === 1 ? "" : "s") + " now"
         onClickedBw: root.startBatchUpdate()
-      }
-
-      // Unverified toggle: default off (verified catalog entries only).
-      Row {
-        width: settingsColumn.width
-        spacing: Style.space(10)
-
-        Column {
-          width: parent.width - spUnverifiedSwitch.implicitWidth - parent.spacing
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(2)
-
-          Text {
-            text: "Update to unverified versions"
-            font.family: Style.font.family
-            font.pixelSize: Style.font.body
-            color: Color.foreground
-          }
-          Text {
-            width: parent.width
-            wrapMode: Text.Wrap
-            text: "Off: plugins only update to catalog-verified versions."
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            color: Color.muted
-          }
-        }
-
-        ToggleSwitch {
-          id: spUnverifiedSwitch
-          anchors.verticalCenter: parent.verticalCenter
-          checked: root.allowUnverified
-          onToggled: root.setAllowUnverified(!checked)
-        }
       }
 
       // Browser stores: the supported-browser list with installed names
