@@ -336,11 +336,20 @@ Panel {
   // update pattern): a git pull takes time, and updating the manager itself
   // reloads the shell and destroys this widget mid-run. Ids ride in as
   // argv ($1..$n): no shell interpolation of plugin ids.
+  // Each CLI call ends with "omarchy-shell shell rescanPlugins" when it
+  // updated something, which reloaded the bar once per plugin. The worker
+  // shadows omarchy-shell on PATH to swallow those per-plugin rescans and
+  // fires one real rescan after the whole batch, so the bar reloads once.
   readonly property string updateWorkerScript: [
     "set -u",
     "notify() {",
     "  omarchy-notification-send --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
     "}",
+    "real_shell=/usr/share/omarchy/bin/omarchy-shell",
+    "bin_dir=$(mktemp -d)",
+    "printf '%s\\n' '#!/bin/bash' '[ \"${1:-}\" = shell ] && [ \"${2:-}\" = rescanPlugins ] && exit 0' 'exec '\"$real_shell\"' \"$@\"' > \"$bin_dir/omarchy-shell\"",
+    "chmod +x \"$bin_dir/omarchy-shell\"",
+    "export PATH=\"$bin_dir:$PATH\"",
     "ok=0; fail=0; failed=\"\"",
     "while [ $# -gt 0 ]; do",
     "  if OUT=\"$(omarchy plugin update \"$1\" --yes 2>&1)\"; then",
@@ -350,6 +359,10 @@ Panel {
     "  fi",
     "  shift",
     "done",
+    "rm -rf \"$bin_dir\"",
+    "if [ \"$ok\" -gt 0 ]; then",
+    "  \"$real_shell\" -q shell rescanPlugins >/dev/null 2>&1 || true",
+    "fi",
     "if [ \"$fail\" -gt 0 ]; then",
     "  notify \"Plugin updates finished\" \"$ok updated, $fail failed:$failed\"",
     "elif [ \"$ok\" -gt 0 ]; then",
