@@ -31,11 +31,12 @@ import qs.Ui
 // Right click opens the settings panel (same header pattern): a plugin-update
 // poll every 10m / 30m / 1h / 5h / daily with a refresh button, two capped
 // scrollable per-plugin update lists (verified first, then unverified; each
-// with a title, a count, and an install button that updates just that
+// with a title, a count, and a compact install button that updates just that
 // plugin), a "Update N plugins now" button (only while updates are
 // available), a toggle for updating to unverified latest versions (default:
 // verified only), and the two browser-store links with per-family installed
-// indicators. The poll
+// indicators. Every update, single or batch, goes through a confirmation card
+// in the panel before the worker runs. The poll
 // detects outdated plugins exactly like omaplug does (git HEAD behind
 // origin/HEAD via fetch + merge-base); the bar icon carries an
 // omaplug-identical accent pill counting the updates the verification
@@ -130,6 +131,8 @@ Panel {
   onSettingsOpenChanged: {
     if (settingsOpen)
       root.checkForUpdates()
+    else
+      root.cancelUpdateConfirm()
   }
   readonly property QtObject settingsOwner: QtObject {
     function close() { root.settingsOpen = false }
@@ -446,8 +449,30 @@ Panel {
     root.close()
   }
 
-  function startBatchUpdate() {
-    root.startUpdate(root.eligibleUpdates().map(function (p) { return String(p.id) }))
+  // Update confirmation gate: the row buttons and the batch button arm an
+  // update request (ids + explanatory text) instead of running the worker,
+  // and the settings popup draws a confirm card over its content. Cancel
+  // clears the request; Confirm hands the ids to startUpdate.
+  property var updateConfirmIds: []
+  property string updateConfirmText: ""
+  readonly property bool updateConfirmOpen: updateConfirmIds.length > 0
+
+  function requestUpdate(ids, text) {
+    ids = (ids || []).map(String)
+    if (ids.length === 0) return
+    root.updateConfirmIds = ids
+    root.updateConfirmText = String(text || "")
+  }
+
+  function cancelUpdateConfirm() {
+    root.updateConfirmIds = []
+    root.updateConfirmText = ""
+  }
+
+  function confirmUpdate() {
+    var ids = root.updateConfirmIds
+    root.cancelUpdateConfirm()
+    root.startUpdate(ids)
   }
 
 
@@ -1272,9 +1297,10 @@ Panel {
     id: bwIcon
     property string label: ""
     property bool primary: false
+    property int size: Style.space(30)
     signal clickedBw
-    width: Style.space(30)
-    height: Style.space(30)
+    width: size
+    height: size
     radius: Style.cornerRadius
     color: !enabled ? "transparent"
       : primary
@@ -1287,7 +1313,7 @@ Panel {
       anchors.centerIn: parent
       text: bwIcon.label
       font.family: "Material Icons"
-      font.pixelSize: Math.round(Style.space(17))
+      font.pixelSize: Math.round(size * 0.57)
       color: bwIcon.enabled
         ? (bwIcon.primary ? Color.accent : Color.foreground)
         : Util.alpha(Color.foreground, 0.35)
@@ -1302,13 +1328,16 @@ Panel {
     }
   }
 
-  // One titled, capped, scrollable list of pending updates with a per-row
-  // install button. The section hides itself when there is nothing to show.
+  // One titled, capped, scrollable list of pending updates with a compact
+  // install button per row. The button is plain (not accent-highlighted) and
+  // only emits pluginPicked with the row's catalog item: the caller gates
+  // the update behind a confirmation. The section hides itself when there
+  // is nothing to show.
   component BWUpdateSection: Column {
     id: bwSection
     property string title: ""
     property var items: []
-    signal pluginPicked(string id)
+    signal pluginPicked(var item)
     spacing: Style.space(8)
     visible: items.length > 0
 
@@ -1388,8 +1417,8 @@ Panel {
                 id: secButton
                 anchors.verticalCenter: parent.verticalCenter
                 label: "\uF148" // level-up (upgrade) icon
-                primary: true
-                onClickedBw: bwSection.pluginPicked(String(modelData.id))
+                size: Style.space(22) // compact, plain (no primary highlight)
+                onClickedBw: bwSection.pluginPicked(modelData)
               }
             }
           }
@@ -1859,26 +1888,35 @@ Panel {
       }
 
       // Per-plugin update lists: verified first, unverified below, each
-      // with a concise title, a live count, a capped scrollable area, and
-      // an install button per row that updates just that plugin through
-      // the same detached worker as the batch button (startUpdate).
+      // with a concise title, a live count, a capped scrollable area, and a
+      // compact plain install button per row that arms a confirmation for
+      // updating just that plugin through the same detached worker as the
+      // batch button (startUpdate runs only after Confirm).
       BWUpdateSection {
         width: settingsColumn.width
         title: "Verified plugin updates"
         items: root.verifiedUpdates()
-        onPluginPicked: function (id) { root.startUpdate([id]) }
+        onPluginPicked: function (p) {
+          root.requestUpdate([String(p.id)],
+            "Updates " + p.name + " from " + p.installed + " to " + p.latest
+            + ". The plugin's git repository is pulled; the bar reloads when the manager itself updates.")
+        }
       }
 
       BWUpdateSection {
         width: settingsColumn.width
         title: "Unverified plugin updates"
         items: root.unverifiedUpdates()
-        onPluginPicked: function (id) { root.startUpdate([id]) }
+        onPluginPicked: function (p) {
+          root.requestUpdate([String(p.id)],
+            "Updates " + p.name + " from " + p.installed + " to " + p.latest
+            + " (unverified version). The plugin's git repository is pulled; the bar reloads when the manager itself updates.")
+        }
       }
 
-      // Batch update (hidden while nothing is updatable): runs the
-      // eligible plugins through detached workers, one notification at the
-      // end (startBatchUpdate).
+      // Batch update (hidden while nothing is updatable): arms a
+      // confirmation for the eligible plugins, which then run through
+      // detached workers, one notification at the end (startUpdate).
       BWButton {
         visible: root.eligibleCount > 0
         width: settingsColumn.width
@@ -1886,7 +1924,11 @@ Panel {
         primary: true
         label: "Update " + root.eligibleCount + " plugin"
           + (root.eligibleCount === 1 ? "" : "s") + " now"
-        onClickedBw: root.startBatchUpdate()
+        onClickedBw: root.requestUpdate(
+          root.eligibleUpdates().map(function (p) { return String(p.id) }),
+          "Updates all " + root.eligibleCount + " eligible plugin"
+            + (root.eligibleCount === 1 ? "" : "s")
+            + " through the same worker as the row buttons. The bar reloads once when the batch finishes.")
       }
 
       // Browser stores: the supported-browser list with installed names
@@ -1938,6 +1980,55 @@ Panel {
           Layout.preferredHeight: Style.space(30)
           label: root.storeButtonLabel("Firefox Add-ons", root.firefoxLaunchLabel)
           onClickedBw: root.openStore(root.firefoxStoreUrl, root.firefoxLaunchBin)
+        }
+      }
+    }
+
+    // Update confirmation card: a scrim over the settings content (same
+    // window, so the popup's focus grab keeps it interactive) gating every
+    // update behind an explicit Confirm. Cancel clears the armed request.
+    Rectangle {
+      id: updateConfirmMask
+      anchors.fill: parent
+      visible: root.updateConfirmOpen
+      color: Util.alpha(Color.popups.background, 0.92)
+      radius: Style.cornerRadius
+
+      Column {
+        anchors.centerIn: parent
+        width: Math.min(parent.width - Style.space(48), Style.space(320))
+        spacing: Style.space(12)
+
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          text: "Update " + root.updateConfirmIds.length + " plugin"
+            + (root.updateConfirmIds.length === 1 ? "" : "s") + "?"
+          color: Color.foreground
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+          font.bold: true
+        }
+        Text {
+          width: parent.width
+          wrapMode: Text.Wrap
+          horizontalAlignment: Text.AlignHCenter
+          color: Util.alpha(Color.foreground, 0.75)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          text: root.updateConfirmText
+        }
+        Row {
+          anchors.horizontalCenter: parent.horizontalCenter
+          spacing: Style.space(8)
+          BWButton {
+            label: "Cancel"
+            onClickedBw: root.cancelUpdateConfirm()
+          }
+          BWButton {
+            label: "Update"
+            primary: true
+            onClickedBw: root.confirmUpdate()
+          }
         }
       }
     }
