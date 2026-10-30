@@ -28,10 +28,10 @@ import qs.Ui
 // "Update N plugins now" button (only while updates are available), a toggle
 // for updating to unverified latest versions (default: verified only), and
 // the two browser-store links with per-family installed indicators. The poll
-// compares every installed user plugin's manifest version against the
-// marketplace catalog; the bar icon carries a counter of outdated plugins in
-// its top-right corner (hidden at 0: accent when the setting lets them
-// update, muted when all are held back by verified-only), a poll that finds
+// detects outdated plugins exactly like omaplug does (git HEAD behind
+// origin/HEAD via fetch + merge-base); the bar icon carries a counter of
+// outdated plugins as an omaplug-identical accent pill in its top-right
+// corner (hidden at 0), a poll that finds
 // new outdated plugins sends a notification offering the update, and the
 // settings persist to settings.json in the state dir.
 Panel {
@@ -166,11 +166,12 @@ Panel {
   }
 
   // ---- update poll -------------------------------------------------------
-  // Every installed user (non-first-party) plugin's manifest version vs the
-  // marketplace catalog version. updateList holds the outdated ones
-  // ({id, name, installed, latest, verified}); the bar badge shows its size
-  // (hidden at 0) and eligibleCount is the subset the verification setting
-  // allows to update (all when unverified is on, verified-only otherwise).
+  // Every installed user (non-first-party) plugin whose git HEAD is behind
+  // origin (omaplug's fetch/merge-base model, so both widgets count the same
+  // set). updateList holds the outdated ones ({id, name, installed, latest,
+  // verified}); the bar badge shows its size (hidden at 0) and eligibleCount
+  // is the subset the verification setting allows to update (all when
+  // unverified is on, verified-only otherwise).
   property var updateList: []
   readonly property int updateCount: root.updateList.length
   readonly property int eligibleCount: root.allowUnverified
@@ -203,7 +204,7 @@ Panel {
       // Offer the update when a check finds a new outdated set: the
       // notification is how this widget "offers" anything (the button lives
       // in the settings panel). Held-back updates (verified-only setting
-      // off-locks them) show as the muted badge and explain in the body.
+      // off-locks them) stay counted on the badge and explain in the body.
       var ids = res.plugins.map(function (p) { return String(p.id) }).sort().join(",")
       if (ids !== root.lastNotifiedKey) {
         root.lastNotifiedKey = ids
@@ -704,40 +705,56 @@ Panel {
     onLoadFailed: root.managerVersion = ""
   }
 
-  // Update poll: list installed user plugins, read each local manifest
-  // version, fetch the catalog, and emit the outdated set as JSON
-  // ({ok, plugins: [{id, name, installed, latest, verified}]}). The version
-  // compare mirrors compareVersions: dot-split numbers, non-numeric segments
-  // (e.g. "0-beta") parse to 0, so QML and this script never disagree on
-  // what counts as an update.
+  // Update poll: detection identical to omaplug's plugin-state.sh — an
+  // installed user plugin is outdated when its git HEAD is a strict ancestor
+  // of origin/HEAD (git fetch + merge-base --is-ancestor), so both widgets
+  // agree on the exact same set (version numbers in manifest/catalog can lag
+  // behind real commits, e.g. a fix shipped without a version bump). Dev
+  // symlinks, non-git dirs, detached HEADs, and dirty working trees are
+  // skipped (omaplug shows those as LOCAL_CHANGES, never as an UPDATE), a
+  // failed fetch counts as "not an
+  // update" (offline never invents one). Emits the behind set as JSON
+  // ({ok, plugins: [{id, name, installed, latest, verified}]}); the catalog
+  // (15 MB, far over the kernel's per-arg limit, so it rides in on stdin —
+  // --argjson on the command line fails with "Argument list too long") only
+  // decorates entries with the verified flag and the latest version.
   readonly property string checkScript: [
     "set -u",
+    "export GIT_TERMINAL_PROMPT=0",
+    "export GIT_SSH_COMMAND=\"${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}\"",
     "PLUG=\"$HOME/.config/omarchy/plugins\"",
     "list=$(omarchy plugin list --json 2>/dev/null) || list=\"[]\"",
-    "catalog=$(curl -fsSL --proto '=https' --max-time 20 \"https://plugins.omarchy.org/catalog.json\" 2>/dev/null) || catalog=\"\"",
-    "if [ -z \"$catalog\" ]; then printf '%s' '{\"ok\":false,\"plugins\":[]}'; exit 0; fi",
+    "catalog=$(curl -fsSL --proto '=https' --max-time 30 --max-filesize 16777216 \"https://plugins.omarchy.org/catalog.json\" 2>/dev/null) || catalog=\"\"",
+    "[ -n \"$catalog\" ] || catalog='{\"plugins\":[]}'",
     "rows=\"\"",
     "for ID in $(jq -r '(if type == \"array\" then . else [] end)[] | select(type == \"object\" and ((.firstParty // false) | not)) | .id // empty' <<<\"$list\" 2>/dev/null); do",
     "  case \"$ID\" in *[!a-z0-9.-]*|.*|*..*) continue ;; esac",
-    "  M=\"$PLUG/$ID/manifest.json\"",
-    "  [ -f \"$M\" ] || continue",
-    "  VER=$(jq -r '.version // \"\"' \"$M\" 2>/dev/null)",
-    "  NAME=$(jq -r '.name // \"\"' \"$M\" 2>/dev/null | tr -d '\\t\\r\\n')",
-    "  rows+=$(printf '%s\\t%s\\t%s\\n' \"$ID\" \"$VER\" \"$NAME\")",
+    "  D=\"$PLUG/$ID\"",
+    "  [ -L \"$D\" ] && continue",
+    "  [ -d \"$D/.git\" ] || continue",
+    "  HEAD_SHA=$(git -C \"$D\" rev-parse HEAD 2>/dev/null) || continue",
+    "  git -C \"$D\" remote get-url origin >/dev/null 2>&1 || continue",
+    "  git -C \"$D\" symbolic-ref --quiet HEAD >/dev/null 2>&1 || continue",
+    "  [ -z \"$(git -C \"$D\" status --porcelain --untracked-files=normal 2>/dev/null)\" ] || continue",
+    "  timeout 15 git -C \"$D\" fetch --quiet origin HEAD 2>/dev/null || continue",
+    "  REMOTE=$(git -C \"$D\" rev-parse --verify FETCH_HEAD 2>/dev/null) || continue",
+    "  if [ -n \"$REMOTE\" ] && [ \"$HEAD_SHA\" != \"$REMOTE\" ] && git -C \"$D\" merge-base --is-ancestor \"$HEAD_SHA\" \"$REMOTE\" 2>/dev/null; then",
+    "    M=\"$D/manifest.json\"",
+    "    VER=$(jq -r '.version // \"\"' \"$M\" 2>/dev/null)",
+    "    NAME=$(jq -r '.name // \"\"' \"$M\" 2>/dev/null | tr -d '\\t\\r\\n')",
+    "    rows+=$(printf '%s\\t%s\\t%s' \"$ID\" \"$VER\" \"$NAME\")$'\\n'",
+    "  fi",
     "done",
-    "plugins=$(jq -c --arg rows \"$rows\" --argjson cat \"$catalog\" '",
-    "def vparse: (. // \"\") | tostring | split(\".\") | map(tonumber? // 0);",
-    "[ $rows | split(\"\\n\")[] | select(length > 0) | split(\"\\t\")",
+    "plugins=$(printf '%s' \"$catalog\" | jq -c --arg rows \"$rows\" '",
+    "(.plugins // []) as $pl",
+    "| [ $rows | split(\"\\n\")[] | select(length > 0) | split(\"\\t\")",
     "  | {id: .[0], installed: .[1], name: (if length > 2 then .[2] else \"\" end) }",
     "] | map(. as $p",
-    "  | ($cat.plugins // [] | map(select(type == \"object\" and .id == $p.id)) | first) as $e",
-    "  | select($e != null)",
-    "  | select(($p.installed // \"\") != \"\")",
-    "  | select((($e.version // \"\") | tostring) != \"\")",
-    "  | select(($e.version | vparse) > ($p.installed | vparse))",
+    "  | ($pl | map(select(type == \"object\" and .id == $p.id)) | first) as $e",
     "  | {id: $p.id, name: (if $p.name != \"\" then $p.name else $p.id end),",
-    "    installed: ($p.installed | tostring), latest: (($e.version // \"\") | tostring),",
-    "    verified: ((($e.verificationStatus // \"\") | tostring) == \"verified\")})",
+    "    installed: ($p.installed | tostring),",
+    "    latest: ((if $e == null then \"\" else ($e.version // \"\") end) | tostring),",
+    "    verified: ((if $e == null then \"\" else ($e.verificationStatus // \"\") end) | tostring) == \"verified\"})",
     "' 2>/dev/null) || plugins=\"[]\"",
     "[ \"${plugins:0:1}\" = \"[\" ] || plugins=\"[]\"",
     "printf '%s' \"{\\\"ok\\\":true,\\\"plugins\\\":$plugins}\""
@@ -970,28 +987,31 @@ Panel {
       else if (code === Qt.RightButton) root.toggleSettings()
     }
 
-    // Update counter badge: plugin count in the icon's top-right corner,
-    // hidden at 0. Accent = the updates are updatable with the current
-    // verification setting; muted = they are all held back by verified-only.
+    // Update counter badge: pixel-identical to omaplug's pending-update
+    // indicator — accent pill anchored to the icon's top-right corner with a
+    // bar-background border, white bold caption*0.85 text, "9+" cap, hidden
+    // at 0.
     Rectangle {
       id: updateBadge
       visible: root.updateCount > 0
       anchors.top: parent.top
       anchors.right: parent.right
-      anchors.topMargin: Style.space(2)
-      anchors.rightMargin: Style.space(2)
-      height: Style.space(14)
-      width: Math.max(height, updateBadgeText.implicitWidth + Style.space(8))
+      z: 10
+      readonly property string countText: root.updateCount > 9 ? "9+" : String(root.updateCount)
+      implicitWidth: Math.max(Style.space(14), updateBadgeText.implicitWidth + Style.space(6))
+      implicitHeight: Style.space(14)
       radius: height / 2
-      color: root.eligibleCount > 0 ? Color.accent : Color.muted
+      color: Color.accent
+      border.width: 1
+      border.color: root.bar ? root.bar.background : "transparent"
 
       Text {
         id: updateBadgeText
         anchors.centerIn: parent
-        text: root.updateCount > 99 ? "99+" : String(root.updateCount)
-        color: Color.background
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
+        text: updateBadge.countText
+        color: "white"
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.caption * 0.85
         font.bold: true
       }
     }
