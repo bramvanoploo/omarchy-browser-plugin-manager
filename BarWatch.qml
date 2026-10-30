@@ -22,6 +22,18 @@ import qs.Ui
 // record is a display hint only, and every action is re-validated and
 // confirmed there, exactly like the browser buttons. Moving the icon is a
 // plain layout change, so it runs the official `omarchy bar move` directly.
+//
+// Right click opens the settings panel (same header pattern): a plugin-update
+// poll every 10m / 30m / 1h / 5h / daily with a refresh button, a
+// "Update N plugins now" button (only while updates are available), a toggle
+// for updating to unverified latest versions (default: verified only), and
+// the two browser-store links with per-family installed indicators. The poll
+// compares every installed user plugin's manifest version against the
+// marketplace catalog; the bar icon carries a counter of outdated plugins in
+// its top-right corner (hidden at 0: accent when the setting lets them
+// update, muted when all are held back by verified-only), a poll that finds
+// new outdated plugins sends a notification offering the update, and the
+// settings persist to settings.json in the state dir.
 Panel {
   id: root
   moduleName: "bramvanoploo.omarchy-browser-plugin-manager"
@@ -73,6 +85,190 @@ Panel {
   property string moveSection: ""
   property string moveOutput: ""
   property string enabledOutput: ""
+
+  // ---- right-click settings panel ---------------------------------------
+  // The settings popup is the widget's own popup: it opens on right click
+  // independently of any watched page, and is mutually exclusive with the
+  // plugin popup (one open at a time). Its outside-click dismissal routes
+  // through settingsOwner.close(), the PopupCard owner contract.
+  property bool settingsOpen: false
+  readonly property QtObject settingsOwner: QtObject {
+    function close() { root.settingsOpen = false }
+  }
+
+  function toggleSettings() {
+    root.close()
+    root.settingsOpen = !root.settingsOpen
+  }
+
+  function toggleLeft() {
+    root.settingsOpen = false
+    root.toggle()
+  }
+
+  // Settings (persisted to settings.json in the state dir, beside the
+  // beacon): update-poll interval and the unverified toggle. Defaults: 1h,
+  // verified-only.
+  readonly property string settingsPath: stateDir + "/settings.json"
+  readonly property var pollIntervalMinutes: [10, 30, 60, 300, 1440]
+  readonly property var pollIntervalLabels: ["10m", "30m", "1h", "5h", "Daily"]
+  property int pollMinutes: 60
+  property bool allowUnverified: false
+  property bool settingsLoaded: false
+  property bool settingsSaving: false
+  property bool settingsSaveFailed: false
+
+  function settingsObject() {
+    return { pollMinutes: root.pollMinutes, allowUnverified: root.allowUnverified }
+  }
+
+  function applySettings(raw) {
+    // settingsLoaded gates saving until a load was attempted: the widget
+    // must never overwrite a settings file it has not read yet.
+    root.settingsLoaded = true
+    try {
+      var d = JSON.parse(String(raw || "{}"))
+      if (d && typeof d === "object") {
+        if (root.pollIntervalMinutes.indexOf(Number(d.pollMinutes)) !== -1)
+          root.pollMinutes = Number(d.pollMinutes)
+        if (typeof d.allowUnverified === "boolean")
+          root.allowUnverified = d.allowUnverified
+      }
+    } catch (e) {
+      // Corrupt file: keep the current (default) values and rewrite below.
+    }
+    // First run (load failed) and corrupt files land here: write the
+    // current values exactly once. Qt.callLater keeps this outside the
+    // FileView's own load signal.
+    Qt.callLater(root.saveSettings)
+  }
+
+  function saveSettings() {
+    if (root.settingsSaving || !root.settingsLoaded) return
+    root.settingsSaving = true
+    settingsFile.setText(JSON.stringify(root.settingsObject(), null, 2) + "\n")
+  }
+
+  function setPollInterval(minutes) {
+    if (root.pollIntervalMinutes.indexOf(Number(minutes)) === -1) return
+    root.pollMinutes = Number(minutes)
+    root.saveSettings()
+  }
+
+  function setAllowUnverified(on) {
+    root.allowUnverified = on === true
+    root.saveSettings()
+  }
+
+  // ---- update poll -------------------------------------------------------
+  // Every installed user (non-first-party) plugin's manifest version vs the
+  // marketplace catalog version. updateList holds the outdated ones
+  // ({id, name, installed, latest, verified}); the bar badge shows its size
+  // (hidden at 0) and eligibleCount is the subset the verification setting
+  // allows to update (all when unverified is on, verified-only otherwise).
+  property var updateList: []
+  readonly property int updateCount: root.updateList.length
+  readonly property int eligibleCount: root.allowUnverified
+    ? root.updateCount
+    : root.updateList.filter(function (p) { return p.verified === true }).length
+  property bool updateChecking: false
+  property bool updateCheckFailed: false
+  property string lastCheckText: "never"
+  // Ids of the last notified outdated set: a poll offers the update once
+  // per new set (ids join), so an unchanged repeat poll never nags.
+  property string lastNotifiedKey: ""
+
+  function eligibleUpdates() {
+    return root.allowUnverified ? root.updateList
+      : root.updateList.filter(function (p) { return p.verified === true })
+  }
+
+  function checkForUpdates() {
+    if (updateCheckProc.running) return
+    root.updateChecking = true
+    updateCheckProc.running = true
+  }
+
+  function applyCheckResult(res) {
+    root.updateChecking = false
+    if (res && res.ok === true && Array.isArray(res.plugins)) {
+      root.updateList = res.plugins
+      root.updateCheckFailed = false
+      root.lastCheckText = Qt.formatTime(new Date(), "hh:mm")
+      // Offer the update when a check finds a new outdated set: the
+      // notification is how this widget "offers" anything (the button lives
+      // in the settings panel). Held-back updates (verified-only setting
+      // off-locks them) show as the muted badge and explain in the body.
+      var ids = res.plugins.map(function (p) { return String(p.id) }).sort().join(",")
+      if (ids !== root.lastNotifiedKey) {
+        root.lastNotifiedKey = ids
+        if (ids !== "") {
+          var n = res.plugins.length
+          root.notify("Plugin updates available",
+            n + " installed plugin" + (n === 1 ? " has" : "s have") + " updates."
+            + " Right-click the bar icon to update"
+            + (root.eligibleCount === 0 ? " (enable Unverified in settings)" : "") + ".")
+        }
+      }
+    } else {
+      // A failed catalog fetch keeps the last known list (offline must not
+      // blank the badge); the panel explains the failed check.
+      root.updateCheckFailed = true
+    }
+  }
+
+  // The browser-extension store pages, and per-family install detection.
+  // The family list mirrors the README support matrix.
+  readonly property string chromeStoreUrl: "https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf"
+  readonly property string firefoxStoreUrl: "https://addons.mozilla.org/firefox/addon/omarchy-browser-plugin-manager/"
+  readonly property string chromeSupportText: "Chrome, Chromium, Brave, Edge, Vivaldi, Opera"
+  readonly property string firefoxSupportText: "Firefox incl. ESR, Waterfox, LibreWolf, Tor Browser, IceCat, Zen"
+  property bool chromeInstalled: false
+  property bool firefoxInstalled: false
+
+  function openStore(url) {
+    Quickshell.execDetached(["xdg-open", String(url)])
+  }
+
+  // Batch update runs as a detached bash worker (the wizard's per-plugin
+  // update pattern): a git pull takes time, and updating the manager itself
+  // reloads the shell and destroys this widget mid-run. Ids ride in as
+  // argv ($1..$n): no shell interpolation of plugin ids.
+  readonly property string updateWorkerScript: [
+    "set -u",
+    "notify() {",
+    "  omarchy-notification-send --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
+    "}",
+    "ok=0; fail=0; failed=\"\"",
+    "while [ $# -gt 0 ]; do",
+    "  if OUT=\"$(omarchy plugin update \"$1\" --yes 2>&1)\"; then",
+    "    ok=$((ok+1))",
+    "  else",
+    "    fail=$((fail+1)); failed=\"$failed $1\"",
+    "  fi",
+    "  shift",
+    "done",
+    "if [ \"$fail\" -gt 0 ]; then",
+    "  notify \"Plugin updates finished\" \"$ok updated, $fail failed:$failed\"",
+    "elif [ \"$ok\" -gt 0 ]; then",
+    "  notify \"Plugins updated\" \"$ok plugin(s) updated to the latest version.\"",
+    "else",
+    "  notify \"No plugin updated\" \"No plugin update was applied.\"",
+    "fi"
+  ].join("\n")
+
+  function startBatchUpdate() {
+    var ids = root.eligibleUpdates().map(function (p) { return String(p.id) })
+    if (ids.length === 0) return
+    var argv = ["bash", "-c", root.updateWorkerScript, "omarchy-bpm-update"]
+    Quickshell.execDetached(argv.concat(ids))
+    // Closing the popups is harmless: the shell reloads when the manager
+    // itself is among the updated plugins, and the detached worker
+    // outlives that reload with its summary notification.
+    root.settingsOpen = false
+    root.close()
+  }
+
 
   // Installed plugin version, from the local plugin manifest (display gate
   // for the Update button: show it only when the catalog version is newer).
@@ -357,6 +553,151 @@ Panel {
     onLoadFailed: root.iconSection = ""
   }
 
+  // Persisted settings file. Atomic writes, no watching (we are the only
+  // writer): a change signal right after our own setText would reload and
+  // feed the write cycle. A failed write is surfaced in the settings panel
+  // (settingsSaveFailed) and retried by the next user action; the save-wait
+  // timer below releases the saving flag if no signal ever arrives.
+  FileView {
+    id: settingsFile
+    path: root.settingsPath
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.applySettings(text())
+    onLoadFailed: root.applySettings("")
+    onSaved: {
+      root.settingsSaving = false
+      root.settingsSaveFailed = false
+    }
+    onSaveFailed: {
+      root.settingsSaving = false
+      root.settingsSaveFailed = true
+    }
+  }
+
+  Timer {
+    interval: 3000
+    running: root.settingsSaving
+    onTriggered: root.settingsSaveFailed = true
+  }
+
+  // This plugin's own manifest: the settings header shows the manager
+  // version in the same pill the plugin popup uses for the watched plugin.
+  readonly property string pluginDir: String(Qt.resolvedUrl(".")).replace("file://", "").replace(/\/$/, "")
+  property string managerVersion: ""
+  FileView {
+    id: managerManifestFile
+    path: root.pluginDir + "/manifest.json"
+    printErrors: false
+    onLoaded: {
+      try {
+        var m = JSON.parse(text())
+        root.managerVersion = String(m && m.version ? m.version : "")
+      } catch (e) {
+        root.managerVersion = ""
+      }
+    }
+    onLoadFailed: root.managerVersion = ""
+  }
+
+  // Update poll: list installed user plugins, read each local manifest
+  // version, fetch the catalog, and emit the outdated set as JSON
+  // ({ok, plugins: [{id, name, installed, latest, verified}]}). The version
+  // compare mirrors compareVersions: dot-split numbers, non-numeric segments
+  // (e.g. "0-beta") parse to 0, so QML and this script never disagree on
+  // what counts as an update.
+  readonly property string checkScript: [
+    "set -u",
+    "PLUG=\"$HOME/.config/omarchy/plugins\"",
+    "list=$(omarchy plugin list --json 2>/dev/null) || list=\"[]\"",
+    "catalog=$(curl -fsSL --proto '=https' --max-time 20 \"https://plugins.omarchy.org/catalog.json\" 2>/dev/null) || catalog=\"\"",
+    "if [ -z \"$catalog\" ]; then printf '%s' '{\"ok\":false,\"plugins\":[]}'; exit 0; fi",
+    "rows=\"\"",
+    "for ID in $(jq -r '(if type == \"array\" then . else [] end)[] | select(type == \"object\" and ((.firstParty // false) | not)) | .id // empty' <<<\"$list\" 2>/dev/null); do",
+    "  case \"$ID\" in *[!a-z0-9.-]*|.*|*..*) continue ;; esac",
+    "  M=\"$PLUG/$ID/manifest.json\"",
+    "  [ -f \"$M\" ] || continue",
+    "  VER=$(jq -r '.version // \"\"' \"$M\" 2>/dev/null)",
+    "  NAME=$(jq -r '.name // \"\"' \"$M\" 2>/dev/null | tr -d '\\t\\r\\n')",
+    "  rows+=$(printf '%s\\t%s\\t%s\\n' \"$ID\" \"$VER\" \"$NAME\")",
+    "done",
+    "plugins=$(jq -c --arg rows \"$rows\" --argjson cat \"$catalog\" '",
+    "def vparse: (. // \"\") | tostring | split(\".\") | map(tonumber? // 0);",
+    "[ $rows | split(\"\\n\")[] | select(length > 0) | split(\"\\t\")",
+    "  | {id: .[0], installed: .[1], name: (if length > 2 then .[2] else \"\" end) }",
+    "] | map(. as $p",
+    "  | ($cat.plugins // [] | map(select(type == \"object\" and .id == $p.id)) | first) as $e",
+    "  | select($e != null)",
+    "  | select(($p.installed // \"\") != \"\")",
+    "  | select((($e.version // \"\") | tostring) != \"\")",
+    "  | select(($e.version | vparse) > ($p.installed | vparse))",
+    "  | {id: $p.id, name: (if $p.name != \"\" then $p.name else $p.id end),",
+    "    installed: ($p.installed | tostring), latest: (($e.version // \"\") | tostring),",
+    "    verified: ((($e.verificationStatus // \"\") | tostring) == \"verified\")})",
+    "' 2>/dev/null) || plugins=\"[]\"",
+    "[ \"${plugins:0:1}\" = \"[\" ] || plugins=\"[]\"",
+    "printf '%s' \"{\\\"ok\\\":true,\\\"plugins\\\":$plugins}\""
+  ].join("\n")
+
+  Process {
+    id: updateCheckProc
+    command: ["bash", "-c", root.checkScript]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var res = null
+        try { res = JSON.parse(String(text || "")) } catch (e) { res = null }
+        root.applyCheckResult(res)
+      }
+    }
+    onExited: function (exitCode) {
+      // No stdout handler ran (process died before printing): count it as a
+      // failed check, not an empty catalog.
+      if (exitCode !== 0 && root.updateChecking) {
+        root.updateChecking = false
+        root.updateCheckFailed = true
+      }
+    }
+  }
+
+  // Browser-family install probe: chromium- and firefox-based browsers each
+  // answer through one of their launcher names; a family is "installed" when
+  // any of them is on PATH. Output lines: "chrome", "firefox".
+  Process {
+    id: browserCheckProc
+    command: ["bash", "-c",
+      "for b in google-chrome google-chrome-stable chromium chromium-browser brave-browser microsoft-edge vivaldi-stable vivaldi opera; do command -v \"$b\" >/dev/null 2>&1 && { echo chrome; break; }; done; "
+      + "for b in firefox firefox-esr waterfox librewolf torbrowser icecat zen-browser zen; do command -v \"$b\" >/dev/null 2>&1 && { echo firefox; break; }; done; exit 0"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var out = String(text || "")
+        root.chromeInstalled = out.indexOf("chrome") !== -1
+        root.firefoxInstalled = out.indexOf("firefox") !== -1
+      }
+    }
+  }
+
+  // The update poll: fires at boot and on the chosen interval. The interval
+  // binding makes an interval change take effect on the next run.
+  Timer {
+    interval: root.pollMinutes * 60000
+    repeat: true
+    running: true
+    triggeredOnStart: true
+    onTriggered: root.checkForUpdates()
+  }
+
+  Component.onCompleted: {
+    // The beacon host creates the state dir lazily; the settings file needs
+    // it at widget start (its write goes through a shell, mkdir first).
+    Quickshell.execDetached(["mkdir", "-p", root.stateDir])
+    managerManifestFile.reload()
+    settingsFile.reload()
+    browserCheckProc.running = true
+    Qt.callLater(root.checkForUpdates)
+  }
+
   // Re-evaluates beaconLive as the 5s beacon renews and time passes, so
   // the icon lights within seconds of a tab opening and dims when it dies.
   Timer {
@@ -371,6 +712,9 @@ Panel {
 
   onOpenedChanged: {
     if (root.opened) {
+      // The two popups are mutually exclusive (also enforced in the toggle
+      // handlers); this covers the panel controller's own open paths.
+      root.settingsOpen = false
       root.nowMs = Date.now()
       // Capture the current beacon record for this opening (the async
       // reload lands while opened is already true; applyWatch honors this
@@ -512,12 +856,45 @@ Panel {
     bar: root.bar
     text: ""
     active: root.beaconLive
-    tooltipText: root.beaconLive
+    tooltipText: (root.beaconLive
       ? root.watchedName() + " \u00b7 open in browser \u00b7 click to manage"
-      : "Browser Plugin Manager \u00b7 lights up on manageable plugin pages"
+      : "Browser Plugin Manager \u00b7 lights up on manageable plugin pages")
+      + (root.updateCount > 0
+        ? " \u00b7 " + root.updateCount + " plugin" + (root.updateCount === 1 ? " has" : "s have")
+          + " updates (right-click)"
+        : "")
 
     onPressed: function (code) {
-      if (code === Qt.LeftButton) root.toggle()
+      // Left: the plugin popup; right: the settings panel (mutually
+      // exclusive, both route through the toggle helpers).
+      if (code === Qt.LeftButton) root.toggleLeft()
+      else if (code === Qt.RightButton) root.toggleSettings()
+    }
+
+    // Update counter badge: plugin count in the icon's top-right corner,
+    // hidden at 0. Accent = the updates are updatable with the current
+    // verification setting; muted = they are all held back by verified-only.
+    Rectangle {
+      id: updateBadge
+      visible: root.updateCount > 0
+      anchors.top: parent.top
+      anchors.right: parent.right
+      anchors.topMargin: Style.space(2)
+      anchors.rightMargin: Style.space(2)
+      height: Style.space(14)
+      width: Math.max(height, updateBadgeText.implicitWidth + Style.space(8))
+      radius: height / 2
+      color: root.eligibleCount > 0 ? Color.accent : Color.muted
+
+      Text {
+        id: updateBadgeText
+        anchors.centerIn: parent
+        text: root.updateCount > 99 ? "99+" : String(root.updateCount)
+        color: Color.background
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+        font.bold: true
+      }
     }
   }
 
@@ -858,6 +1235,283 @@ Panel {
           label: "Right" + (root.iconSection === "right" ? " (active)" : "")
           enabled: root.iconSection !== "right"
           onClickedBw: root.moveIcon("right")
+        }
+      }
+    }
+  }
+
+  // ---- right-click settings panel ----------------------------------------
+  // Same header pattern as the plugin popup (glyph + title + version pill),
+  // own PopupCard with the settingsOwner as dismissal owner. Content: the
+  // update-poll interval selector with an immediate-refresh button, status
+  // lines, the batch "Update N plugins now" action (hidden when nothing is
+  // updatable), the unverified-versions toggle, and the two browser-store
+  // links with per-family installed indicators.
+  PopupCard {
+    id: settingsPopup
+    anchorItem: button
+    owner: root.settingsOwner
+    bar: root.bar
+    open: root.settingsOpen
+    padding: Style.space(24)
+    contentWidth: settingsPopup.fittedContentWidth(Style.space(360))
+    contentHeight: settingsPopup.fittedContentHeight(settingsColumn.implicitHeight, Style.space(560))
+
+    Column {
+      id: settingsColumn
+      width: parent ? parent.width : 0
+      spacing: Style.space(14)
+
+      Row {
+        width: settingsColumn.width
+        spacing: Style.space(14)
+
+        Text {
+          text: ""
+          font.family: Style.font.family
+          font.pixelSize: Math.max(Style.font.heading,
+            Math.round(spHeaderTextCol.implicitHeight))
+          color: Color.accent
+          anchors.verticalCenter: parent.verticalCenter
+        }
+
+        Column {
+          id: spHeaderTextCol
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(2)
+
+          Row {
+            spacing: Style.space(8)
+
+            Text {
+              text: "Browser Plugin Manager"
+              font.family: Style.font.family
+              font.pixelSize: Style.font.title
+              font.bold: true
+              color: Color.foreground
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Rectangle {
+              visible: root.managerVersion !== ""
+              anchors.verticalCenter: parent.verticalCenter
+              height: Style.space(18)
+              width: spVersionText.implicitWidth + Style.space(12)
+              radius: Style.cornerRadius > 0 ? 4 : 0
+              color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15)
+              border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.4)
+              border.width: 1
+
+              Text {
+                id: spVersionText
+                anchors.centerIn: parent
+                text: "v" + root.managerVersion
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                color: Color.accent
+              }
+            }
+          }
+
+          Text {
+            text: "Settings \u00b7 updates every "
+              + root.pollIntervalLabels[Math.max(0, root.pollIntervalMinutes.indexOf(root.pollMinutes))]
+              + (root.updateChecking ? "  \u00b7  checking\u2026"
+                : root.lastCheckText !== "never" ? "  \u00b7  last check " + root.lastCheckText : "")
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            color: Color.muted
+          }
+        }
+      }
+
+      // Poll interval: five equal segments (selected one primary-marked)
+      // and the refresh button to check for updates immediately.
+      BWLine {
+        width: settingsColumn.width
+        text: "Check for plugin updates:"
+      }
+      GridLayout {
+        width: settingsColumn.width
+        columns: 6
+        columnSpacing: Style.spacing.controlGap
+
+        Repeater {
+          model: root.pollIntervalMinutes
+          delegate: BWButton {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Style.space(30)
+            label: root.pollIntervalLabels[index]
+            primary: root.pollMinutes === modelData
+            onClickedBw: root.setPollInterval(modelData)
+          }
+        }
+        BWButton {
+          Layout.preferredWidth: Style.space(30)
+          Layout.preferredHeight: Style.space(30)
+          label: "\uF021"
+          enabled: !root.updateChecking
+          onClickedBw: root.checkForUpdates()
+        }
+      }
+
+      BWLine {
+        width: settingsColumn.width
+        visible: root.updateCount > 0
+        text: root.updateCount + " installed plugin" + (root.updateCount === 1 ? " has" : "s have")
+          + " updates"
+          + (root.eligibleCount < root.updateCount
+            ? " \u00b7 " + root.eligibleCount + " updatable with the current verification setting"
+            : "")
+      }
+      BWLine {
+        width: settingsColumn.width
+        visible: !root.updateChecking && !root.updateCheckFailed
+          && root.updateCount === 0 && root.lastCheckText !== "never"
+        text: "All installed plugins are up to date."
+      }
+      BWLine {
+        width: settingsColumn.width
+        visible: root.updateCheckFailed
+        text: "Catalog unreachable: showing the last known update list."
+      }
+      BWLine {
+        width: settingsColumn.width
+        visible: root.settingsSaveFailed
+        color: Color.urgent
+        text: "Settings file could not be written: changes apply this session only."
+      }
+
+      // Batch update (hidden while nothing is updatable): runs the
+      // eligible plugins through detached workers, one notification at the
+      // end (startBatchUpdate).
+      BWButton {
+        visible: root.eligibleCount > 0
+        width: settingsColumn.width
+        height: Style.space(30)
+        primary: true
+        label: "Update " + root.eligibleCount + " plugin"
+          + (root.eligibleCount === 1 ? "" : "s") + " now"
+        onClickedBw: root.startBatchUpdate()
+      }
+
+      // Unverified toggle: default off (verified catalog entries only).
+      Row {
+        width: settingsColumn.width
+        spacing: Style.space(10)
+
+        Column {
+          width: parent.width - spUnverifiedSwitch.implicitWidth - parent.spacing
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(2)
+
+          Text {
+            text: "Update to unverified versions"
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+            color: Color.foreground
+          }
+          Text {
+            width: parent.width
+            wrapMode: Text.Wrap
+            text: "Off: plugins only update to catalog-verified versions."
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            color: Color.muted
+          }
+        }
+
+        ToggleSwitch {
+          id: spUnverifiedSwitch
+          anchors.verticalCenter: parent.verticalCenter
+          checked: root.allowUnverified
+          onToggled: root.setAllowUnverified(!checked)
+        }
+      }
+
+      // Browser stores: half-width buttons opening the extension listing
+      // for each family, with the supported browsers named above and an
+      // installed indicator from the PATH probe.
+      GridLayout {
+        width: settingsColumn.width
+        columns: 2
+        columnSpacing: Style.spacing.controlGap
+
+        Column {
+          Layout.fillWidth: true
+          spacing: Style.space(6)
+
+          Text {
+            width: parent.width
+            wrapMode: Text.Wrap
+            text: root.chromeSupportText
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            color: Color.muted
+          }
+          Row {
+            spacing: Style.space(6)
+            visible: root.chromeInstalled
+            Rectangle {
+              width: Style.space(7)
+              height: width
+              radius: width / 2
+              color: Color.accent
+              anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+              text: "installed on this system"
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              color: Color.accent
+              anchors.verticalCenter: parent.verticalCenter
+            }
+          }
+          BWButton {
+            width: parent.width
+            height: Style.space(30)
+            label: "Chrome Web Store"
+            onClickedBw: root.openStore(root.chromeStoreUrl)
+          }
+        }
+
+        Column {
+          Layout.fillWidth: true
+          spacing: Style.space(6)
+
+          Text {
+            width: parent.width
+            wrapMode: Text.Wrap
+            text: root.firefoxSupportText
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            color: Color.muted
+          }
+          Row {
+            spacing: Style.space(6)
+            visible: root.firefoxInstalled
+            Rectangle {
+              width: Style.space(7)
+              height: width
+              radius: width / 2
+              color: Color.accent
+              anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+              text: "installed on this system"
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              color: Color.accent
+              anchors.verticalCenter: parent.verticalCenter
+            }
+          }
+          BWButton {
+            width: parent.width
+            height: Style.space(30)
+            label: "Firefox Add-ons"
+            onClickedBw: root.openStore(root.firefoxStoreUrl)
+          }
         }
       }
     }

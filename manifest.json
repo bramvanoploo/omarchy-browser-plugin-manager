@@ -16,7 +16,7 @@
   },
   "barWidget": {
     "displayName": "Browser Plugin Watch",
-    "description": "Bar icon that lights up while a browser tab is open on an installable plugin page; left click opens a menu to install, uninstall, update, or move that plugin's bar icon",
+    "description": "Bar icon that lights up while a browser tab is open on an installable plugin page; left click opens a menu to install, uninstall, update, or move that plugin's bar icon; right click opens settings with the plugin-update poll, an update-now action, the unverified-versions toggle, and the browser-store links, with a counter badge while plugins have updates",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",

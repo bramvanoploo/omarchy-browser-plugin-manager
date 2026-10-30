@@ -38,6 +38,20 @@ and Uninstall summon the same wizard — the beacon is a display hint, the
 wizard re-validates and asks for confirmation; moving the icon is plain
 layout config, so it runs `omarchy bar move` directly.
 
+Right click opens the settings panel (same header style): a plugin-update
+poll every **10m / 30m / 1h / 5h / Daily** with a refresh button to check
+immediately, an **Update N plugins now** button (shown only while updates
+are available), a toggle to also update plugins to their *unverified*
+latest versions (default: latest verified only), and links to the Chrome
+Web Store and Firefox Add-ons pages with the supported browsers named and
+the installed families indicated. The poll compares every installed user
+plugin's version against the marketplace catalog; while plugins have
+updates, the bar icon shows a counter in its top-right corner (accent when
+the updates are updatable, muted when held back by the verified-only
+setting; hidden at 0), and a poll that finds new updates sends a
+notification offering them. Settings persist to `settings.json` in the
+plugin's state directory.
+
 ## Architecture
 
 ```
