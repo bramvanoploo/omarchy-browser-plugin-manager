@@ -254,16 +254,16 @@
     return false;
   }
 
-  async function isInstalled(plugin) {
+  async function isInstalled(pluginId) {
     if (statuses) {
-      const status = statuses.get(plugin.id);
+      const status = statuses.get(pluginId);
       return Boolean(status && status.installed);
     }
-    if (!legacyStatuses.has(plugin.id)) {
-      const status = await talkToHost({ type: "status", id: plugin.id }, HOST_STATUS_TIMEOUT_MS);
-      legacyStatuses.set(plugin.id, Boolean(status && status.ok && status.installed));
+    if (!legacyStatuses.has(pluginId)) {
+      const status = await talkToHost({ type: "status", id: pluginId }, HOST_STATUS_TIMEOUT_MS);
+      legacyStatuses.set(pluginId, Boolean(status && status.ok && status.installed));
     }
-    return legacyStatuses.get(plugin.id);
+    return legacyStatuses.get(pluginId);
   }
 
   // Send the action and let the wizard on the desktop be the feedback.
@@ -451,6 +451,14 @@
     return status && status.installed && status.updateAvailable ? status : null;
   }
 
+  // Ribbon kind for a card the extension cannot operate (no mounted button):
+  // an available update wins, otherwise an installed plugin (e.g. installed
+  // on the desktop via CLI) shows the passive INSTALLED banner.
+  async function passiveRibbonKind(pluginId) {
+    if (updateStatusFor(pluginId)) return "update";
+    return (await isInstalled(pluginId)) ? "installed" : null;
+  }
+
   function makeCardButton(plugin, installed, update) {
     const verb = update ? "Update" : installed ? "Uninstall" : "Install";
     const button = document.createElement("button");
@@ -484,7 +492,9 @@
   // button, keeping the copy button and the page's own listener on it
   // (same layout idiom as the plugin pages). Buttons whose catalog entry
   // is not installable get no added button (the marketplace's own rule
-  // wins, exactly like on the plugin pages).
+  // wins, exactly like on the plugin pages) but do get the passive corner
+  // banner when the host reports them installed (e.g. installed on the
+  // desktop via the CLI).
   let pluginsById = null;
   let scanning = false;
   let scanPending = false;
@@ -508,9 +518,18 @@
       for (const copy of targets) {
         copy.dataset.piSeen = "1";
         const plugin = pluginsById.get(copy.dataset.pluginId);
-        if (!installable(plugin)) continue;
+        if (!installable(plugin)) {
+          // Not installable from the extension (built-in, no host install
+          // command, failed upstream check, ...): no button, but the card
+          // still gets the passive corner banner from live host state, so
+          // CLI-installed plugins are recognizable at a glance.
+          const card = cardFor(copy);
+          card.dataset.piPassiveRibbon = "1";
+          setRibbon(card, await passiveRibbonKind(copy.dataset.pluginId));
+          continue;
+        }
         const update = updateStatusFor(plugin.id);
-        const installed = update ? true : await isInstalled(plugin);
+        const installed = update ? true : await isInstalled(plugin.id);
         if (!copy.parentElement) continue;
         copy.parentElement.insertBefore(makeCardButton(plugin, installed, update), copy);
         setRibbon(cardFor(copy), update ? "update" : installed ? "installed" : null);
@@ -543,7 +562,7 @@
   // live state diverges from its mounted button (wizard confirmed/cancelled,
   // plugin installed/removed on the desktop), swap the button. Mirrors the
   // plugin pages' state sync at a catalog-friendly interval.
-  function syncRendered() {
+  async function syncRendered() {
     if (!statuses || !pluginsById) return;
     const buttons = document.querySelectorAll(
       'button.card-install[data-pi-state="install"], button.card-install[data-pi-state="uninstall"], button.card-install[data-pi-state="update"]'
@@ -557,6 +576,15 @@
       if (wanted === button.dataset.piState) continue;
       const plugin = pluginsById.get(button.dataset.pluginId);
       if (plugin) button.replaceWith(makeCardButton(plugin, installed, update));
+    }
+    // Passive (non-installable) cards have no mounted button, so refresh
+    // their banners from the same batch snapshot the buttons just got
+    // (statuses is non-null here, so passiveRibbonKind stays local).
+    for (const card of document.querySelectorAll("[data-pi-passive-ribbon]")) {
+      const copy = card.querySelector("button.card-install[data-copy-command]");
+      if (copy && copy.dataset.pluginId) {
+        setRibbon(card, await passiveRibbonKind(copy.dataset.pluginId));
+      }
     }
   }
 
