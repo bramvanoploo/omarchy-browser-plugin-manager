@@ -24,10 +24,13 @@ import qs.Ui
 // plain layout change, so it runs the official `omarchy bar move` directly.
 //
 // Right click opens the settings panel (same header pattern): a plugin-update
-// poll every 10m / 30m / 1h / 5h / daily with a refresh button, a
-// "Update N plugins now" button (only while updates are available), a toggle
-// for updating to unverified latest versions (default: verified only), and
-// the two browser-store links with per-family installed indicators. The poll
+// poll every 10m / 30m / 1h / 5h / daily with a refresh button, two capped
+// scrollable per-plugin update lists (verified first, then unverified; each
+// with a title, a count, and an install button that updates just that
+// plugin), a "Update N plugins now" button (only while updates are
+// available), a toggle for updating to unverified latest versions (default:
+// verified only), and the two browser-store links with per-family installed
+// indicators. The poll
 // detects outdated plugins exactly like omaplug does (git HEAD behind
 // origin/HEAD via fetch + merge-base); the bar icon carries an
 // omaplug-identical accent pill counting the updates the verification
@@ -187,6 +190,16 @@ Panel {
   function eligibleUpdates() {
     return root.allowUnverified ? root.updateList
       : root.updateList.filter(function (p) { return p.verified === true })
+  }
+
+  // The settings panel shows the pending updates as two separate lists so
+  // the verification state of every single update stays explicit.
+  function verifiedUpdates() {
+    return root.updateList.filter(function (p) { return p.verified === true })
+  }
+
+  function unverifiedUpdates() {
+    return root.updateList.filter(function (p) { return p.verified !== true })
   }
 
   function checkForUpdates() {
@@ -372,8 +385,10 @@ Panel {
     "fi"
   ].join("\n")
 
-  function startBatchUpdate() {
-    var ids = root.eligibleUpdates().map(function (p) { return String(p.id) })
+  // Runs the detached worker for the given plugin ids: the batch button
+  // passes every eligible id, the per-row install buttons a single id.
+  function startUpdate(ids) {
+    ids = (ids || []).map(String)
     if (ids.length === 0) return
     var argv = ["bash", "-c", root.updateWorkerScript, "omarchy-bpm-update"]
     Quickshell.execDetached(argv.concat(ids))
@@ -382,6 +397,10 @@ Panel {
     // outlives that reload with its summary notification.
     root.settingsOpen = false
     root.close()
+  }
+
+  function startBatchUpdate() {
+    root.startUpdate(root.eligibleUpdates().map(function (p) { return String(p.id) }))
   }
 
 
@@ -1090,6 +1109,132 @@ Panel {
     font.pixelSize: Style.font.caption
   }
 
+  // Icon-only square variant of BWButton, used by the update-list rows.
+  component BWIconButton: BorderSurface {
+    id: bwIcon
+    property string label: ""
+    property bool primary: false
+    signal clickedBw
+    width: Style.space(30)
+    height: Style.space(30)
+    radius: Style.cornerRadius
+    color: !enabled ? "transparent"
+      : primary
+        ? (bwIconMouse.containsMouse ? Util.alpha(Color.accent, 0.2) : Util.alpha(Color.accent, 0.12))
+        : (bwIconMouse.containsMouse ? Util.alpha(Color.foreground, 0.12) : Util.alpha(Color.foreground, 0.05))
+    borderSpec: Border.flat(enabled
+      ? (primary ? Color.accent : Util.alpha(Color.foreground, 0.3))
+      : Util.alpha(Color.foreground, 0.2), 1)
+    Text {
+      anchors.centerIn: parent
+      text: bwIcon.label
+      font.family: "Material Icons"
+      font.pixelSize: Math.round(Style.space(17))
+      color: bwIcon.enabled
+        ? (bwIcon.primary ? Color.accent : Color.foreground)
+        : Util.alpha(Color.foreground, 0.35)
+    }
+    MouseArea {
+      id: bwIconMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      enabled: bwIcon.enabled
+      cursorShape: Qt.PointingHandCursor
+      onClicked: bwIcon.clickedBw()
+    }
+  }
+
+  // One titled, capped, scrollable list of pending updates with a per-row
+  // install button. The section hides itself when there is nothing to show.
+  component BWUpdateSection: Column {
+    id: bwSection
+    property string title: ""
+    property var items: []
+    signal pluginPicked(string id)
+    spacing: Style.space(8)
+    visible: items.length > 0
+
+    Row {
+      width: bwSection.width
+      spacing: Style.space(8)
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: bwSection.title
+        color: Color.foreground
+        font.family: Style.font.family
+        font.pixelSize: Style.font.body
+        font.bold: true
+      }
+      Rectangle {
+        anchors.verticalCenter: parent.verticalCenter
+        width: secCountLabel.implicitWidth + Style.space(10)
+        height: secCountLabel.implicitHeight + Style.space(4)
+        radius: height / 2
+        color: Util.alpha(Color.accent, 0.15)
+        Text {
+          id: secCountLabel
+          anchors.centerIn: parent
+          text: bwSection.items.length
+          color: Color.accent
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+      }
+    }
+
+    Rectangle {
+      width: bwSection.width
+      radius: Style.cornerRadius
+      color: "#15151c"
+      height: Math.min(secColumn.implicitHeight + Style.space(16), Style.space(190))
+      clip: true
+      Flickable {
+        anchors.fill: parent
+        anchors.margins: Style.space(8)
+        contentHeight: secColumn.implicitHeight
+        boundsBehavior: Flickable.StopAtBounds
+        Column {
+          id: secColumn
+          width: parent.width
+          spacing: Style.space(6)
+          Repeater {
+            model: bwSection.items
+            Row {
+              width: secColumn.width
+              spacing: Style.space(10)
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: secColumn.width - secVersions.implicitWidth - secButton.width
+                  - (parent.spacing * 2)
+                elide: Text.ElideRight
+                text: modelData.name
+                color: Color.foreground
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+              }
+              Text {
+                id: secVersions
+                anchors.verticalCenter: parent.verticalCenter
+                text: modelData.installed + " \u2192 " + modelData.latest
+                color: Color.muted
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+              }
+              BWIconButton {
+                id: secButton
+                anchors.verticalCenter: parent.verticalCenter
+                label: "\uE2C9" // install (download) icon
+                primary: true
+                onClickedBw: bwSection.pluginPicked(String(modelData.id))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   PopupCard {
     id: popup
     anchorItem: button
@@ -1518,6 +1663,24 @@ Panel {
         visible: root.settingsSaveFailed
         color: Color.urgent
         text: "Settings file could not be written: changes apply this session only."
+      }
+
+      // Per-plugin update lists: verified first, unverified below, each
+      // with a concise title, a live count, a capped scrollable area, and
+      // an install button per row that updates just that plugin through
+      // the same detached worker as the batch button (startUpdate).
+      BWUpdateSection {
+        width: settingsColumn.width
+        title: "Verified plugin updates"
+        items: root.verifiedUpdates()
+        onPluginPicked: function (id) { root.startUpdate([id]) }
+      }
+
+      BWUpdateSection {
+        width: settingsColumn.width
+        title: "Unverified plugin updates"
+        items: root.unverifiedUpdates()
+        onPluginPicked: function (id) { root.startUpdate([id]) }
       }
 
       // Batch update (hidden while nothing is updatable): runs the
