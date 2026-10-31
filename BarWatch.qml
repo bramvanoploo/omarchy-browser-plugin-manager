@@ -218,9 +218,9 @@ Panel {
   // Every installed user (non-first-party) plugin whose git HEAD is behind
   // origin (omaplug's fetch/merge-base model, so both widgets count the same
   // set). updateList holds the outdated ones ({id, name, installed, latest,
-  // verified}); the bar badge and tooltip show the eligibleCount size (hidden
-  // at 0) — the subset the verification setting allows to update (all when
-  // unverified is on, verified-only otherwise).
+  // remote, verified}); the bar badge and tooltip show the eligibleCount
+  // size (hidden at 0) — the subset the verification setting allows to
+  // update (all when unverified is on, verified-only otherwise).
   property var updateList: []
   readonly property int updateCount: root.updateList.length
   readonly property int eligibleCount: root.allowUnverified
@@ -393,8 +393,15 @@ Panel {
 
   // Batch update runs as a detached bash worker (the wizard's per-plugin
   // update pattern): a git pull takes time, and updating the manager itself
-  // reloads the shell and destroys this widget mid-run. Ids ride in as
-  // argv ($1..$n): no shell interpolation of plugin ids.
+  // reloads the shell and destroys this widget mid-run. Specs ride in as
+  // argv ($1..$n) as "id:expected_sha" (sha empty for unverified): no shell
+  // interpolation of plugin ids. A verified spec pins the update to the
+  // catalog's verificationCommit: the worker re-fetches and fast-forwards to
+  // exactly that commit, and fails closed if upstream advanced past it after
+  // the poll, so confirming a "Verified plugin update" can never load an
+  // unreviewed commit. Unverified specs (and verified rows whose poll fetch
+  // had no sha) go through the plain CLI, which loads the current branch tip
+  // under the user's explicit unverified choice.
   // Each CLI call ends with "omarchy-shell shell rescanPlugins" when it
   // updated something, which reloaded the bar once per plugin. The worker
   // shadows omarchy-shell on PATH to swallow those per-plugin rescans and
@@ -409,16 +416,58 @@ Panel {
     "}",
     "real_shell=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell\"",
     "command -v \"$real_shell\" >/dev/null 2>&1 || real_shell=\"$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)\"",
+    "plug=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins\"",
+    "export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true",
+    "export GIT_SSH_COMMAND=\"${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}\"",
+    "# Verified pin: refuse unless the freshly fetched tip is exactly the",
+    "# reviewed commit, then fast-forward to only that commit and validate",
+    "# (same validation and ORIG_HEAD rollback as the CLI). Fails closed:",
+    "# any divergence between poll and update leaves the plugin untouched.",
+    "update_pinned() { # id expected_sha -> stdout explains the outcome",
+    "  local id=\"$1\" sha=\"$2\" d=\"$plug/$1\" tip",
+    "  timeout 30 git -C \"$d\" fetch --quiet origin HEAD || { echo \"fetch failed\"; return 1; }",
+    "  tip=$(git -C \"$d\" rev-parse --verify FETCH_HEAD 2>/dev/null) || { echo \"fetch produced no tip\"; return 1; }",
+    "  [ \"$tip\" = \"$sha\" ] || { echo \"upstream advanced past the verified commit\"; return 1; }",
+    "  git -C \"$d\" merge --ff-only \"$sha\" >/dev/null 2>&1 || { echo \"cannot fast-forward to the verified commit\"; return 1; }",
+    "  if ! omarchy plugin validate \"$d\" >/dev/null 2>&1; then",
+    "    git -C \"$d\" reset --hard ORIG_HEAD >/dev/null 2>&1",
+    "    echo \"update failed validation (rolled back)\"",
+    "    return 1",
+    "  fi",
+    "  echo \"pinned\"",
+    "}",
     "bin_dir=$(mktemp -d)",
     "printf '%s\\n' '#!/bin/bash' '[ \"${1:-}\" = shell ] && [ \"${2:-}\" = rescanPlugins ] && exit 0' 'exec '\"$real_shell\"' \"$@\"' > \"$bin_dir/omarchy-shell\"",
     "chmod +x \"$bin_dir/omarchy-shell\"",
     "export PATH=\"$bin_dir:$PATH\"",
     "ok=0; fail=0; failed=\"\"",
     "while [ $# -gt 0 ]; do",
-    "  if OUT=\"$(omarchy plugin update \"$1\" --yes 2>&1)\"; then",
+    "  spec=\"$1\"",
+    "  id=\"${spec%%:*}\"; expected=\"${spec#*:}\"",
+    "  case \"$id\" in *[!a-z0-9.-]*|.*|*..*|*:*) id=\"\" ;; esac",
+    "# A spec carrying a pin must pin to a full 40 hex sha; an unpinned spec",
+    "# carries an empty sha. A present-but-invalid sha is a violation and",
+    "# never falls through to the unverified CLI path (fail closed).",
+    "  bad_sha=0",
+    "  if [ -n \"$expected\" ]; then",
+    "    if [ ${#expected} -ne 40 ]; then",
+    "      bad_sha=1",
+    "    else",
+    "      tmp_sha=\"${expected//[0-9a-f]/}\"",
+    "      [ -n \"$tmp_sha\" ] && bad_sha=1",
+    "    fi",
+    "  fi",
+    "  OUT=\"\"",
+    "  if [ -n \"$id\" ] && [ \"$bad_sha\" -eq 0 ] && [ -n \"$expected\" ] && [ -d \"$plug/$id/.git\" ]; then",
+    "    if OUT=$(update_pinned \"$id\" \"$expected\"); then",
+    "      ok=$((ok+1))",
+    "    else",
+    "      fail=$((fail+1)); failed=\"$failed $id ($OUT)\"",
+    "    fi",
+    "  elif [ -n \"$id\" ] && [ \"$bad_sha\" -eq 0 ] && OUT=\"$(omarchy plugin update \"$id\" --yes 2>&1)\" && [ $? -eq 0 ]; then",
     "    ok=$((ok+1))",
     "  else",
-    "    fail=$((fail+1)); failed=\"$failed $1\"",
+    "    fail=$((fail+1)); failed=\"$failed ${id:-$spec}\"",
     "  fi",
     "  shift",
     "done",
@@ -429,19 +478,32 @@ Panel {
     "if [ \"$fail\" -gt 0 ]; then",
     "  notify \"Plugin updates finished\" \"$ok updated, $fail failed:$failed\"",
     "elif [ \"$ok\" -gt 0 ]; then",
-    "  notify \"Plugins updated\" \"$ok plugin(s) updated to the latest version.\"",
+    "  notify \"Plugins updated\" \"$ok plugin(s) updated to the latest verified version.\"",
     "else",
     "  notify \"No plugin updated\" \"No plugin update was applied.\"",
     "fi"
   ].join("\n")
 
-  // Runs the detached worker for the given plugin ids: the batch button
-  // passes every eligible id, the per-row install buttons a single id.
-  function startUpdate(ids) {
-    ids = (ids || []).map(String)
-    if (ids.length === 0) return
+  // The worker spec for one poll entry: "id:remote_sha". The sha is the
+  // commit the poll fetched and matched against the catalog's
+  // verificationCommit; the worker pins verified updates to it and ignores
+  // it for unverified ones (entries never carry a sha the poll did not see).
+  function updateSpec(p) {
+    return String(p.id) + ":" + (p.remote ? String(p.remote) : "")
+  }
+
+  // Worker specs for a whole list (the batch button).
+  function updateSpecs(list) {
+    return (list || []).map(updateSpec)
+  }
+
+  // Runs the detached worker for the given specs: the batch button passes
+  // every eligible spec, the per-row install buttons a single one.
+  function startUpdate(specs) {
+    specs = (specs || []).map(String)
+    if (specs.length === 0) return
     var argv = ["bash", "-c", root.updateWorkerScript, "omarchy-bpm-update"]
-    Quickshell.execDetached(argv.concat(ids))
+    Quickshell.execDetached(argv.concat(specs))
     // Closing the popups is harmless: the shell reloads when the manager
     // itself is among the updated plugins, and the detached worker
     // outlives that reload with its summary notification.
@@ -450,29 +512,29 @@ Panel {
   }
 
   // Update confirmation gate: the row buttons and the batch button arm an
-  // update request (ids + explanatory text) instead of running the worker,
-  // and the settings popup draws a confirm card over its content. Cancel
-  // clears the request; Confirm hands the ids to startUpdate.
-  property var updateConfirmIds: []
+  // update request (worker specs + explanatory text) instead of running the
+  // worker, and the settings popup draws a confirm card over its content.
+  // Cancel clears the request; Confirm hands the specs to startUpdate.
+  property var updateConfirmSpecs: []
   property string updateConfirmText: ""
-  readonly property bool updateConfirmOpen: updateConfirmIds.length > 0
+  readonly property bool updateConfirmOpen: updateConfirmSpecs.length > 0
 
-  function requestUpdate(ids, text) {
-    ids = (ids || []).map(String)
-    if (ids.length === 0) return
-    root.updateConfirmIds = ids
+  function requestUpdate(specs, text) {
+    specs = (specs || []).map(String)
+    if (specs.length === 0) return
+    root.updateConfirmSpecs = specs
     root.updateConfirmText = String(text || "")
   }
 
   function cancelUpdateConfirm() {
-    root.updateConfirmIds = []
+    root.updateConfirmSpecs = []
     root.updateConfirmText = ""
   }
 
   function confirmUpdate() {
-    var ids = root.updateConfirmIds
+    var specs = root.updateConfirmSpecs
     root.cancelUpdateConfirm()
-    root.startUpdate(ids)
+    root.startUpdate(specs)
   }
 
 
@@ -908,10 +970,16 @@ Panel {
   // skipped (omaplug shows those as LOCAL_CHANGES, never as an UPDATE), a
   // failed fetch counts as "not an
   // update" (offline never invents one). Emits the behind set as JSON
-  // ({ok, plugins: [{id, name, installed, latest, verified}]}); the catalog
-  // (15 MB, far over the kernel's per-arg limit, so it rides in on stdin —
-  // --argjson on the command line fails with "Argument list too long") only
-  // decorates entries with the verified flag and the latest version.
+  // ({ok, plugins: [{id, name, installed, latest, remote, verified}]}); the
+  // catalog (15 MB, far over the kernel's per-arg limit, so it rides in on
+  // stdin — --argjson on the command line fails with "Argument list too
+  // long") only decorates entries with the latest version and the verified
+  // flag. Verification is pinned to the catalog's verificationCommit, so an
+  // entry is verified only when the fetched remote tip IS that exact commit:
+  // if upstream advanced after the catalog observation (remote tip differs),
+  // the new tip was never reviewed and the update is demoted to unverified.
+  // Each entry's remote (the fetched tip sha) is the commit a verified
+  // update pins to in the worker (updateWorkerScript re-verifies it).
   readonly property string checkScript: [
     "set -u",
     "export GIT_TERMINAL_PROMPT=0",
@@ -937,19 +1005,22 @@ Panel {
     "    M=\"$D/manifest.json\"",
     "    VER=$(jq -r '.version // \"\"' \"$M\" 2>/dev/null | tr -d '\\t\\r\\n')",
     "    NAME=$(jq -r '.name // \"\"' \"$M\" 2>/dev/null | tr -d '\\t\\r\\n')",
-    "    rows+=$(printf '%s\\t%s\\t%s' \"$ID\" \"$VER\" \"$NAME\")$'\\n'",
+    "    rows+=$(printf '%s\\t%s\\t%s\\t%s' \"$ID\" \"$VER\" \"$NAME\" \"$REMOTE\")$'\\n'",
     "  fi",
     "done",
     "plugins=$(printf '%s' \"$catalog\" | jq -c --arg rows \"$rows\" '",
     "(.plugins // []) as $pl",
     "| [ $rows | split(\"\\n\")[] | select(length > 0) | split(\"\\t\")",
-    "  | {id: .[0], installed: .[1], name: (if length > 2 then .[2] else \"\" end) }",
+    "  | {id: .[0], installed: .[1], name: (if length > 2 then .[2] else \"\" end), remote: (if length > 3 then .[3] else \"\" end) }",
     "] | map(. as $p",
     "  | ($pl | map(select(type == \"object\" and .id == $p.id)) | first) as $e",
+    "  | ((if $e == null then \"\" else ($e.verificationCommit // \"\") end) | tostring) as $vc",
     "  | {id: $p.id, name: (if $p.name != \"\" then $p.name else $p.id end),",
     "    installed: ($p.installed | tostring),",
     "    latest: ((if $e == null then \"\" else ($e.version // \"\") end) | tostring),",
-    "    verified: ((if $e == null then \"\" else ($e.verificationStatus // \"\") end) | tostring) == \"verified\"})",
+    "    remote: $p.remote,",
+    "    verified: ((if $e == null then \"\" else ($e.verificationStatus // \"\") end) | tostring) == \"verified\"",
+    "      and $vc != \"\" and $p.remote == $vc})",
     "' 2>/dev/null) || plugins=\"[]\"",
     "[ \"${plugins:0:1}\" = \"[\" ] || plugins=\"[]\"",
     "printf '%s' \"{\\\"ok\\\":true,\\\"plugins\\\":$plugins}\""
@@ -1891,15 +1962,17 @@ Panel {
       // with a concise title, a live count, a capped scrollable area, and a
       // compact plain install button per row that arms a confirmation for
       // updating just that plugin through the same detached worker as the
-      // batch button (startUpdate runs only after Confirm).
+      // batch button (startUpdate runs only after Confirm). Rows carry the
+      // poll's fetched commit so the worker pins verified updates to it.
       BWUpdateSection {
         width: settingsColumn.width
         title: "Verified plugin updates"
         items: root.verifiedUpdates()
         onPluginPicked: function (p) {
-          root.requestUpdate([String(p.id)],
-            "Updates " + p.name + " from " + p.installed + " to " + p.latest
-            + ". The plugin's git repository is pulled; the bar reloads when the manager itself updates.")
+          root.requestUpdate([root.updateSpec(p)],
+            "Updates " + p.name + " from " + p.installed + " to the verified commit"
+            + ". The plugin's git repository is fast-forwarded to exactly that reviewed commit"
+            + " (the update fails if upstream advanced past it); the bar reloads when the manager itself updates.")
         }
       }
 
@@ -1908,7 +1981,7 @@ Panel {
         title: "Unverified plugin updates"
         items: root.unverifiedUpdates()
         onPluginPicked: function (p) {
-          root.requestUpdate([String(p.id)],
+          root.requestUpdate([root.updateSpec(p)],
             "Updates " + p.name + " from " + p.installed + " to " + p.latest
             + " (unverified version). The plugin's git repository is pulled; the bar reloads when the manager itself updates.")
         }
@@ -1925,7 +1998,7 @@ Panel {
         label: "Update " + root.eligibleCount + " plugin"
           + (root.eligibleCount === 1 ? "" : "s") + " now"
         onClickedBw: root.requestUpdate(
-          root.eligibleUpdates().map(function (p) { return String(p.id) }),
+          root.updateSpecs(root.eligibleUpdates()),
           "Updates all " + root.eligibleCount + " eligible plugin"
             + (root.eligibleCount === 1 ? "" : "s")
             + " through the same worker as the row buttons. The bar reloads once when the batch finishes.")
@@ -2001,8 +2074,8 @@ Panel {
 
         Text {
           anchors.horizontalCenter: parent.horizontalCenter
-          text: "Update " + root.updateConfirmIds.length + " plugin"
-            + (root.updateConfirmIds.length === 1 ? "" : "s") + "?"
+          text: "Update " + root.updateConfirmSpecs.length + " plugin"
+            + (root.updateConfirmSpecs.length === 1 ? "" : "s") + "?"
           color: Color.foreground
           font.family: Style.font.family
           font.pixelSize: Style.font.body
