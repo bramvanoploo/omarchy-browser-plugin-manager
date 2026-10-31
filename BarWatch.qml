@@ -41,8 +41,9 @@ import qs.Ui
 // origin/HEAD via fetch + merge-base); the bar icon carries an
 // omaplug-identical accent pill counting the updates the verification
 // setting allows to apply, in its top-right corner (hidden at 0), a poll
-// that finds new outdated plugins sends a notification offering the update,
-// and the settings persist to settings.json in the state dir.
+// that finds new outdated plugins sends a notification offering the update
+// (silenceable from settings), and the settings persist to settings.json in
+// the state dir.
 Panel {
   id: root
   moduleName: "bramvanoploo.omarchy-browser-plugin-manager"
@@ -149,19 +150,22 @@ Panel {
   }
 
   // Settings (persisted to settings.json in the state dir, beside the
-  // beacon): update-poll interval and the unverified toggle. Defaults: 1h,
-  // verified-only.
+  // beacon): update-poll interval, the unverified toggle, and the
+  // update-notification toggle. Defaults: 1h, verified-only, notifications
+  // on.
   readonly property string settingsPath: stateDir + "/settings.json"
   readonly property var pollIntervalMinutes: [10, 30, 60, 300, 1440]
   readonly property var pollIntervalLabels: ["10m", "30m", "1h", "5h", "Daily"]
   property int pollMinutes: 60
   property bool allowUnverified: false
+  property bool notifyUpdates: true
   property bool settingsLoaded: false
   property bool settingsSaving: false
   property bool settingsSaveFailed: false
 
   function settingsObject() {
-    return { pollMinutes: root.pollMinutes, allowUnverified: root.allowUnverified }
+    return { pollMinutes: root.pollMinutes, allowUnverified: root.allowUnverified,
+      notifyUpdates: root.notifyUpdates }
   }
 
   function applySettings(raw) {
@@ -175,6 +179,8 @@ Panel {
           root.pollMinutes = Number(d.pollMinutes)
         if (typeof d.allowUnverified === "boolean")
           root.allowUnverified = d.allowUnverified
+        if (typeof d.notifyUpdates === "boolean")
+          root.notifyUpdates = d.notifyUpdates
       }
     } catch (e) {
       // Corrupt file: keep the current (default) values and rewrite below.
@@ -211,6 +217,18 @@ Panel {
     // this toggle, so refresh the available updates immediately. A check
     // already running fetches the full verified-flagged set and applies it
     // under the new setting when it lands, so skipping then is correct.
+    root.checkForUpdates()
+  }
+
+  function setNotifyUpdates(on) {
+    var next = on === true
+    if (root.notifyUpdates === next) return
+    root.notifyUpdates = next
+    root.saveSettings()
+    // Re-enabling should offer the currently pending set again: clear the
+    // dedupe key and re-poll. Turning it off needs nothing: the poll keeps
+    // updating the badge and lists silently.
+    root.lastNotifiedKey = ""
     root.checkForUpdates()
   }
 
@@ -260,20 +278,24 @@ Panel {
       root.updateList = res.plugins
       root.updateCheckFailed = false
       root.lastCheckText = Qt.formatTime(new Date(), "hh:mm")
-      // Offer the update when a check finds a new outdated set: the
+      // Offer the update when a check finds a new eligible set: the
       // notification is how this widget "offers" anything (the button lives
-      // in the settings panel). Held-back updates (verified-only setting
-      // off-locks them) stay in the list and explain in the body; the badge
-      // counts only the eligible ones.
-      var ids = res.plugins.map(function (p) { return String(p.id) }).sort().join(",")
+      // in the settings panel). Unverified updates are not counted while
+      // "Update to unverified versions" is disabled; they stay visible in
+      // the panel and tooltip, and the badge/notification count only the
+      // eligible ones.
+      var eligible = root.eligibleUpdates()
+      var ids = eligible.map(function (p) { return String(p.id) }).sort().join(",")
       if (ids !== root.lastNotifiedKey) {
         root.lastNotifiedKey = ids
-        if (ids !== "") {
-          var n = res.plugins.length
+        // The dedupe key tracks the set even while notifications are off,
+        // so re-enabling offers only a set that changed in the meantime
+        // (setNotifyUpdates clears the key to re-offer the current one).
+        if (ids !== "" && root.notifyUpdates) {
+          var n = eligible.length
           root.notify("Plugin updates available",
-            n + " installed plugin" + (n === 1 ? " has" : "s have") + " updates."
-            + " Right-click the bar icon to update"
-            + (root.eligibleCount === 0 ? " (enable Unverified in settings)" : "") + ".")
+            n + " plugin" + (n === 1 ? " update is" : " updates are") + " available."
+            + " Right-click the bar icon to update.")
         }
       }
     } else {
@@ -1314,8 +1336,10 @@ Panel {
   component BWButton: BorderSurface {
     id: bwButton
     property string label: ""
+    property string tooltipText: ""
     property bool primary: false
     property bool danger: false
+    property bool spin: false
     readonly property color tone: danger
       ? (root.bar ? root.bar.urgent : Color.urgent)
       : Color.accent
@@ -1344,14 +1368,38 @@ Panel {
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
       font.bold: bwButton.primary || bwButton.danger
+      transformOrigin: Item.Center
+
+      // NumberAnimation (GUI-thread timer driven) rather than
+      // RotationAnimator: the shell's composited windows do not advance
+      // render-thread animators, and this is the same mechanism the
+      // thumbnail shimmer uses successfully. Loops 0->360 for as long as
+      // the check runs (the button is disabled), so the icon keeps
+      // turning full circles until the check completes.
+      NumberAnimation on rotation {
+        from: 0
+        to: 360
+        duration: 900
+        loops: Animation.Infinite
+        running: bwButton.spin
+        // Stopping mid-loop leaves the last animated angle on the label;
+        // reset so the icon sits upright again once the check finishes.
+        onRunningChanged: if (!running) bwLabel.rotation = 0
+      }
     }
     MouseArea {
       id: bwMouse
       anchors.fill: parent
       hoverEnabled: true
-      enabled: bwButton.enabled
-      cursorShape: Qt.PointingHandCursor
-      onClicked: bwButton.clickedBw()
+      // Stay enabled while the button is disabled so the tooltip (e.g.
+      // "Checking for updates ...") still follows the pointer; the click
+      // is gated on the button's own enabled state instead.
+      cursorShape: bwButton.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onClicked: if (bwButton.enabled) bwButton.clickedBw()
+    }
+    PanelToolTip {
+      visible: bwMouse.containsMouse && bwButton.tooltipText !== ""
+      text: bwButton.tooltipText
     }
   }
 
@@ -1460,36 +1508,48 @@ Panel {
           spacing: Style.space(6)
           Repeater {
             model: bwSection.items
-            Row {
+            // Slightly lighter theme-lifted background (same
+            // Util.alpha(Color.foreground, …) surface idiom as BWButton)
+            // so each updatable plugin reads as its own row.
+            Rectangle {
               width: secColumn.width
-              spacing: Style.space(10)
-              Text {
-                anchors.verticalCenter: parent.verticalCenter
-                width: secColumn.width - secVersions.implicitWidth - secButton.width
-                  - (parent.spacing * 2)
-                elide: Text.ElideRight
-                text: modelData.name
-                color: Color.foreground
-                font.family: Style.font.family
-                font.pixelSize: Style.font.body
-              }
-              Text {
-                id: secVersions
-                anchors.verticalCenter: parent.verticalCenter
-                text: modelData.installed + " \u2192 " + modelData.latest
-                // Highlighted (accent, bold) so the version bump and the
-                // arrow between them stand out in every updatable row.
-                color: Color.accent
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-                font.bold: true
-              }
-              BWIconButton {
-                id: secButton
-                anchors.verticalCenter: parent.verticalCenter
-                label: "\uF148" // level-up (upgrade) icon
-                size: Style.space(22) // compact, plain (no primary highlight)
-                onClickedBw: bwSection.pluginPicked(modelData)
+              height: secRow.implicitHeight + Style.space(8)
+              radius: Style.cornerRadius
+              color: Util.alpha(Color.foreground, 0.05)
+              Row {
+                id: secRow
+                x: Style.space(8)
+                y: Style.space(4)
+                width: secColumn.width - Style.space(16)
+                spacing: Style.space(10)
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: secRow.width - secVersions.implicitWidth - secButton.width
+                    - (parent.spacing * 2)
+                  elide: Text.ElideRight
+                  text: modelData.name
+                  color: Color.foreground
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                }
+                Text {
+                  id: secVersions
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: modelData.installed + " \u2192 " + modelData.latest
+                  // Highlighted (accent, bold) so the version bump and the
+                  // arrow between them stand out in every updatable row.
+                  color: Color.accent
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                BWIconButton {
+                  id: secButton
+                  anchors.verticalCenter: parent.verticalCenter
+                  label: "\uF148" // level-up (upgrade) icon
+                  size: Style.space(22) // compact, plain (no primary highlight)
+                  onClickedBw: bwSection.pluginPicked(modelData)
+                }
               }
             }
           }
@@ -1910,6 +1970,42 @@ Panel {
         }
       }
 
+      // Update-notification toggle: default on. Off silences the desktop
+      // popups only; the poll, badge, tooltip, and panel lists keep
+      // working, so updates stay discoverable without interruptions.
+      Row {
+        width: settingsColumn.width
+        spacing: Style.space(10)
+
+        Column {
+          width: parent.width - spNotifySwitch.implicitWidth - parent.spacing
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(2)
+
+          Text {
+            text: "Notify about plugin updates"
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+            color: Color.foreground
+          }
+          Text {
+            width: parent.width
+            wrapMode: Text.Wrap
+            text: "Off: the badge and panel lists stay live, but no desktop notifications."
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            color: Color.muted
+          }
+        }
+
+        ToggleSwitch {
+          id: spNotifySwitch
+          anchors.verticalCenter: parent.verticalCenter
+          checked: root.notifyUpdates
+          onToggled: root.setNotifyUpdates(!checked)
+        }
+      }
+
       // Poll interval: five equal segments (selected one primary-marked)
       // and the refresh button to check for updates immediately.
       BWLine {
@@ -1936,6 +2032,10 @@ Panel {
           Layout.preferredHeight: Style.space(30)
           label: "\uF021"
           enabled: !root.updateChecking
+          spin: root.updateChecking
+          tooltipText: root.updateChecking
+            ? "Checking for updates ..."
+            : "Check for updates"
           onClickedBw: root.checkForUpdates()
         }
       }
