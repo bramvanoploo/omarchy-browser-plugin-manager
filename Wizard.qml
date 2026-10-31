@@ -96,6 +96,55 @@ Item {
   property int enableTries: 0
   property bool finalCheck: false
 
+  // Update pinning: the marketplace catalog pins each verified plugin to the
+  // reviewed commit (verificationCommit). The update worker fast-forwards to
+  // exactly that commit and fails closed when upstream has advanced past it,
+  // mirroring the bar widget's poll and updater (BarWatch.qml). The shared
+  // settings.json (same file the bar widget's settings panel writes) carries
+  // the allowUnverified opt-in that permits unpinned updates.
+  readonly property string stateDir: {
+    var base = Quickshell.env("XDG_STATE_HOME")
+    if (!base) base = (Quickshell.env("HOME") || "/tmp") + "/.local/state"
+    return base + "/omarchy/" + root.managerId
+  }
+  readonly property string settingsPath: stateDir + "/settings.json"
+  property bool allowUnverified: false
+
+  function applySettings(raw) {
+    var value = false
+    try {
+      var d = JSON.parse(String(raw || ""))
+      if (d && typeof d.allowUnverified === "boolean")
+        value = d.allowUnverified
+    } catch (e) {
+      value = false
+    }
+    root.allowUnverified = value
+  }
+
+  // The catalog's reviewed commit for this plugin; empty when the plugin is
+  // not verified (missing entry, unverified status, no/short pin).
+  readonly property string updateVerifiedSha: {
+    var e = root.catalogEntry
+    if (!e || String(e.verificationStatus) !== "verified") return ""
+    var sha = String(e.verificationCommit || "")
+    return /^[a-f0-9]{40}$/.test(sha) ? sha : ""
+  }
+
+  // Unverified update under the default verified-only policy: block the
+  // action with an explanation until the user opts in via the bar widget's
+  // settings toggle.
+  readonly property string updateVerifyBlocked: {
+    if (root.mode !== "update" || !root.catalogLoaded || !root.catalogEntry)
+      return ""
+    if (root.updateVerifiedSha.length > 0 || root.allowUnverified)
+      return ""
+    return "This plugin's latest upstream commit is no longer the commit a "
+      + "marketplace maintainer reviewed, so an update would install "
+      + "unreviewed code. Allow unverified updates in the plugin manager's "
+      + "bar widget settings to proceed."
+  }
+
   readonly property var manifestKinds: pluginManifest && pluginManifest.kinds
     ? pluginManifest.kinds : []
 
@@ -103,6 +152,7 @@ Item {
 
   readonly property string reviewBlocked: {
     if (catalogError.length > 0) return catalogError
+    if (updateVerifyBlocked.length > 0) return updateVerifyBlocked
     if (needsManifest && manifestError.length > 0) return manifestError
     if (!catalogLoaded) return "Loading marketplace data\u2026"
     if (needsManifest && !manifestLoaded) return "Loading marketplace data\u2026"
@@ -241,6 +291,9 @@ Item {
 
     opened = true
 
+    // Fresh read of the shared settings (allowUnverified) on every summon.
+    settingsFile.reload()
+
     if (!validPluginId(pluginId)) {
       catalogError = "Invalid plugin identifier"
       catalogLoaded = true
@@ -373,10 +426,12 @@ Item {
 
   // Update runs detached like install/uninstall: a git pull touches the
   // watched plugins directory, and updating the manager itself reloads the
-  // shell and destroys this overlay.
+  // shell and destroys this overlay. The verified commit (empty when the
+  // unverified opt-in applies) rides in the section slot ($4) and pins the
+  // worker's fast-forward; an empty pin runs the plain CLI update.
   function runUpdate() {
     if (!root.canAct) return
-    root.spawnWorker("update", "")
+    root.spawnWorker("update", root.updateVerifiedSha)
   }
 
   function confirmEnable() {
@@ -527,6 +582,16 @@ Item {
     }
   }
 
+  // The bar widget's settings file (allowUnverified opt-in for updates).
+  // Read-only here: the widget owns writes; the wizard reloads on open.
+  FileView {
+    id: settingsFile
+    path: root.settingsPath
+    printErrors: false
+    onLoaded: root.applySettings(text())
+    onLoadFailed: root.applySettings("")
+  }
+
   // Keep the native messaging host registration in sync with the plugin's
   // presence: registering on every load is idempotent (the script rewrites
   // its manifests, pinned to the published extension IDs), so installing the
@@ -620,11 +685,49 @@ Item {
       "OUT=''"
     ]
     if (kind === "update") {
-      // Git-managed update of the installed clone; --yes because the user
-      // already confirmed in this dialog. The shell reloads the plugin
-      // itself; a running update of the manager reloads the shell, so this
-      // worker is detached like install/uninstall.
+      // Pinned, fail-closed update mirroring the bar widget's updater: with
+      // a verified commit ($4), fast-forward the clone to exactly that sha,
+      // validate it, and roll back on validation failure. Upstream advanced
+      // past the pin leaves the plugin untouched. An empty pin is the
+      // explicit unverified opt-in: the plain CLI update. --yes because the
+      // user already confirmed in this dialog; the shell reloads the plugin
+      // itself, and a manager update reloads the shell, so this worker is
+      // detached like install/uninstall.
       s = s.concat([
+        "export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true",
+        "export GIT_SSH_COMMAND=\"${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}\"",
+        "EXPECTED=\"$4\"",
+        "D=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$ID\"",
+        "if [ -n \"$EXPECTED\" ]; then",
+        "  if [ ${#EXPECTED} -ne 40 ] || [ -n \"${EXPECTED//[0-9a-f]/}\" ]; then",
+        "    notify \"Plugin update failed\" \"$NAME: the verified commit pin is malformed; refusing to update.\"",
+        "    exit 1",
+        "  fi",
+        "  if [ ! -d \"$D/.git\" ]; then",
+        "    notify \"Plugin update failed\" \"$NAME: no git clone to fast-forward at $D.\"",
+        "    exit 1",
+        "  fi",
+        "  if ! timeout 30 git -C \"$D\" fetch --quiet origin HEAD; then",
+        "    notify \"Plugin update failed\" \"$NAME: fetching the verified commit failed.\"",
+        "    exit 1",
+        "  fi",
+        "  TIP=\"$(git -C \"$D\" rev-parse --verify FETCH_HEAD 2>/dev/null || true)\"",
+        "  if [ \"$TIP\" != \"$EXPECTED\" ]; then",
+        "    notify \"Update unavailable\" \"$NAME: upstream advanced past the verified commit; the plugin was left untouched.\"",
+        "    exit 1",
+        "  fi",
+        "  if ! git -C \"$D\" merge --ff-only \"$EXPECTED\"; then",
+        "    notify \"Plugin update failed\" \"$NAME: the clone could not fast-forward to the verified commit.\"",
+        "    exit 1",
+        "  fi",
+        "  if ! OUT=\"$(omarchy plugin validate \"$D\" 2>&1)\"; then",
+        "    git -C \"$D\" reset --hard ORIG_HEAD >/dev/null 2>&1 || true",
+        "    notify \"Plugin update failed\" \"$NAME: the verified commit failed validation and was rolled back.\"",
+        "    exit 1",
+        "  fi",
+        "  notify \"Plugin updated\" \"$NAME is updated to verified commit ${EXPECTED:0:7}.\"",
+        "  exit 0",
+        "fi",
         "if ! OUT=\"$(omarchy plugin update \"$ID\" --yes 2>&1)\"; then",
         "  notify \"Plugin update failed\" \"$NAME: $OUT\"",
         "  exit 1",
@@ -1092,8 +1195,18 @@ Item {
         }
         PiLine {
           visible: root.stage === "update-confirm"
-          text: "Installed. Updating pulls the latest commits from the plugin's "
-            + "git repository; the shell reloads the plugin afterwards."
+            && root.updateVerifiedSha.length > 0
+          text: "Installed. Updating fast-forwards the plugin to the verified "
+            + "commit " + root.shortSha(root.updateVerifiedSha) + ". If upstream "
+            + "advanced past it, the update is refused and the plugin stays untouched."
+        }
+        PiLine {
+          visible: root.stage === "update-confirm"
+            && root.updateVerifiedSha.length === 0
+          color: Color.accent
+          text: "Installed. No marketplace-verified commit matches upstream, and "
+            + "you allowed unverified updates: this update pulls commits no "
+            + "maintainer reviewed. The shell reloads the plugin afterwards."
         }
 
         // ---- stage: browser-prompt (manager install finished) ----

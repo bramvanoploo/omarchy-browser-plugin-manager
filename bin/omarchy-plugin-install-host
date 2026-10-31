@@ -152,13 +152,19 @@ update_cache_age() {
   printf '%s' "$(( now - ts ))"
 }
 
-# The behind-set as [{id,name,installedVersion,latestVersion,verified}]:
+# The behind-set as [{id,name,installedVersion,latestVersion,remote,verified}]:
 # omaplug's git-ancestry model (identical rules to the bar widget's poll):
 # skip symlinks, non-git dirs, detached HEADs, dirty trees; fetch origin
 # HEAD; behind = HEAD is a strict ancestor of the fetched HEAD. The
 # 15 MB catalog rides in on stdin (--argjson on argv fails E2BIG) and only
-# decorates: latest version + verified flag. A failed catalog fetch keeps
-# the last-good cache (offline never invents an update).
+# decorates: latest version + verified flag. Verification is pinned to the
+# catalog's verificationCommit, identical to the bar widget's poll: an entry
+# is verified only when the fetched remote tip IS that exact commit, so an
+# upstream that advanced after the catalog observation is demoted to
+# unverified (the new tip was never reviewed). Each entry's remote (the
+# fetched tip sha) is the commit a verified update pins to.
+# A failed catalog fetch keeps the last-good cache (offline never invents
+# an update).
 run_update_check() {
   local list="" catalog="" rows="" id d head_sha remote ver name plugins tmp ts
   export GIT_TERMINAL_PROMPT=0
@@ -184,23 +190,29 @@ run_update_check() {
     if [[ -n $remote && $head_sha != "$remote" ]] && git -C "$d" merge-base --is-ancestor "$head_sha" "$remote" 2>/dev/null; then
       ver=$(jq -r '.version // ""' "$d/manifest.json" 2>/dev/null | tr -d '\t\r\n') || ver=""
       name=$(jq -r '.name // ""' "$d/manifest.json" 2>/dev/null | tr -d '\t\r\n') || name=""
-      rows+=$(printf '%s\t%s\t%s' "$id" "$ver" "$name")$'\n'
+      rows+=$(printf '%s\t%s\t%s\t%s' "$id" "$ver" "$name" "$remote")$'\n'
     fi
   done
   plugins=$(printf '%s' "$catalog" | jq -c --arg rows "$rows" '
     (.plugins // []) as $pl
     | [ $rows | split("\n")[] | select(length > 0) | split("\t")
-        | {id: .[0], installedVersion: .[1], name: (if length > 2 then .[2] else "" end)}
+        | {id: .[0], installedVersion: .[1], name: (if length > 2 then .[2] else "" end),
+           remote: (if length > 3 then .[3] else "" end)}
       ]
     | map(. as $p
       | ($pl | map(select(type == "object" and .id == $p.id)) | first) as $e
+      | (if $e == null then "" else ($e.verificationStatus // "") end) as $st
+      | (if $e == null then "" else ($e.verificationCommit // "") end) as $vc
       | {id: $p.id,
         name: (if $p.name != "" then $p.name else $p.id end),
         installedVersion: ($p.installedVersion | tostring),
         installed: ($p.installedVersion | tostring),
         latestVersion: ((if $e == null then "" else ($e.version // "") end) | tostring),
         latest: ((if $e == null then "" else ($e.version // "") end) | tostring),
-        verified: ((if $e == null then "" else ($e.verificationStatus // "") end) | tostring) == "verified"})
+        remote: (if ($p.remote | test("^[0-9a-f]{40}$")) then $p.remote else "" end),
+        verified: ($st == "verified"
+                   and ($p.remote | test("^[0-9a-f]{40}$"))
+                   and $p.remote == $vc)})
   ' 2>/dev/null) || plugins="[]"
   [[ ${plugins:0:1} == "[" ]] || plugins="[]"
   ts=$(date +%s)
