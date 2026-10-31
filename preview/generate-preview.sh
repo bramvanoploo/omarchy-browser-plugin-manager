@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Render preview.png (1920x1080) from template.html + captured assets.
-# Assets: wizard_install.png, wizard_disable.png (wizard overlay cards,
+# Assets: wizard-ready.png, wizard_disable.png (wizard overlay cards,
 # cropped from full-screen grim captures by crop-wizard.py),
-# buttons_install.png, buttons_disable.png, catalog_icons.png
+# buttons-deploy.png, buttons_disable.png, catalog_icons.png
 # (marketplace page screenshots from ~/Pictures/screenshots).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,7 +20,7 @@ fi
 VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))['version'])" 2>/dev/null || echo "0.0.0")
 echo "==> Preparing preview banner for Browser Plugin Manager v$VERSION..."
 
-for asset in wizard_install.png wizard_disable.png buttons_install.png buttons_disable.png catalog_icons.png; do
+for asset in wizard-ready.png wizard_disable.png buttons-deploy.png buttons_disable.png catalog_icons.png; do
   if [[ ! -f "$SCRIPT_DIR/$asset" ]]; then
     echo "Error: required asset $asset missing in $SCRIPT_DIR (see README.md to re-capture)" >&2
     exit 1
