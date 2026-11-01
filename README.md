@@ -11,12 +11,6 @@ One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org
 
 ![Omarchy Browser Plugin Manager](preview.png)
 
-Clicking **Install** on a plugin page opens a desktop wizard: it re-validates
-the request against the live catalog, asks what to do (bar section for
-widgets), and only installs the official `omarchy plugin` CLI way after you
-confirm. Once installed, the page swaps Install for **Enable/Disable** and
-**Uninstall**; every action ends in a notification, not a dialog.
-
 **Bar-icon watcher**: the Omarchy bar icon lights up while a plugin page is
 the active tab. Left click opens a dropdown to **Install**, **Update**,
 **Uninstall**, and move the icon; right click opens settings (update polling,
