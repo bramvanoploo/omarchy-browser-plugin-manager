@@ -51,6 +51,15 @@ verified-only setting; hidden at 0), and a poll that finds new updates sends
 a notification offering them. Settings persist to `settings.json` in the
 plugin's state directory.
 
+**One-time extension prompt**: after this plugin is installed in Omarchy
+(install only, not on later enables), the wizard shows a prompt that detects
+the default browser (`xdg-settings get default-web-browser`, falling back to
+the `x-scheme-handler/https` association), opens the matching browser
+extension page (Firefox Add-ons / Chrome Web Store), and links the other
+family's page. Cancelling shows a warning that the plugin is inert without
+its browser extension, with buttons to open the extension page, cancel, or
+uninstall the Omarchy plugin.
+
 ## Components
 
 ```

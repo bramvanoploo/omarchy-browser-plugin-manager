@@ -66,14 +66,6 @@ Prefer not to use the stores? Every [GitHub release](https://github.com/bramvano
 The Omarchy plugin registers the native messaging host itself (every shell
 start, idempotently); the browser extension alone is not enough.
 
-After installing this plugin in Omarchy, the wizard shows a one-time prompt
-(install only, not on later enables): it detects the default browser
-(`xdg-settings get default-web-browser`, falling back to the
-`x-scheme-handler/https` association), opens the matching extension page
-from the table above, and links the other family's page. Cancelling shows a
-warning that the plugin is inert without its browser extension, with buttons
-to open the extension page, cancel, or uninstall the Omarchy plugin.
-
 ## Architecture
 
 See [documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md) for the
