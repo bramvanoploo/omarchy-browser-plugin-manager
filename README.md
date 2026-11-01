@@ -2,12 +2,12 @@
 
 One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org).
 
-> **Note:** The Firefox and Chromium browser extensions are currently under
-> review and will be available soon from their respective official sources
-> (Firefox Add-ons and the Chrome Web Store). Until then, both extensions can
-> be downloaded from the assets section of the
-> [latest release](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/latest)
-> and installed manually — see [documentation/INSTALL.md](documentation/INSTALL.md).
+> **Note:** The Chromium-browser extension is live on the
+> [Chrome Web Store](https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf).
+> The Firefox-browser extension is still under review at Firefox Add-ons;
+> until it is approved, install it directly from this repository with the
+> [signed .xpi](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/download/v0.8.0/omarchy-browser-plugin-manager-0.8.0-signed.xpi)
+> of the latest release — see [documentation/INSTALL.md](documentation/INSTALL.md).
 
 ![Omarchy Browser Plugin Manager](preview.png)
 
