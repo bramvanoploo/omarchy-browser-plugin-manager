@@ -52,6 +52,12 @@
 # tab's record when the page closes.
 
 set -euo pipefail
+# The state dir holds the marketplace presence heartbeats (which pages the
+# user has open), so every file this host creates must be owner-only from the
+# moment it exists, whatever the caller's umask is (a 022 umask would make
+# the records world-readable). Children (git, the shell) run as the same user,
+# so nothing outside this account needs read access.
+umask 077
 # Qt (used by omarchy-shell / omarchy plugin list) writes a warning to stdout
 # if the locale is non-UTF-8 ("C" / "POSIX"). Force C.UTF-8 for child processes
 # and scope LC_ALL=C locally when measuring exact byte lengths.
@@ -90,6 +96,25 @@ UPDATE_TTL_SECONDS=300
 UPDATE_ACTION_STAMP="$STATE_DIR/update-action.stamp"
 UPDATE_FAST_TTL_SECONDS=5
 UPDATE_FAST_WINDOW_SECONDS=120
+
+# Owner-only state storage, established before anything is written: the
+# directory becomes 700 and every entry in it loses group/other access,
+# including state files created by older releases under a 022 umask. Files
+# created from now on are owner-only at creation through the process umask.
+ensure_private_state() {
+  mkdir -p "$STATE_DIR" || return 1
+  chmod 700 "$STATE_DIR" 2>/dev/null || true
+  local entry
+  shopt -s nullglob
+  for entry in "$STATE_DIR"/* "$STATE_DIR"/.[!.]* "$STATE_DIR"/..?*; do
+    [[ -e $entry || -L $entry ]] || continue
+    # Dirs keep owner rwx (700): traversable by the owner, closed to everyone
+    # else; files keep their owner bits (600 for the ones written here).
+    chmod go-rwx "$entry" 2>/dev/null || true
+  done
+  shopt -u nullglob
+  return 0
+}
 
 byte_length() {
   local LC_ALL=C
@@ -216,7 +241,7 @@ run_update_check() {
   ' 2>/dev/null) || plugins="[]"
   [[ ${plugins:0:1} == "[" ]] || plugins="[]"
   ts=$(date +%s)
-  mkdir -p "$STATE_DIR" || return 0
+  ensure_private_state || return 0
   tmp="$UPDATE_CACHE_FILE.tmp.$$"
   jq -cn --argjson ts "$ts" --argjson plugins "$plugins" \
     '{checked:$ts, plugins:$plugins}' >"$tmp" 2>/dev/null && mv -f "$tmp" "$UPDATE_CACHE_FILE"
@@ -443,7 +468,7 @@ record_watch() {
   name=$(jq -r 'if type == "object" and (.name | type) == "string" then .name[0:128] else "" end' <<<"$payload" 2>/dev/null) || name=""
   paused=$(jq -r 'if type == "object" and (.paused == true) then "true" else "false" end' <<<"$payload" 2>/dev/null) || paused="false"
   ts=$(date +%s)
-  mkdir -p "$STATE_DIR" || return 1
+  ensure_private_state || return 1
   (
     exec 7>"$WATCH_LOCK_FILE" 2>/dev/null || exit 1
     flock -x 7 || exit 1
@@ -503,26 +528,47 @@ clear_watch_for_id() {
 # request, so the dispatch answers activate:true and the extension raises
 # the tab.
 record_visit() {
-  local payload="$1" source="" key="" url="" active="" ts="" tmp="" merged=""
-  source=$(jq -r 'if type == "object" and (.source | type) == "string" then .source[0:32] else "" end' <<<"$payload" 2>/dev/null) || source=""
-  key=$(jq -r 'if type == "object" and (.key | type) == "string" then .key[0:64] else "" end' <<<"$payload" 2>/dev/null) || key=""
-  url=$(jq -r 'if type == "object" and (.url | type) == "string" then .url[0:512] else "" end' <<<"$payload" 2>/dev/null) || url=""
-  active=$(jq -r 'if type == "object" and (.active | type) == "boolean" then .active else false end' <<<"$payload" 2>/dev/null) || active=false
-  [[ -n $key && -n $url ]] || return 1
+  local payload="$1" entry="" key="" state="" ts="" tmp="" merged="" en_in=""
   ts=$(date +%s)
-  local entry
-  entry=$(jq -cn --arg source "$source" --arg key "$key" --arg url "$url" --argjson ts "$ts" --argjson active "$active" \
-    '{source:$source, key:$key, url:$url, ts:$ts, active:$active}') || return 1
-  mkdir -p "$STATE_DIR" || return 1
+  # The heartbeat fields are validated, truncated, and assembled in a single
+  # jq pass over stdin: the marketplace URL is browsing activity, so it must
+  # never appear in a process argument (every local account can read argv
+  # through /proc).
+  entry=$(jq -c --argjson ts "$ts" '
+    select(type == "object")
+    | (if (.key | type) == "string" then .key[0:64] else "" end) as $key
+    | (if (.url | type) == "string" then .url[0:512] else "" end) as $url
+    | select($key != "" and $url != "")
+    | {source: (if (.source | type) == "string" then .source[0:32] else "" end),
+       key: $key, url: $url, ts: $ts,
+       active: (if (.active | type) == "boolean" then .active else false end)}
+  ' <<<"$payload" 2>/dev/null) || entry=""
+  [[ ${entry:0:1} == "{" ]] || return 1
+  key=$(jq -r '.key // ""' <<<"$entry" 2>/dev/null) || key=""
+  [[ -n $key ]] || return 1
+  ensure_private_state || return 1
+  state=$(cat "$TABS_FILE" 2>/dev/null) || state=""
+  [[ ${state:0:1} == "{" ]] || state='{}'
   (
     exec 8>"$TABS_LOCK_FILE" 2>/dev/null || exit 1
     flock -x 8 || exit 1
-    merged=$(jq -c --argjson entry "$entry" --argjson fresh "$((ts - 30))" '
-      ([$entry] + (.tabs // [])
-       | unique_by(.source + "|" + .key)
-       | map(select((.ts // 0) >= $fresh))) as $tabs
-      | {tabs: $tabs}' "$TABS_FILE" 2>/dev/null) ||
-      merged=$(jq -cn --argjson entry "$entry" '{tabs: [$entry]}')
+    # Neither input travels through argv (no printf/process-substitution of
+    # the content: that would show the URL in /proc): the previous state
+    # arrives on stdin (here-string), the new record through a mode-0600
+    # temp file handed to jq as --slurpfile (only the path is an argument).
+    # The merge de-duplicates by source+key and prunes to the freshness
+    # window.
+    en_in="$STATE_DIR/.tabs-entry.$$.tmp"
+    trap 'rm -f "$en_in"' EXIT
+    cat >"$en_in" <<<"$entry" || exit 1
+    merged=$(jq -cs --argjson fresh "$((ts - 30))" --slurpfile e "$en_in" '
+      (.[0] // {}) as $state
+      | ($e[0] // {}) as $entry
+      | {tabs: ([$entry] + ($state.tabs // [])
+          | unique_by(.source + "|" + .key)
+          | map(select((.ts // 0) >= $fresh)))}
+    ' <<<"$state" 2>/dev/null)
+    [[ ${merged:0:1} == "{" ]] || exit 1
     tmp="$TABS_FILE.tmp.$$"
     printf '%s\n' "$merged" >"$tmp" && mv -f "$tmp" "$TABS_FILE"
   ) || return 1
@@ -534,6 +580,7 @@ clear_visit() {
   local payload="$1" key="" tmp="" json=""
   key=$(jq -r 'if type == "object" and (.key | type) == "string" then .key[0:64] else "" end' <<<"$payload" 2>/dev/null) || key=""
   [[ -n $key && -f $TABS_FILE ]] || return 0
+  ensure_private_state || return 0
   (
     exec 8>"$TABS_LOCK_FILE" 2>/dev/null || exit 0
     flock -x 8 || exit 0
@@ -595,6 +642,10 @@ main() {
   else
     trace=""
   fi
+
+  # Tighten the state dir and pre-existing state files (older releases wrote
+  # them world-readable) before any read or write of the browsing records.
+  ensure_private_state 2>/dev/null || true
 
   while :; do
     length=$(head -c4 | od -An -v -tu4 --endian=little | tr -d ' \n')
