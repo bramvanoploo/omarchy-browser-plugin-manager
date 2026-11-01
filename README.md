@@ -6,7 +6,7 @@ One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org
 > [Chrome Web Store](https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf).
 > The Firefox-browser extension is still under review at Firefox Add-ons;
 > until it is approved, install it directly from this repository with the
-> [signed .xpi](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/download/v0.8.0/omarchy-browser-plugin-manager-0.8.0-signed.xpi)
+> [signed .xpi](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/download/v0.8.2/omarchy-browser-plugin-manager-0.8.2-signed.xpi)
 > of the latest release — see [documentation/INSTALL.md](documentation/INSTALL.md).
 
 ![Omarchy Browser Plugin Manager](preview.png)
