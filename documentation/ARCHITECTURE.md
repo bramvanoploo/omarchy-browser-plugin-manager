@@ -60,6 +60,13 @@ family's page. Cancelling shows a warning that the plugin is inert without
 its browser extension, with buttons to open the extension page, cancel, or
 uninstall the Omarchy plugin.
 
+**Uninstall cleanup**: removing the plugin unloads the wizard, whose
+detached self-cleanup unregisters the native messaging host a few seconds
+later (best effort: it needs the shell running at removal time). If the
+manifests survive anyway, run
+`~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup --uninstall`
+before removing — the script lives inside the plugin folder.
+
 ## Components
 
 ```
