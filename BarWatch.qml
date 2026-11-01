@@ -51,6 +51,13 @@ Panel {
   moduleName: "bramvanoploo.omarchy-browser-plugin-manager"
   ipcTarget: "bramvanoploo.omarchy-browser-plugin-manager"
 
+  IpcHandler {
+    target: "bramvanoploo.omarchy-browser-plugin-manager.bar"
+    function openSettings(): void { root.settingsOpen = true }
+    function closeSettings(): void { root.settingsOpen = false }
+    function toggleSettings(): void { root.toggleSettings() }
+  }
+
   readonly property string managerId: "bramvanoploo.omarchy-browser-plugin-manager"
   readonly property string marketplaceUrl: "https://plugins.omarchy.org/"
   // Must match the beacon interval/staleness in the host and extension:
@@ -248,6 +255,14 @@ Panel {
   property bool updateChecking: false
   property bool updateCheckFailed: false
   property string lastCheckText: "never"
+  // True when the settings group between the update rules carries content
+  // (a status line, the batch button, or a list): with no updates, no
+  // status line, and no batch button — e.g. first open before the first
+  // check — the rule above the group must hide, or two rules stack.
+  readonly property bool updatesGroupVisible: root.updateCount > 0
+    || root.updateCheckFailed
+    || root.settingsSaveFailed
+    || (!root.updateChecking && root.lastCheckText !== "never")
   // Ids of the last notified outdated set: a poll offers the update once
   // per new set (ids join), so an unchanged repeat poll never nags.
   property string lastNotifiedKey: ""
@@ -2081,7 +2096,7 @@ Panel {
         }
       }
 
-      BWRule {}
+      BWRule { visible: root.updatesGroupVisible }
 
       BWLine {
         width: settingsColumn.width
