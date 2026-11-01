@@ -28,12 +28,14 @@ import qs.Ui
 // confirmed there, exactly like the browser buttons. Moving the icon is a
 // plain layout change, so it runs the official `omarchy bar move` directly.
 //
-// Right click opens the settings panel (same header pattern): a plugin-update
-// poll every 10m / 30m / 1h / 5h / daily with a refresh button, two capped
-// scrollable per-plugin update lists (verified first, then unverified; each
+// Right click opens the settings panel (same header pattern): two per-plugin
+// update lists capped to three visible rows that fade at the edge when more
+// rows scroll below (verified first, then unverified; each
 // with a title, a count, and a compact install button that updates just that
-// plugin), a "Update N plugins now" button (only while updates are
-// available), a toggle for updating to unverified latest versions (default:
+// plugin) with a "Update N plugins now" button above them (only while updates
+// are available), a plugin-update poll every 10m / 30m / 1h / 5h / daily with
+// a refresh button below the lists, a toggle for updating to unverified
+// latest versions (default:
 // verified only), and the two browser-store links with per-family installed
 // indicators. Every update, single or batch, goes through a confirmation card
 // in the panel before the worker runs. The poll
@@ -127,12 +129,11 @@ Panel {
   // plugin popup (one open at a time). Its outside-click dismissal routes
   // through settingsOwner.close(), the PopupCard owner contract.
   property bool settingsOpen: false
-  // Opening the panel (right-click, any path) refreshes the update lists
-  // immediately so the shown state is current, not the last poll's.
+  // Opening the panel (right-click, any path) shows the last poll's update
+  // lists as-is: opening never starts a check (the poll and the setting
+  // toggles refresh the lists).
   onSettingsOpenChanged: {
-    if (settingsOpen)
-      root.checkForUpdates()
-    else
+    if (!settingsOpen)
       root.cancelUpdateConfirm()
   }
   readonly property QtObject settingsOwner: QtObject {
@@ -1271,6 +1272,10 @@ Panel {
     bar: root.bar
     text: ""
     active: root.beaconLive
+    // The inherited default is the bar's urgent (red) role; this widget's
+    // "lit up" state is an accent highlight, matching the accent update pill
+    // and the panel's accent styling, so follow the theme accent.
+    activeColor: Color.accent
     tooltipText: (root.beaconLive
       ? root.watchedName() + " \u00b7 open in browser"
       : "Browser Plugin Manager")
@@ -1452,11 +1457,13 @@ Panel {
     }
   }
 
-  // One titled, capped, scrollable list of pending updates with a compact
-  // install button per row. The button is plain (not accent-highlighted) and
-  // only emits pluginPicked with the row's catalog item: the caller gates
-  // the update behind a confirmation. The section hides itself when there
-  // is nothing to show.
+  // One titled list of pending updates, capped at three rows tall with the
+  // rest scrolling behind a bottom fade that carries a "more below" hint
+  // (and a top fade once scrolled down), so the overflow reads as scrollable
+  // at a glance. Rows carry a compact install button per row. The button is
+  // plain (not accent-highlighted) and only emits pluginPicked with the
+  // row's catalog item: the caller gates the update behind a confirmation.
+  // The section hides itself when there is nothing to show.
   component BWUpdateSection: Column {
     id: bwSection
     property string title: ""
@@ -1464,6 +1471,14 @@ Panel {
     signal pluginPicked(var item)
     spacing: Style.space(8)
     visible: items.length > 0
+    // Box height fits exactly the visible rows (rows are equal height, so
+    // three rows = three delegates + two row spacings + the 8px Flickable
+    // margins); with 4+ rows the box stays at the cap and the rest scrolls.
+    readonly property int visibleRows: Math.min(items.length, 3)
+    readonly property real rowHeight: secRepeater.itemAt(0)
+      ? secRepeater.itemAt(0).height : Style.space(30)
+    readonly property real boxHeight: rowHeight * visibleRows
+      + Style.space(6) * Math.max(0, visibleRows - 1) + Style.space(16)
 
     Row {
       width: bwSection.width
@@ -1495,14 +1510,18 @@ Panel {
     }
 
     Rectangle {
+      id: secList
       width: bwSection.width
       radius: Style.cornerRadius
       // Same surface as the panel behind it (PopupCard draws
       // Color.popups.background), so the list reads as part of the panel.
       color: Color.popups.background
-      height: Math.min(secColumn.implicitHeight + Style.space(16), Style.space(190))
+      height: bwSection.boxHeight
       clip: true
+      readonly property bool canScrollDown: secFlickable.contentHeight > secFlickable.height + 1
+        && secFlickable.contentY + secFlickable.height < secFlickable.contentHeight - 1
       Flickable {
+        id: secFlickable
         anchors.fill: parent
         anchors.margins: Style.space(8)
         contentHeight: secColumn.implicitHeight
@@ -1512,6 +1531,7 @@ Panel {
           width: parent.width
           spacing: Style.space(6)
           Repeater {
+            id: secRepeater
             model: bwSection.items
             // Slightly lighter theme-lifted background (same
             // Util.alpha(Color.foreground, …) surface idiom as BWButton)
@@ -1560,6 +1580,44 @@ Panel {
               }
             }
           }
+        }
+      }
+      // Scroll affordance: the box shows at most three rows, so when rows are
+      // scrolled out of view, fade the edge the list continues past (the list
+      // surface is Color.popups.background, so the fade blends into it).
+      Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        visible: secList.canScrollDown
+        gradient: Gradient {
+          GradientStop { position: 0.0; color: "transparent" }
+          GradientStop { position: 1.0; color: Color.popups.background }
+        }
+      }
+      // The hint that more rows wait below the fold, sitting on the fade.
+      Text {
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: Style.space(3)
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: (bwSection.items.length - bwSection.visibleRows) + " more below \u00b7 scroll"
+        color: Color.muted
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+        visible: secList.canScrollDown
+      }
+      Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        visible: secFlickable.contentY > 1
+        gradient: Gradient {
+          GradientStop { position: 0.0; color: Color.popups.background }
+          GradientStop { position: 1.0; color: "transparent" }
         }
       }
     }
@@ -1858,11 +1916,11 @@ Panel {
   // Same header pattern as the plugin popup (glyph + title + version pill),
   // own PopupCard with the settingsOwner as dismissal owner. Content: the
   // unverified-versions toggle directly under the header (it gates what the
-  // update lists and batch action below can act on), the update-poll
-  // interval selector with an immediate-refresh button, status lines, the
-  // per-plugin update lists, the batch "Update N plugins now" action (hidden
-  // when nothing is updatable), and the two browser-store links with
-  // per-family installed indicators.
+  // update lists and batch action below can act on), status lines, the batch
+  // "Update N plugins now" action above the per-plugin update lists (hidden
+  // when nothing is updatable), the update-poll interval selector with an
+  // immediate-refresh button below the lists, and the two browser-store
+  // links with per-family installed indicators.
   PopupCard {
     id: settingsPopup
     anchorItem: button
@@ -1871,7 +1929,7 @@ Panel {
     open: root.settingsOpen
     padding: Style.space(24)
     contentWidth: settingsPopup.fittedContentWidth(Style.space(480))
-    contentHeight: settingsPopup.fittedContentHeight(settingsColumn.implicitHeight, Style.space(560))
+    contentHeight: settingsPopup.fittedContentHeight(settingsColumn.implicitHeight)
 
     Column {
       id: settingsColumn
@@ -2015,40 +2073,6 @@ Panel {
         }
       }
 
-      // Poll interval: five equal segments (selected one primary-marked)
-      // and the refresh button to check for updates immediately.
-      BWLine {
-        width: settingsColumn.width
-        text: "Check for plugin updates:"
-      }
-      GridLayout {
-        width: settingsColumn.width
-        columns: 6
-        columnSpacing: Style.spacing.controlGap
-
-        Repeater {
-          model: root.pollIntervalMinutes
-          delegate: BWButton {
-            Layout.fillWidth: true
-            Layout.preferredHeight: Style.space(30)
-            label: root.pollIntervalLabels[index]
-            primary: root.pollMinutes === modelData
-            onClickedBw: root.setPollInterval(modelData)
-          }
-        }
-        BWButton {
-          Layout.preferredWidth: Style.space(30)
-          Layout.preferredHeight: Style.space(30)
-          label: "\uF021"
-          enabled: !root.updateChecking
-          spin: root.updateChecking
-          tooltipText: root.updateChecking
-            ? "Checking for updates ..."
-            : "Check for updates"
-          onClickedBw: root.checkForUpdates()
-        }
-      }
-
       BWLine {
         width: settingsColumn.width
         visible: !root.updateChecking && !root.updateCheckFailed
@@ -2065,6 +2089,24 @@ Panel {
         visible: root.settingsSaveFailed
         color: Color.urgent
         text: "Settings file could not be written: changes apply this session only."
+      }
+
+      // Batch update (hidden while nothing is updatable): sits above the
+      // lists as the primary action, arms a confirmation for the eligible
+      // plugins, which then run through detached workers, one notification
+      // at the end (startUpdate).
+      BWButton {
+        visible: root.eligibleCount > 0
+        width: settingsColumn.width
+        height: Style.space(30)
+        primary: true
+        label: "Update " + root.eligibleCount + " plugin"
+          + (root.eligibleCount === 1 ? "" : "s") + " now"
+        onClickedBw: root.requestUpdate(
+          root.updateSpecs(root.eligibleUpdates()),
+          "Updates all " + root.eligibleCount + " eligible plugin"
+            + (root.eligibleCount === 1 ? "" : "s")
+            + " through the same worker as the row buttons. The bar reloads once when the batch finishes.")
       }
 
       // Per-plugin update lists: verified first, unverified below, each
@@ -2096,21 +2138,40 @@ Panel {
         }
       }
 
-      // Batch update (hidden while nothing is updatable): arms a
-      // confirmation for the eligible plugins, which then run through
-      // detached workers, one notification at the end (startUpdate).
-      BWButton {
-        visible: root.eligibleCount > 0
+      // Poll interval: five equal segments (selected one primary-marked)
+      // and the refresh button to check for updates immediately. Sits below
+      // the lists: the schedule and the manual check are settings, not the
+      // panel's primary action.
+      BWLine {
         width: settingsColumn.width
-        height: Style.space(30)
-        primary: true
-        label: "Update " + root.eligibleCount + " plugin"
-          + (root.eligibleCount === 1 ? "" : "s") + " now"
-        onClickedBw: root.requestUpdate(
-          root.updateSpecs(root.eligibleUpdates()),
-          "Updates all " + root.eligibleCount + " eligible plugin"
-            + (root.eligibleCount === 1 ? "" : "s")
-            + " through the same worker as the row buttons. The bar reloads once when the batch finishes.")
+        text: "Check for plugin updates:"
+      }
+      GridLayout {
+        width: settingsColumn.width
+        columns: 6
+        columnSpacing: Style.spacing.controlGap
+
+        Repeater {
+          model: root.pollIntervalMinutes
+          delegate: BWButton {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Style.space(30)
+            label: root.pollIntervalLabels[index]
+            primary: root.pollMinutes === modelData
+            onClickedBw: root.setPollInterval(modelData)
+          }
+        }
+        BWButton {
+          Layout.preferredWidth: Style.space(30)
+          Layout.preferredHeight: Style.space(30)
+          label: "\uF021"
+          enabled: !root.updateChecking
+          spin: root.updateChecking
+          tooltipText: root.updateChecking
+            ? "Checking for updates ..."
+            : "Check for updates"
+          onClickedBw: root.checkForUpdates()
+        }
       }
 
       // Browser stores: the supported-browser list with installed names
