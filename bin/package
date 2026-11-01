@@ -109,7 +109,7 @@ Built in dist/:
   $NAME-$VERSION-chrome.zip                           (Chrome Web Store upload)
   $NAME-$VERSION-$STAMP.zip                           (Chrome family / source)
 
-Store-free install (see INSTALL.md):
+Store-free install (see documentation/INSTALL.md):
   Chrome/Chromium/Brave: unzip, ./bin/plugin-installer-setup --extension-dir ./browser/extension,
                          then chrome://extensions -> Load unpacked -> browser/extension/
   Firefox ESR/Dev Edition/Nightly: about:addons -> Install Add-on From File -> the .xpi

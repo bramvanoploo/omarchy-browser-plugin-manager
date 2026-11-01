@@ -7,7 +7,7 @@ One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org
 > (Firefox Add-ons and the Chrome Web Store). Until then, both extensions can
 > be downloaded from the assets section of the
 > [latest release](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/latest)
-> and installed manually — see [INSTALL.md](INSTALL.md).
+> and installed manually — see [documentation/INSTALL.md](documentation/INSTALL.md).
 
 ![Omarchy Browser Plugin Manager](preview.png)
 
@@ -74,7 +74,7 @@ overlay, and bar watcher.
 | Firefox-based (Firefox incl. ESR, Waterfox, LibreWolf, Tor Browser, GNU IceCat, Zen) | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
 | Chromium-based (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | [Chrome Web Store](https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf) |
 
-Prefer not to use the stores? Every [GitHub release](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/latest) ships the extension packages for direct download — the AMO-signed Firefox `.xpi`, the Chrome-family build, and the full source archive; see [INSTALL.md](INSTALL.md).
+Prefer not to use the stores? Every [GitHub release](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/latest) ships the extension packages for direct download — the AMO-signed Firefox `.xpi`, the Chrome-family build, and the full source archive; see [documentation/INSTALL.md](documentation/INSTALL.md).
 
 The Omarchy plugin registers the native messaging host itself (every shell
 start, idempotently); the browser extension alone is not enough.
@@ -98,7 +98,7 @@ omarchy plugin add https://github.com/bramvanoploo/omarchy-browser-plugin-manage
 2. Install the browser extension from the table above — the wizard's
    one-time prompt right after step 1 links the right page. No manual host
    setup is needed. For installing without the browser stores, see
-   [INSTALL.md](INSTALL.md).
+   [documentation/INSTALL.md](documentation/INSTALL.md).
 
 ## Uninstall
 

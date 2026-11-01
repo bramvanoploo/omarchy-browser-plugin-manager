@@ -105,8 +105,8 @@ the repo root (the directory containing `manifest.json` and `bin/`).
    - .xpi: Firefox add-on (unsigned; ESR/Dev Edition/Nightly)
    - signed.xpi: AMO unlisted-signed Firefox add-on; add-on ID
      `bramvanoploo.omarchy-browser-plugin-manager@bram.dev`
-   - source zip: full source + native host setup (see INSTALL.md)
-   Close with `Install steps: see INSTALL.md.`
+   - source zip: full source + native host setup (see documentation/INSTALL.md)
+   Close with `Install steps: see documentation/INSTALL.md.`
 
 ## Verify before reporting done
 
