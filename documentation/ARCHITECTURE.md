@@ -50,6 +50,16 @@ corner (accent when the updates are updatable, muted when held back by the
 verified-only setting; hidden at 0), and a poll that finds new updates sends
 a notification offering them. Settings persist to `settings.json` in the
 plugin's state directory.
+Each updatable-plugin row carries two compact icon buttons: an
+**uninstall** (trash) button, tooltip "Uninstall", left of the **update**
+(level-up) button. Both arm the confirmation card over the panel before
+anything runs: uninstall states exactly what `omarchy plugin remove --yes`
+does (folder deleted — a symlinked dev folder is only unlinked, plugin
+unloaded from the shell, bar icon dropped, reinstallable from the catalog)
+and confirms with an urgent-toned button; the removal runs in the same
+kind of detached worker as updates (id-validated, one rescan at the end,
+summary notification, survives the shell reload when the manager itself
+is removed).
 
 **One-time extension prompt**: after this plugin is installed in Omarchy
 (install only, not on later enables), the wizard shows a prompt that detects

@@ -535,6 +535,59 @@ Panel {
     return (list || []).map(updateSpec)
   }
 
+  // Uninstall worker: runs the official CLI removal (omarchy plugin remove
+  // --yes) per plugin id, mirroring its id validation (same pattern as the
+  // CLI's valid_plugin_id), then fires one rescan so the bar drops removed
+  // icons. The CLI unloads an enabled plugin from the shell itself; a
+  // symlinked plugin (dev clone) is only unlinked, never followed. Detached
+  // like the update worker, so removing this manager itself still finishes
+  // and notifies after the shell reload destroys the widget.
+  readonly property string uninstallWorkerScript: [
+    "set -u",
+    "export PATH=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH\"",
+    "notify_cmd=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send\"",
+    "command -v \"$notify_cmd\" >/dev/null 2>&1 || notify_cmd=\"$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)\"",
+    "notify() {",
+    "  \"$notify_cmd\" --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
+    "}",
+    "real_shell=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell\"",
+    "command -v \"$real_shell\" >/dev/null 2>&1 || real_shell=\"$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)\"",
+    "ok=0; fail=0; failed=\"\"",
+    "while [ $# -gt 0 ]; do",
+    "  id=\"$1\"",
+    "  case \"$id\" in *[!A-Za-z0-9._-]*|*..*|'') id=\"\" ;; esac",
+    "  if [ -n \"$id\" ] && omarchy plugin remove \"$id\" --yes >/dev/null 2>&1; then",
+    "    ok=$((ok+1))",
+    "  else",
+    "    fail=$((fail+1)); failed=\"$failed $id\"",
+    "  fi",
+    "  shift",
+    "done",
+    "if [ \"$ok\" -gt 0 ]; then",
+    "  \"$real_shell\" -q shell rescanPlugins >/dev/null 2>&1 || true",
+    "fi",
+    "if [ \"$fail\" -gt 0 ]; then",
+    "  notify \"Plugin removals finished\" \"$ok removed, $fail failed:$failed\"",
+    "elif [ \"$ok\" -gt 0 ]; then",
+    "  notify \"Plugins uninstalled\" \"$ok plugin(s) removed.\"",
+    "else",
+    "  notify \"No plugin removed\" \"No plugin was uninstalled.\"",
+    "fi"
+  ].join("\n")
+
+  // Runs the detached uninstall worker for the given plugin ids (the
+  // per-row uninstall buttons pass a single one, after confirmation).
+  function startUninstall(ids) {
+    ids = (ids || []).map(String).filter(function (s) { return s !== "" })
+    if (ids.length === 0) return
+    var argv = ["bash", "-c", root.uninstallWorkerScript, "omarchy-bpm-uninstall"]
+    Quickshell.execDetached(argv.concat(ids))
+    // Closing the popups is harmless: removing this manager unloads the
+    // widget, and the detached worker outlives that with its notification.
+    root.settingsOpen = false
+    root.close()
+  }
+
   // Runs the detached worker for the given specs: the batch button passes
   // every eligible spec, the per-row install buttons a single one.
   function startUpdate(specs) {
@@ -549,13 +602,17 @@ Panel {
     root.close()
   }
 
-  // Update confirmation gate: the row buttons and the batch button arm an
-  // update request (worker specs + explanatory text) instead of running the
-  // worker, and the settings popup draws a confirm card over its content.
-  // Cancel clears the request; Confirm hands the specs to startUpdate.
+  // Update/uninstall confirmation gate: the row buttons and the batch
+  // button arm a request (worker specs or plugin ids + explanatory text)
+  // instead of running the worker, and the settings popup draws a confirm
+  // card over its content. Cancel clears the request; Confirm hands the
+  // request to startUpdate, or to startUninstall for uninstall ids.
   property var updateConfirmSpecs: []
+  property var uninstallConfirmIds: []
   property string updateConfirmText: ""
-  readonly property bool updateConfirmOpen: updateConfirmSpecs.length > 0
+  readonly property bool updateConfirmOpen:
+    updateConfirmSpecs.length > 0 || uninstallConfirmIds.length > 0
+  readonly property bool uninstallConfirmActive: uninstallConfirmIds.length > 0
 
   function requestUpdate(specs, text) {
     specs = (specs || []).map(String)
@@ -564,15 +621,31 @@ Panel {
     root.updateConfirmText = String(text || "")
   }
 
+  // The row uninstall buttons arm the same card with the plugin id; the
+  // text explains what removal touches and is built from the poll entry's
+  // local name only.
+  function requestUninstall(p) {
+    var id = String(p.id || "")
+    if (id === "") return
+    root.uninstallConfirmIds = [id]
+    root.updateConfirmText = "Runs omarchy plugin remove on " + (p.name || id)
+      + ": deletes its folder in " + root.pluginsDir + " (a symlinked dev"
+      + " folder is only unlinked), unloads it from the shell, and drops its"
+      + " bar icon. The catalog entry lets you reinstall it afterwards."
+  }
+
   function cancelUpdateConfirm() {
     root.updateConfirmSpecs = []
+    root.uninstallConfirmIds = []
     root.updateConfirmText = ""
   }
 
   function confirmUpdate() {
+    var ids = root.uninstallConfirmIds
     var specs = root.updateConfirmSpecs
     root.cancelUpdateConfirm()
-    root.startUpdate(specs)
+    if (ids.length > 0) root.startUninstall(ids)
+    else root.startUpdate(specs)
   }
 
 
@@ -1448,18 +1521,23 @@ Panel {
   component BWIconButton: BorderSurface {
     id: bwIcon
     property string label: ""
+    property string tooltipText: ""
     property bool primary: false
+    property bool danger: false
     property int size: Style.space(30)
     signal clickedBw
     width: size
     height: size
     radius: Style.cornerRadius
+    readonly property color tone: root.bar ? root.bar.urgent : Color.urgent
     color: !enabled ? "transparent"
       : primary
         ? (bwIconMouse.containsMouse ? Util.alpha(Color.accent, 0.2) : Util.alpha(Color.accent, 0.12))
-        : (bwIconMouse.containsMouse ? Util.alpha(Color.foreground, 0.12) : Util.alpha(Color.foreground, 0.05))
+        : danger
+          ? (bwIconMouse.containsMouse ? Util.alpha(tone, 0.2) : Util.alpha(tone, 0.12))
+          : (bwIconMouse.containsMouse ? Util.alpha(Color.foreground, 0.12) : Util.alpha(Color.foreground, 0.05))
     borderSpec: Border.flat(enabled
-      ? (primary ? Color.accent : Util.alpha(Color.foreground, 0.3))
+      ? (primary ? Color.accent : danger ? tone : Util.alpha(Color.foreground, 0.3))
       : Util.alpha(Color.foreground, 0.2), 1)
     Text {
       anchors.centerIn: parent
@@ -1467,7 +1545,7 @@ Panel {
       font.family: "Material Icons"
       font.pixelSize: Math.round(size * 0.57)
       color: bwIcon.enabled
-        ? (bwIcon.primary ? Color.accent : Color.foreground)
+        ? (bwIcon.primary ? Color.accent : bwIcon.danger ? bwIcon.tone : Color.foreground)
         : Util.alpha(Color.foreground, 0.35)
     }
     MouseArea {
@@ -1478,20 +1556,26 @@ Panel {
       cursorShape: Qt.PointingHandCursor
       onClicked: bwIcon.clickedBw()
     }
+    PanelToolTip {
+      visible: bwIconMouse.containsMouse && bwIcon.tooltipText !== ""
+      text: bwIcon.tooltipText
+    }
   }
 
   // One titled list of pending updates, capped at three rows tall with the
   // rest scrolling behind a bottom fade that carries a "more below" hint
   // (and a top fade once scrolled down), so the overflow reads as scrollable
-  // at a glance. Rows carry a compact install button per row. The button is
-  // plain (not accent-highlighted) and only emits pluginPicked with the
-  // row's catalog item: the caller gates the update behind a confirmation.
-  // The section hides itself when there is nothing to show.
+  // at a glance. Rows carry two compact icon buttons: an uninstall (trash)
+  // button left of the update (level-up) button. Both are plain (not
+  // accent-highlighted) and only emit pluginUninstallPicked / pluginPicked
+  // with the row's catalog item: the caller gates every action behind a
+  // confirmation. The section hides itself when there is nothing to show.
   component BWUpdateSection: Column {
     id: bwSection
     property string title: ""
     property var items: []
     signal pluginPicked(var item)
+    signal pluginUninstallPicked(var item)
     spacing: Style.space(8)
     visible: items.length > 0
     // Box height fits exactly the visible rows (rows are equal height, so
@@ -1572,8 +1656,9 @@ Panel {
                 spacing: Style.space(10)
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
-                  width: secRow.width - secVersions.implicitWidth - secButton.width
-                    - (parent.spacing * 2)
+                  width: secRow.width - secVersions.implicitWidth
+                    - secUninstallButton.width - secButton.width
+                    - (parent.spacing * 3)
                   elide: Text.ElideRight
                   textFormat: Text.PlainText
                   text: modelData.name
@@ -1592,6 +1677,15 @@ Panel {
                   font.family: Style.font.family
                   font.pixelSize: Style.font.caption
                   font.bold: true
+                }
+                BWIconButton {
+                  id: secUninstallButton
+                  anchors.verticalCenter: parent.verticalCenter
+                  label: "\uF1F8" // trash-can (remove plugin) icon
+                  size: Style.space(22) // compact, same size as the update button
+                  danger: true // urgent tone: this deletes the plugin
+                  tooltipText: "Uninstall"
+                  onClickedBw: bwSection.pluginUninstallPicked(modelData)
                 }
                 BWIconButton {
                   id: secButton
@@ -2140,6 +2234,9 @@ Panel {
       // updating just that plugin through the same detached worker as the
       // batch button (startUpdate runs only after Confirm). Rows carry the
       // poll's fetched commit so the worker pins verified updates to it.
+      // Left of each update button sits a danger-toned uninstall icon
+      // button (tooltip "Uninstall") that arms the same confirm card with
+      // the plugin id and runs the detached uninstall worker on Confirm.
       BWUpdateSection {
         width: settingsColumn.width
         title: "Verified plugin updates"
@@ -2150,6 +2247,7 @@ Panel {
             + ". The plugin's git repository is fast-forwarded to exactly that reviewed commit"
             + " (the update fails if upstream advanced past it); the bar reloads when the manager itself updates.")
         }
+        onPluginUninstallPicked: function (p) { root.requestUninstall(p) }
       }
 
       BWUpdateSection {
@@ -2161,6 +2259,7 @@ Panel {
             "Updates " + p.name + " from " + p.installed + " to " + p.latest
             + " (unverified version). The plugin's git repository is pulled; the bar reloads when the manager itself updates.")
         }
+        onPluginUninstallPicked: function (p) { root.requestUninstall(p) }
       }
 
       BWRule {}
@@ -2256,9 +2355,10 @@ Panel {
       }
     }
 
-    // Update confirmation card: a scrim over the settings content (same
-    // window, so the popup's focus grab keeps it interactive) gating every
-    // update behind an explicit Confirm. Cancel clears the armed request.
+    // Update/uninstall confirmation card: a scrim over the settings content
+    // (same window, so the popup's focus grab keeps it interactive) gating
+    // every update and uninstall behind an explicit Confirm. Cancel clears
+    // the armed request.
     Rectangle {
       id: updateConfirmMask
       anchors.fill: parent
@@ -2273,8 +2373,10 @@ Panel {
 
         Text {
           anchors.horizontalCenter: parent.horizontalCenter
-          text: "Update " + root.updateConfirmSpecs.length + " plugin"
-            + (root.updateConfirmSpecs.length === 1 ? "" : "s") + "?"
+          text: root.uninstallConfirmActive
+            ? "Uninstall plugin?"
+            : "Update " + root.updateConfirmSpecs.length + " plugin"
+              + (root.updateConfirmSpecs.length === 1 ? "" : "s") + "?"
           color: Color.foreground
           font.family: Style.font.family
           font.pixelSize: Style.font.body
@@ -2302,8 +2404,9 @@ Panel {
             onClickedBw: root.cancelUpdateConfirm()
           }
           BWButton {
-            label: "Update"
-            primary: true
+            label: root.uninstallConfirmActive ? "Uninstall" : "Update"
+            primary: !root.uninstallConfirmActive
+            danger: root.uninstallConfirmActive
             onClickedBw: root.confirmUpdate()
           }
         }
