@@ -11,61 +11,16 @@ One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org
 
 ![Omarchy Browser Plugin Manager](preview.png)
 
-Clicking **Install** on a plugin page opens a wizard overlay on the desktop:
-it re-validates the request (live catalog entry + repository manifest), shows
-what will be installed, and for bar widgets first asks which bar section the
-icon goes in (left, center, right; the manifest's default is labelled
-"(default)" — nothing is installed before that choice, so Cancel is a plain
-close). It installs only after you confirm, via the official
-`omarchy plugin add` + `omarchy plugin enable --section` (clone + manifest
-validation, no code execution), then verifies the result (enabled flag + bar
-layout entry), re-applying the section if the shell's post-install config
-sweep reverts it.
+Clicking **Install** on a plugin page opens a desktop wizard: it re-validates
+the request against the live catalog, asks what to do (bar section for
+widgets), and only installs the official `omarchy plugin` CLI way after you
+confirm. Once installed, the page swaps Install for **Enable/Disable** and
+**Uninstall**; every action ends in a notification, not a dialog.
 
-Once a plugin is installed, the page swaps Install for **Enable/Disable** and
-**Uninstall** buttons (state read live from the host, never from the page).
-Every action ends in a desktop notification — no completion dialog. On the
-catalog page, each card gains an icon-only Install/Uninstall button beside
-its "Copy install command" button; "Manual" badges are never touched.
-
-**Bar-icon watcher mode**: while a plugin page is the active tab of a
-*focused* browser window, the extension renews a beacon with the local host
-every 5s and the Omarchy bar icon lights up (accent tone); switching to
-another plugin tab sends "unwatch" (id-scoped) and the icon and panel follow
-right away, while switching to another application stamps the record
-"paused" so the placeholder returns on the widget's next poll (≤2s);
-focusing the browser again lights the icon immediately. Pages for plugins
-that are *not* installable from the browser (no install command, built-in,
-failed upstream check) light the icon too when the plugin is installed on
-this machine, so its panel (update/uninstall/move icon) is reachable; no
-page buttons appear there. Left click opens a dropdown with that plugin’s
-header title (as in the dialogs) and buttons to **Install**, **Update**,
-**Uninstall**, and move its bar icon (left/center/right). Install, Update,
-and Uninstall summon the same wizard — the beacon is a display hint, the
-wizard re-validates and asks for confirmation; moving the icon is plain
-layout config, so it runs `omarchy bar move` directly.
-
-Right click opens the settings panel (same header style): a plugin-update
-poll every **10m / 30m / 1h / 5h / Daily** with a refresh button to check
-immediately, an **Update N plugins now** button (shown only while updates
-are available), a toggle to also update plugins to their *unverified*
-latest versions (default: latest verified only), and links to the Chrome
-Web Store and Firefox Add-ons pages: the supported browsers are listed with
-the installed ones highlighted, and each button names the browser it opens
-the page in (the first installed browser of that family). The poll compares
-every installed user plugin's version against the marketplace catalog;
-while plugins have
-updates, the bar icon shows a counter in its top-right corner (accent when
-the updates are updatable, muted when held back by the verified-only
-setting; hidden at 0), and a poll that finds new updates sends a
-notification offering them. Settings persist to `settings.json` in the
-plugin's state directory.
-
-## Architecture
-
-See [documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md) for the
-component overview: extension, native messaging host, setup script, wizard
-overlay, and bar watcher.
+**Bar-icon watcher**: the Omarchy bar icon lights up while a plugin page is
+the active tab. Left click opens a dropdown to **Install**, **Update**,
+**Uninstall**, and move the icon; right click opens settings (update polling,
+bulk update, verified-only toggle) and the icon shows an update counter.
 
 ## Browser extensions
 
@@ -86,6 +41,12 @@ After installing this plugin in Omarchy, the wizard shows a one-time prompt
 from the table above, and links the other family's page. Cancelling shows a
 warning that the plugin is inert without its browser extension, with buttons
 to open the extension page, cancel, or uninstall the Omarchy plugin.
+
+## Architecture
+
+See [documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md) for the
+component overview (extension, native messaging host, setup script, wizard
+overlay, bar watcher) and the full behavior spec.
 
 ## Installation
 
