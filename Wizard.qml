@@ -989,9 +989,14 @@ Item {
     }
   }
 
+  // Plain text on purpose: every line here can carry remote marketplace
+  // metadata (catalog author, version, license, repo, manifest errors).
+  // AutoText would interpret markup in it, so a remote <img src=...> tag
+  // would fetch from the network before the user installed anything.
   component PiLine: Text {
     width: cardColumn.width
     wrapMode: Text.Wrap
+    textFormat: Text.PlainText
     color: Util.alpha(Color.foreground, 0.75)
     font.family: Style.font.family
     font.pixelSize: Style.font.body
@@ -1089,6 +1094,7 @@ Item {
               spacing: Style.space(8)
 
               Text {
+                textFormat: Text.PlainText
                 text: (root.manifest && root.manifest.name)
                   ? String(root.manifest.name) : root.pluginName
                 font.family: Style.font.family

@@ -1355,9 +1355,14 @@ Panel {
     }
   }
 
+  // Plain text on purpose: lines here carry remote marketplace metadata
+  // (catalog blurb, author, versions, plugin names). AutoText would
+  // interpret markup in it, so a remote <img src=...> tag would fetch
+  // from the network while the panel is merely open.
   component BWLine: Text {
     width: popupColumn.width
     wrapMode: Text.Wrap
+    textFormat: Text.PlainText
     color: Util.alpha(Color.foreground, 0.75)
     font.family: Style.font.family
     font.pixelSize: Style.font.caption
@@ -1468,6 +1473,7 @@ Panel {
                 width: secColumn.width - secVersions.implicitWidth - secButton.width
                   - (parent.spacing * 2)
                 elide: Text.ElideRight
+                textFormat: Text.PlainText
                 text: modelData.name
                 color: Color.foreground
                 font.family: Style.font.family
@@ -1476,6 +1482,7 @@ Panel {
               Text {
                 id: secVersions
                 anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
                 text: modelData.installed + " \u2192 " + modelData.latest
                 // Highlighted (accent, bold) so the version bump and the
                 // arrow between them stand out in every updatable row.
@@ -1538,6 +1545,7 @@ Panel {
             spacing: Style.space(8)
 
             Text {
+              textFormat: Text.PlainText
               text: root.popupLive ? root.watchedName() : "Browser Plugin Manager"
               font.family: Style.font.family
               font.pixelSize: Style.font.title
@@ -1570,6 +1578,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             text: root.popupLive
               ? (root.statusChecked
                  ? ((root.pluginInstalled
