@@ -22,6 +22,38 @@ the active tab. Left click opens a dropdown to **Install**, **Update**,
 **Uninstall**, and move the icon; right click opens settings (update polling,
 bulk update, verified-only toggle) and the icon shows an update counter.
 
+## Installation
+
+1. Add the Omarchy shell plugin (wizard + native messaging host):
+
+```bash
+omarchy plugin add https://github.com/bramvanoploo/omarchy-browser-plugin-manager --enable
+```
+
+2. Install the browser extension from the table in **Browser extensions**
+   below — the wizard's one-time prompt right after step 1 links the right
+   page. No manual host setup is needed. For installing without the browser
+   stores, see [documentation/INSTALL.md](documentation/INSTALL.md).
+
+## Uninstall
+
+The wizard path (the browser's Uninstall button, or "Uninstall Omarchy
+plugin" in the extension prompt) unregisters the native messaging host and
+removes the plugin in one confirmed action.
+
+Terminal removal works too:
+
+```bash
+omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager
+```
+
+Removing the plugin unloads the wizard, whose detached self-cleanup
+unregisters the host a few seconds later (best effort: it needs the shell
+running at removal time). If the manifests survive anyway, run
+`~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup --uninstall`
+before removing — the script lives inside the plugin folder. Then remove the
+browser extension (chrome://extensions / about:addons).
+
 ## Browser extensions
 
 | Browser | Extension |
@@ -47,38 +79,6 @@ to open the extension page, cancel, or uninstall the Omarchy plugin.
 See [documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md) for the
 component overview (extension, native messaging host, setup script, wizard
 overlay, bar watcher) and the full behavior spec.
-
-## Installation
-
-1. Add the Omarchy shell plugin (wizard + native messaging host):
-
-```bash
-omarchy plugin add https://github.com/bramvanoploo/omarchy-browser-plugin-manager --enable
-```
-
-2. Install the browser extension from the table above — the wizard's
-   one-time prompt right after step 1 links the right page. No manual host
-   setup is needed. For installing without the browser stores, see
-   [documentation/INSTALL.md](documentation/INSTALL.md).
-
-## Uninstall
-
-The wizard path (the browser's Uninstall button, or "Uninstall Omarchy
-plugin" in the extension prompt) unregisters the native messaging host and
-removes the plugin in one confirmed action.
-
-Terminal removal works too:
-
-```bash
-omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager
-```
-
-Removing the plugin unloads the wizard, whose detached self-cleanup
-unregisters the host a few seconds later (best effort: it needs the shell
-running at removal time). If the manifests survive anyway, run
-`~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup --uninstall`
-before removing — the script lives inside the plugin folder. Then remove the
-browser extension (chrome://extensions / about:addons).
 
 ## Security model
 
