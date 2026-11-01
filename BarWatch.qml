@@ -1421,6 +1421,14 @@ Panel {
     font.pixelSize: Style.font.caption
   }
 
+  // Hairline separator dividing the settings panel into groups; a muted
+  // foreground alpha so it reads as a rule in any theme.
+  component BWRule: Rectangle {
+    width: settingsColumn.width
+    height: 1
+    color: Util.alpha(Color.foreground, 0.15)
+  }
+
   // Icon-only square variant of BWButton, used by the update-list rows.
   component BWIconButton: BorderSurface {
     id: bwIcon
@@ -2073,6 +2081,8 @@ Panel {
         }
       }
 
+      BWRule {}
+
       BWLine {
         width: settingsColumn.width
         visible: !root.updateChecking && !root.updateCheckFailed
@@ -2138,6 +2148,8 @@ Panel {
         }
       }
 
+      BWRule {}
+
       // Poll interval: five equal segments (selected one primary-marked)
       // and the refresh button to check for updates immediately. Sits below
       // the lists: the schedule and the manual check are settings, not the
@@ -2173,6 +2185,8 @@ Panel {
           onClickedBw: root.checkForUpdates()
         }
       }
+
+      BWRule {}
 
       // Browser stores: the supported-browser list with installed names
       // highlighted in accent, above half-width buttons that open the
