@@ -2197,6 +2197,11 @@ Panel {
           color: Util.alpha(Color.foreground, 0.75)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
+          // Catalog/manifest-sourced (plugin name, installed and latest
+          // versions): plain text so an image tag in a changed upstream
+          // version string cannot trigger a remote request when this
+          // confirmation opens, before the new code is accepted.
+          textFormat: Text.PlainText
           text: root.updateConfirmText
         }
         Row {

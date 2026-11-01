@@ -137,24 +137,38 @@ reply_err() {
 }
 
 # Is this plugin installed as a user (non-first-party) plugin? Prints
-# {installed, enabled, firstParty} as compact JSON. Always succeeds with valid JSON.
+# {id, installed, enabled, firstParty} as compact JSON. Always succeeds
+# with valid JSON. The id rides the output so the status handler's
+# update-merge can match cache entries without re-binding it in argv.
 plugin_status() {
-  local id="$1" raw out
+  local id="$1" raw out default=""
   if [[ ! $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ || $id == *..* ]]; then
-    printf '%s\n' '{"installed":false,"enabled":false,"firstParty":false}'
+    printf '%s\n' '{"id":"","installed":false,"enabled":false,"firstParty":false}'
     return 0
   fi
+  # The id passed the charset regex above (no quotes, backslashes, or
+  # control characters), so embedding it in JSON is safe.
+  default="{\"id\":\"$id\",\"installed\":false,\"enabled\":false,\"firstParty\":false}"
   raw=$(omarchy plugin list --json 2>/dev/null) || raw="[]"
   [[ -n $raw ]] || raw="[]"
-  out=$(jq -c --arg id "$id" '
-    (if type == "array" then . else [] end)
-    | map(select(type == "object" and .id == $id))
+  # The viewed marketplace page polls this every second, so the requested
+  # id is browsing activity: pass the id and the plugin list in one stdin
+  # payload and do the matching inside jq. The id never appears in jq's
+  # argv, where every local account could read it through /proc and see
+  # which marketplace plugin page is being viewed.
+  out=$(jq -c '
+    . as $in
+    | ($in.plugins | if type == "array" then . else [] end)
+    | map(select(type == "object" and .id == $in.want))
     | if length > 0 then .[0]
-      | {installed: ((.firstParty // false) | not), enabled: (.enabled == true), firstParty: (.firstParty == true)}
-      else {installed:false, enabled:false, firstParty:false}
+      | {id: $in.want,
+         installed: ((.firstParty // false) | not),
+         enabled: (.enabled == true),
+         firstParty: (.firstParty == true)}
+      else $in.fallback
       end
-  ' <<<"$raw" 2>/dev/null) || out='{"installed":false,"enabled":false,"firstParty":false}'
-  [[ -n $out ]] || out='{"installed":false,"enabled":false,"firstParty":false}'
+  ' <<<"{\"want\":\"$id\",\"plugins\":$raw,\"fallback\":$default}" 2>/dev/null) || out=""
+  [[ -n $out ]] || out="$default"
   printf '%s\n' "$out"
 }
 
@@ -688,9 +702,9 @@ main() {
         id=$(jq -r 'if type == "object" and (.id | type) == "string" then .id else "" end' <<<"$payload" 2>/dev/null || true)
         local_status=$(plugin_status "$id")
         maybe_refresh_updates
-        # plugin_status has no id field; bind the requested id so the
-        # update-info merge can match the cache entry.
-        local_status=$(jq -c --arg id "$id" '. + {id: $id}' <<<"$local_status" 2>/dev/null) || local_status=$(plugin_status "$id")
+        # plugin_status's output carries the requested id (assembled on
+        # stdin, never in argv) so the update-info merge can match the
+        # cache entry.
         local_status=$(merge_updates_into "$local_status" "$(allow_unverified_setting)" "$(cached_update_plugins)")
         send_frame "$(jq -c '. + {ok:true}' <<<"$local_status")"
         ;;
