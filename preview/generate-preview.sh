@@ -16,7 +16,7 @@ if [[ ! -f "$MANIFEST_FILE" ]]; then
   exit 1
 fi
 
-VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))['version'])" 2>/dev/null || echo "0.8.2")
+VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))['version'])" 2>/dev/null || echo "0.8.3")
 echo "==> Browser Plugin Manager v$VERSION preview banner"
 
 for asset in catalog_card.png install_wizard.png settings_panel.png; do
