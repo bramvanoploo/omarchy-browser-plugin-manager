@@ -4,6 +4,10 @@
 #   ./preview/generate-preview.sh
 #
 # The version pill in the banner is filled from manifest.json ({{VERSION}}).
+#
+# Captured assets must not be named install*, setup* or uninstall*: the
+# marketplace security baseline reads complete binaries with those basenames as
+# setup programs and refuses to scan them, which blocks submission approval.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,7 +23,7 @@ fi
 VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))['version'])" 2>/dev/null || echo "0.8.3")
 echo "==> Browser Plugin Manager v$VERSION preview banner"
 
-for asset in catalog_card.png install_wizard.png settings_panel.png; do
+for asset in catalog_card.png settings_panel.png wizard_confirm.png; do
   if [[ ! -f "$SCRIPT_DIR/$asset" ]]; then
     echo "Error: required asset $asset missing in $SCRIPT_DIR" >&2
     exit 1
