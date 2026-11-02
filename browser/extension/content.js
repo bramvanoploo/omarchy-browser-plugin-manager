@@ -286,6 +286,78 @@
 .pi-panel-note[data-error="1"] {
   color: var(--accent, #ffcead);
 }
+/* Install waiting panel: opens when the wizard's confirmed install lands
+ * on disk (the clone appears in the live plugin state) and closes when
+ * the plugin reads enabled, the same second the desktop "Plugin
+ * installed" notification fires. No Cancel button: the detached install
+ * worker has no abort path, a cancel control would be a lie. A click on
+ * the backdrop (outside the panel) hides it; the install keeps running
+ * and the 1s state-sync keeps the buttons honest. The canvas globe
+ * spins endlessly because the worker's enable/placement loops ride the
+ * shell's plugin-discovery race, which takes tens of seconds. */
+.pi-install-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9100;
+  background: rgb(0 0 0 / 55%);
+  cursor: default;
+}
+.pi-install-panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9101;
+  width: min(460px, calc(100vw - 48px));
+  box-sizing: border-box;
+  padding: 18px;
+  border: 1px solid var(--stable, #b4c96f);
+  border-radius: 0;
+  background: var(--panel, #1b1b21);
+  color: var(--text, #dddddd);
+  font-family: var(--mono, monospace);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+  text-align: center;
+}
+.pi-install-panel h2 {
+  margin: 0 0 2px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text, #dddddd);
+}
+.pi-install-sub {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--muted, #999999);
+}
+.pi-install-art {
+  display: block;
+  margin: 20px auto 20px;
+  width: 240px;
+  height: 120px;
+}
+.pi-install-caption {
+  min-height: 1.4em;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text, #dddddd);
+}
+/* Failure note: shown inside the button group when the host rejects an
+ * action. A summoned wizard is the feedback for success, so a rejected
+ * action must say so here: a silent failure reads as a dead click (e.g.
+ * catalog-unreachable while this machine's DNS is broken). Inline-flex
+ * item of the group, so it sits right of the buttons; the 1s state-sync
+ * rebuild drops it with the group, and it auto-hides. */
+.pi-action-note {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+  color: var(--accent, #ffcead);
+  white-space: normal;
+  max-width: 320px;
+}
 /* Tooltip mirroring the marketplace's .control-tooltip: shown on hover/
  * focus of the button, anchored above its right edge. */
 .pi-tooltip {
@@ -417,6 +489,52 @@
     if (copy) copy.click();
   }
 
+  // The host answers action failures with machine-readable reasons; map the
+  // stable ones to human text (unknown reasons ride through verbatim).
+  const ACTION_REASONS = {
+    "catalog-unreachable": "Cannot reach the marketplace catalog (check this machine's network/DNS)",
+    "host-not-registered": "Native host is not registered in this browser",
+    "extension-error": "Native host is not registered in this browser",
+    "no-response": "Native host did not answer",
+    "host-error": "Native host did not answer",
+    "host-timeout": "Native host did not answer in time",
+    "wizard-not-available": "Desktop wizard is not available",
+    "already-installed": "This plugin is already installed",
+    "not-installed": "This plugin is not installed",
+    "already-enabled": "This plugin is already enabled",
+    "already-disabled": "This plugin is already disabled",
+    "unknown-plugin-id": "Plugin is not in the marketplace catalog",
+    "repo-mismatch": "Catalog repo does not match this plugin",
+    "not-one-click-installable": "This plugin has no one-click install",
+    "invalid-plugin-id": "Invalid plugin id",
+    "invalid-repo-url": "Invalid repo url",
+  };
+
+  function actionFailureText(response) {
+    // wizard-not-available carries a trailing hint from the host; the key is
+    // the leading machine-readable word.
+    const reason = (response && response.reason) || "no-response";
+    const key = reason.split(" ")[0];
+    return ACTION_REASONS[key] || reason;
+  }
+
+  // One failure note per group, replaced by the next failure; a successful
+  // action clears it.
+  function showActionNote(button, text) {
+    const group = button.closest(".pi-group");
+    if (!group) return;
+    const existing = group.querySelector(".pi-action-note");
+    if (existing) existing.remove();
+    const note = document.createElement("span");
+    note.className = "pi-action-note";
+    note.setAttribute("role", "status");
+    note.textContent = text;
+    group.append(note);
+    setTimeout(() => {
+      if (note.isConnected) note.remove();
+    }, 8000);
+  }
+
   function wireAction(button, plugin, type) {
     let busy = false;
     button.addEventListener("click", async () => {
@@ -426,12 +544,21 @@
       const action = typeof type === "function" ? type() : type;
       if (action === "install") registerSiteCopy();
       try {
-        await talkToHost({
+        const response = await talkToHost({
           type: action,
           id: plugin.id,
           repo: plugin.repo,
           name: plugin.name,
         }, HOST_ACTION_TIMEOUT_MS);
+        const group = button.closest(".pi-group");
+        if (response && response.ok) {
+          if (group) {
+            const note = group.querySelector(".pi-action-note");
+            if (note) note.remove();
+          }
+        } else {
+          showActionNote(button, actionFailureText(response));
+        }
       } finally {
         button.disabled = false;
         busy = false;
@@ -623,6 +750,231 @@
     button.addEventListener("click", () => openUpdatePanel(plugin, status));
   }
 
+  // ---- Install waiting panel ---------------------------------------------
+  // The desktop wizard closes itself the moment a confirmed install starts
+  // (the clone triggers a shell reload that destroys the overlay), so the
+  // page owns the wait: the 1s status poll sees the fresh clone
+  // (installed, not yet enabled) and opens this panel; the poll sees the
+  // plugin enabled and closes it, the same second the detached worker
+  // sends the "Plugin installed" desktop notification. No Cancel button:
+  // the worker cannot be aborted, so a cancel control would lie to the
+  // user. A backdrop click outside the panel (or Escape) hides the panel;
+  // the install runs on regardless, and the state-sync poll rebuilds the
+  // buttons the moment the live state changes.
+  // Endless entertainment while the worker works: a hand-rolled canvas
+  // globe, no libraries and no assets. The wireframe is a lat/lon grid of
+  // parametric circles on a sphere, tilted 23 degrees, spun around its
+  // axis, orthographically projected: depth decides alpha, so the far
+  // side of the grid fades out. Two satellites ride inclined,
+  // co-rotating orbits (both ride the spin direction) with fading trails, hidden while they pass
+  // behind the globe; a few stars twinkle. rAF pauses on hidden tabs,
+  // stops with the panel, and honours prefers-reduced-motion (one static
+  // frame). The panel covers a wait of tens of seconds (clone, enable
+  // retries through the shell's plugin-discovery race, bar placement).
+  const INSTALL_CAPTIONS = [
+    "Spinning up the plugin axis\u2026",
+    "Deploying the bar widget into orbit\u2026",
+    "Persuading the shell to share its bar\u2026",
+    "Gravity will do the rest\u2026",
+    "Counting satellites, not seconds\u2026",
+    "Cloning at orbital speed\u2026",
+    "Bribing the plugin scanner with patience\u2026",
+    "The satellites are doing their very best\u2026",
+  ];
+
+  // Draws and animates the scene; returns a function that stops the loop.
+  function startInstallGlobe(canvas) {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    const dpr = window.devicePixelRatio || 1;
+    const W = 240, H = 120;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.scale(dpr, dpr);
+    const cx = W / 2, cy = H / 2, R = 34;
+    const tilt = 0.41, cosT = Math.cos(tilt), sinT = Math.sin(tilt);
+    const rgb = (v, f) => {
+      const m = /^#?([0-9a-f]{6})$/i.exec(String(v || f).trim());
+      const n = parseInt(m[1], 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    };
+    const theme = getComputedStyle(canvas);
+    const green = rgb(theme.getPropertyValue("--stable"), "#b4c96f");
+    const accent = rgb(theme.getPropertyValue("--accent"), "#ffcead");
+    const rgba = (c, a) =>
+      "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a.toFixed(3) + ")";
+    const project = (x, y, z) => ({
+      x: cx + R * x,
+      y: cy - R * (y * cosT - z * sinT),
+      z: y * sinT + z * cosT,
+    });
+    const depthAlpha = (z, boost) => {
+      const a = z >= 0 ? 0.16 + 0.5 * z : 0.07;
+      return boost ? Math.min(1, a * 1.6) : a;
+    };
+    const SATS = [
+      // Orbit radii in globe radii: their projected extents must fit the
+      // canvas (inclination puts the outer satellite near the top and
+      // bottom edges; wider orbits clipped the satellites there).
+      { r: 1.4, i: 0.55, n: 0.6, w: 0.75, p: 0 },
+      { r: 1.72, i: -0.9, n: 2.2, w: 0.5, p: 2 },
+    ];
+    const orbitPoint = (s, th) => {
+      const x = s.r * Math.cos(th), y = 0, z = s.r * Math.sin(th);
+      const ci = Math.cos(s.i), si = Math.sin(s.i);
+      const y2 = y * ci - z * si, z2 = y * si + z * ci;
+      const cn = Math.cos(s.n), sn = Math.sin(s.n);
+      return project(x * cn + z2 * sn, y2, -x * sn + z2 * cn);
+    };
+    const drawArc = (pt, n, boost) => {
+      let prev = null;
+      for (let i = 0; i <= n; i++) {
+        const p = pt(i / n);
+        if (prev) {
+          ctx.beginPath();
+          ctx.moveTo(prev.x, prev.y);
+          ctx.lineTo(p.x, p.y);
+          ctx.strokeStyle = rgba(green, depthAlpha((p.z + prev.z) / 2, boost));
+          ctx.stroke();
+        }
+        prev = p;
+      }
+    };
+    const frame = (t) => {
+      ctx.clearRect(0, 0, W, H);
+      const spin = t * 0.22;
+      for (let i = 0; i < 26; i++) {
+        const sx = (i * 97 + 31) % W, sy = (i * 53 + 17) % H;
+        const dx = sx - cx, dy = sy - cy;
+        if (dx * dx + dy * dy < (R + 6) * (R + 6)) continue;
+        ctx.fillStyle = "rgba(221,221,221,"
+          + (0.18 + 0.15 * Math.sin(t * 1.3 + i * 2.1)).toFixed(3) + ")";
+        ctx.fillRect(sx, sy, 1.4, 1.4);
+      }
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, 6.2832);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = rgba(green, 0.28);
+      ctx.stroke();
+      for (const latDeg of [-60, -30, 0, 30, 60]) {
+        const lat = latDeg * Math.PI / 180;
+        drawArc((f) => {
+          const lon = f * 6.2832 + spin;
+          return project(Math.cos(lat) * Math.sin(lon), Math.sin(lat),
+            Math.cos(lat) * Math.cos(lon));
+        }, 64, latDeg === 0);
+      }
+      for (let mi = 0; mi < 6; mi++) {
+        const lon0 = mi * Math.PI / 6;
+        drawArc((f) => {
+          const la = f * Math.PI - Math.PI / 2;
+          return project(Math.cos(la) * Math.sin(lon0 + spin), Math.sin(la),
+            Math.cos(la) * Math.cos(lon0 + spin));
+        }, 48, false);
+      }
+      for (const s of SATS) {
+        let prev = null;
+        for (let j = 0; j <= 72; j++) {
+          const p = orbitPoint(s, j / 72 * 6.2832);
+          if (prev) {
+            ctx.beginPath();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(p.x, p.y);
+            ctx.strokeStyle = rgba(green, (p.z + prev.z) / 2 >= 0 ? 0.16 : 0.05);
+            ctx.stroke();
+          }
+          prev = p;
+        }
+      }
+      for (const s of SATS) {
+        const th = s.p + s.w * t;
+        const p = orbitPoint(s, th);
+        const dx = p.x - cx, dy = p.y - cy;
+        if (p.z < 0 && dx * dx + dy * dy < R * R) continue;
+        for (let k = 10; k >= 1; k--) {
+          const q = orbitPoint(s, th - 0.05 * k);
+          ctx.fillStyle = rgba(accent, 0.055 * (11 - k));
+          ctx.fillRect(q.x - 0.75, q.y - 0.75, 1.5, 1.5);
+        }
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4.5, 0, 6.2832);
+        ctx.fillStyle = rgba(accent, 0.1);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 2, 0, 6.2832);
+        ctx.fillStyle = rgba(accent, 0.95);
+        ctx.fill();
+      }
+    };
+    const t0 = performance.now();
+    let raf = 0;
+    const reduced = window.matchMedia
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const tick = (now) => {
+      frame((now - t0) / 1000 + 5);
+      raf = requestAnimationFrame(tick);
+    };
+    if (reduced) frame(5);
+    else raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }
+  let installNodes = null;
+
+  function hideInstallPanel() {
+    if (!installNodes) return;
+    if (installNodes.timers) {
+      for (const timer of installNodes.timers) clearInterval(timer);
+    }
+    if (installNodes.onKey) document.removeEventListener("keydown", installNodes.onKey);
+    if (installNodes.stopInstallGlobe) installNodes.stopInstallGlobe();
+    installNodes.backdrop.remove();
+    installNodes.panel.remove();
+    installNodes = null;
+  }
+
+  function showInstallPanel(plugin) {
+    if (installNodes) return;
+    const backdrop = document.createElement("div");
+    backdrop.className = "pi-install-backdrop";
+    const panel = document.createElement("div");
+    panel.className = "pi-install-panel";
+    panel.setAttribute("role", "status");
+    panel.setAttribute("aria-live", "polite");
+    panel.setAttribute("aria-label", "Installing " + plugin.name);
+
+    const title = document.createElement("h2");
+    title.textContent = "Installing " + plugin.name;
+    const sub = document.createElement("div");
+    sub.className = "pi-install-sub";
+    sub.textContent = "this takes a bit \u00b7 no cancel: the wizard is already on it";
+
+    const art = document.createElement("canvas");
+    art.className = "pi-install-art";
+    art.setAttribute("aria-hidden", "true");
+
+    const caption = document.createElement("div");
+    caption.className = "pi-install-caption";
+    caption.textContent = INSTALL_CAPTIONS[0];
+
+    panel.append(title, sub, art, caption);
+    document.body.append(backdrop, panel);
+    const stopInstallGlobe = startInstallGlobe(art);
+
+    let captionIndex = 0;
+    const captionTimer = setInterval(() => {
+      captionIndex = (captionIndex + 1) % INSTALL_CAPTIONS.length;
+      caption.textContent = INSTALL_CAPTIONS[captionIndex];
+    }, 3000);
+
+    // Click outside the panel (the backdrop), or Escape: hide the panel.
+    const onKey = (event) => {
+      if (event.key === "Escape") hideInstallPanel();
+    };
+    backdrop.addEventListener("click", hideInstallPanel);
+    document.addEventListener("keydown", onKey);
+    installNodes = { backdrop, panel, timers: [captionTimer], onKey, stopInstallGlobe };
+  }
+
   // The installed-state buttons, shared by the installable page (anchored
   // beside the Copy button) and the manual-setup page (anchored in the tag
   // row). Label, icon and tone come from the live state; the state-sync poll
@@ -748,12 +1100,25 @@
     try {
       const state = await talkToHost({ type: "status", id: PLUGIN_ID }, HOST_STATUS_TIMEOUT_MS);
       if (!state || !state.ok || !lastState) return;
+      const prev = lastState;
       if (state.installed !== lastState.installed
         || state.enabled !== lastState.enabled
         || state.updateAvailable !== lastState.updateAvailable) {
         lastState = state;
         remountButtons(plugin, state);
       }
+      // Install progress: the wizard is closed by the time the clone
+      // lands, so the transition "was not installed, now installed and
+      // not yet enabled" is the page's proof that the user confirmed the
+      // install (and picked a bar section, for widgets) and the worker
+      // is at work: open the waiting panel. The first enabled reading
+      // closes it, the same second the worker's "Plugin installed"
+      // desktop notification fires. A vanished install (worker failed,
+      // plugin removed on the desktop) closes it too. A page that opens
+      // on an installed-but-disabled plugin shows nothing: no
+      // transition, no claimed progress for work nobody started.
+      if (!prev.installed && state.installed && !state.enabled) showInstallPanel(plugin);
+      if (installNodes && (state.enabled || !state.installed)) hideInstallPanel();
     } finally {
       polling = false;
     }
