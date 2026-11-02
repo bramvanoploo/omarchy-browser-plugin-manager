@@ -319,6 +319,11 @@
   box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
   text-align: center;
 }
+.pi-install-panel[data-mode="uninstall"] {
+  /* Uninstall rides the accent (amber) instead of the install green. */
+  border-color: var(--accent, #ffcead);
+}
+
 .pi-install-panel h2 {
   margin: 0 0 2px;
   font-size: 14px;
@@ -771,7 +776,8 @@
   // stops with the panel, and honours prefers-reduced-motion (one static
   // frame). The panel covers a wait of tens of seconds (clone, enable
   // retries through the shell's plugin-discovery race, bar placement).
-  const INSTALL_CAPTIONS = [
+  const ACTION_CAPTIONS = {
+    install: [
     "Spinning up the plugin axis\u2026",
     "Deploying the bar widget into orbit\u2026",
     "Persuading the shell to share its bar\u2026",
@@ -780,10 +786,20 @@
     "Cloning at orbital speed\u2026",
     "Bribing the plugin scanner with patience\u2026",
     "The satellites are doing their very best\u2026",
-  ];
+    ],
+    uninstall: [
+      "Undocking the bar widget\u2026",
+      "Reeling in the satellites\u2026",
+      "Telling the shell to forget about it\u2026",
+      "No hard feelings, plugin\u2026",
+      "Uninstalling at orbital speed\u2026",
+      "Deletion is forever, so choose well\u2026",
+      "The satellites are drifting away\u2026",
+    ],
+  };
 
   // Draws and animates the scene; returns a function that stops the loop.
-  function startInstallGlobe(canvas) {
+  function startInstallGlobe(canvas, escape) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     const dpr = window.devicePixelRatio || 1;
@@ -812,6 +828,9 @@
       const a = z >= 0 ? 0.16 + 0.5 * z : 0.07;
       return boost ? Math.min(1, a * 1.6) : a;
     };
+    // Escape mode (uninstall panel) spirals each satellite inward and
+    // fades it: the de-orbit animation. Inward only, so the satellites
+    // can never reach the canvas edges they used to clip against.
     const SATS = [
       // Orbit radii in globe radii: their projected extents must fit the
       // canvas (inclination puts the outer satellite near the top and
@@ -819,8 +838,9 @@
       { r: 1.4, i: 0.55, n: 0.6, w: 0.75, p: 0 },
       { r: 1.72, i: -0.9, n: 2.2, w: 0.5, p: 2 },
     ];
-    const orbitPoint = (s, th) => {
-      const x = s.r * Math.cos(th), y = 0, z = s.r * Math.sin(th);
+    const orbitPoint = (s, th, grow) => {
+      const r = s.r * grow;
+      const x = r * Math.cos(th), y = 0, z = r * Math.sin(th);
       const ci = Math.cos(s.i), si = Math.sin(s.i);
       const y2 = y * ci - z * si, z2 = y * si + z * ci;
       const cn = Math.cos(s.n), sn = Math.sin(s.n);
@@ -873,9 +893,10 @@
         }, 48, false);
       }
       for (const s of SATS) {
+        if (escape) continue;
         let prev = null;
         for (let j = 0; j <= 72; j++) {
-          const p = orbitPoint(s, j / 72 * 6.2832);
+          const p = orbitPoint(s, j / 72 * 6.2832, 1);
           if (prev) {
             ctx.beginPath();
             ctx.moveTo(prev.x, prev.y);
@@ -887,22 +908,27 @@
         }
       }
       for (const s of SATS) {
+        // Slow de-orbit: ~3.8s per satellite, satellites offset in phase.
+        const cyc = escape ? (t * 0.28 + s.p * 1.4) % 3.8 : 0;
+        const grow = 1 - (escape ? 0.048 * cyc : 0);
+        const fade = escape ? Math.max(0, 1 - cyc / 3.8) : 1;
         const th = s.p + s.w * t;
-        const p = orbitPoint(s, th);
+        const p = orbitPoint(s, th, grow);
         const dx = p.x - cx, dy = p.y - cy;
         if (p.z < 0 && dx * dx + dy * dy < R * R) continue;
         for (let k = 10; k >= 1; k--) {
-          const q = orbitPoint(s, th - 0.05 * k);
-          ctx.fillStyle = rgba(accent, 0.055 * (11 - k));
+          const q = orbitPoint(s, th - 0.05 * k,
+            1 - (escape ? 0.048 * Math.max(cyc - 0.04 * k, 0) : 0));
+          ctx.fillStyle = rgba(accent, 0.055 * (11 - k) * fade);
           ctx.fillRect(q.x - 0.75, q.y - 0.75, 1.5, 1.5);
         }
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 4.5, 0, 6.2832);
-        ctx.fillStyle = rgba(accent, 0.1);
+        ctx.arc(p.x, p.y, 2.2 * 2.2 * fade, 0, 6.2832);
+        ctx.fillStyle = rgba(accent, 0.1 * fade);
         ctx.fill();
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 2, 0, 6.2832);
-        ctx.fillStyle = rgba(accent, 0.95);
+        ctx.arc(p.x, p.y, 2.2 * fade, 0, 6.2832);
+        ctx.fillStyle = rgba(accent, 0.95 * fade);
         ctx.fill();
       }
     };
@@ -920,7 +946,7 @@
   }
   let installNodes = null;
 
-  function hideInstallPanel() {
+  function hideActionPanel() {
     if (!installNodes) return;
     if (installNodes.timers) {
       for (const timer of installNodes.timers) clearInterval(timer);
@@ -932,21 +958,25 @@
     installNodes = null;
   }
 
-  function showInstallPanel(plugin) {
+  function showActionPanel(plugin, mode) {
     if (installNodes) return;
+    const captions = ACTION_CAPTIONS[mode] || ACTION_CAPTIONS.install;
     const backdrop = document.createElement("div");
     backdrop.className = "pi-install-backdrop";
     const panel = document.createElement("div");
     panel.className = "pi-install-panel";
+    panel.dataset.mode = mode;
     panel.setAttribute("role", "status");
     panel.setAttribute("aria-live", "polite");
-    panel.setAttribute("aria-label", "Installing " + plugin.name);
+    panel.setAttribute("aria-label", (mode === "uninstall" ? "Uninstalling " : "Installing ") + plugin.name);
 
     const title = document.createElement("h2");
-    title.textContent = "Installing " + plugin.name;
+    title.textContent = (mode === "uninstall" ? "Uninstalling " : "Installing ") + plugin.name;
     const sub = document.createElement("div");
     sub.className = "pi-install-sub";
-    sub.textContent = "this takes a bit \u00b7 no cancel: the wizard is already on it";
+    sub.textContent = mode === "uninstall"
+      ? "this takes a bit \u00b7 no cancel: the wizard is already on it \u00b7 files are deleted for real"
+      : "this takes a bit \u00b7 no cancel: the wizard is already on it";
 
     const art = document.createElement("canvas");
     art.className = "pi-install-art";
@@ -954,25 +984,25 @@
 
     const caption = document.createElement("div");
     caption.className = "pi-install-caption";
-    caption.textContent = INSTALL_CAPTIONS[0];
+    caption.textContent = captions[0];
 
     panel.append(title, sub, art, caption);
     document.body.append(backdrop, panel);
-    const stopInstallGlobe = startInstallGlobe(art);
+    const stopInstallGlobe = startInstallGlobe(art, mode === "uninstall");
 
     let captionIndex = 0;
     const captionTimer = setInterval(() => {
-      captionIndex = (captionIndex + 1) % INSTALL_CAPTIONS.length;
-      caption.textContent = INSTALL_CAPTIONS[captionIndex];
+      captionIndex = (captionIndex + 1) % captions.length;
+      caption.textContent = captions[captionIndex];
     }, 3000);
 
     // Click outside the panel (the backdrop), or Escape: hide the panel.
     const onKey = (event) => {
-      if (event.key === "Escape") hideInstallPanel();
+      if (event.key === "Escape") hideActionPanel();
     };
-    backdrop.addEventListener("click", hideInstallPanel);
+    backdrop.addEventListener("click", hideActionPanel);
     document.addEventListener("keydown", onKey);
-    installNodes = { backdrop, panel, timers: [captionTimer], onKey, stopInstallGlobe };
+    installNodes = { mode, backdrop, panel, timers: [captionTimer], onKey, stopInstallGlobe };
   }
 
   // The installed-state buttons, shared by the installable page (anchored
@@ -1117,8 +1147,16 @@
       // plugin removed on the desktop) closes it too. A page that opens
       // on an installed-but-disabled plugin shows nothing: no
       // transition, no claimed progress for work nobody started.
-      if (!prev.installed && state.installed && !state.enabled) showInstallPanel(plugin);
-      if (installNodes && (state.enabled || !state.installed)) hideInstallPanel();
+      if (installNodes && (state.enabled || !state.installed)) hideActionPanel();
+      if (!prev.installed && state.installed && !state.enabled) {
+        showActionPanel(plugin, "install");
+      }
+      // Uninstall runs as disable + remove; the disable is visible, the
+      // git clean is not, so the panel opens on enabled -> disabled while
+      // the clone is still on disk and closes when either resolves.
+      if (prev.installed && prev.enabled && !state.enabled && state.installed) {
+        showActionPanel(plugin, "uninstall");
+      }
     } finally {
       polling = false;
     }
