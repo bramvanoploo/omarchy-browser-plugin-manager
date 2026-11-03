@@ -1635,6 +1635,9 @@ Item {
   component PiButton: BorderSurface {
     id: piButton
     property string label: ""
+    property string tooltipText: ""
+    property bool spin: false
+    property int labelPixelSize: Style.font.body
     property bool primary: false
     property bool danger: false
     readonly property color tone: danger
@@ -1663,15 +1666,37 @@ Item {
         ? (piButton.primary || piButton.danger ? piButton.tone : Color.foreground)
         : Util.alpha(Color.foreground, 0.35)
       font.family: Style.font.family
-      font.pixelSize: Style.font.body
+      font.pixelSize: piButton.labelPixelSize
       font.bold: piButton.primary || piButton.danger
+      transformOrigin: Item.Center
+
+      // NumberAnimation (GUI-thread timer driven) rather than
+      // RotationAnimator: the shell's composited windows do not advance
+      // render-thread animators (same mechanism the bar's refresh button
+      // used). Loops full circles while the check runs, and resets so the
+      // icon sits upright again once it finishes.
+      NumberAnimation on rotation {
+        from: 0
+        to: 360
+        duration: 900
+        loops: Animation.Infinite
+        running: piButton.spin
+        onRunningChanged: if (!running) labelText.rotation = 0
+      }
     }
     MouseArea {
       id: piMouse
       anchors.fill: parent
       hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onClicked: piButton.clickedPi()
+      // Stay enabled while the button is disabled so the tooltip (e.g.
+      // "Checking for updates...") still follows the pointer; the click
+      // is gated on the button's own enabled state instead.
+      cursorShape: piButton.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onClicked: if (piButton.enabled) piButton.clickedPi()
+    }
+    PanelToolTip {
+      visible: piMouse.containsMouse && piButton.tooltipText !== ""
+      text: piButton.tooltipText
     }
   }
 
@@ -2284,7 +2309,7 @@ Item {
             Repeater {
               model: root.snapList("pollValues")
               delegate: PiButton {
-                width: (parent.width - Style.space(86)
+                width: (parent.width - Style.space(34)
                   - 5 * Style.spacing.controlGap) / 6
                 label: String(root.snapList("pollLabels")[index] || "")
                 primary: Number(modelData) === Number(root.snapStr("pollMinutes"))
@@ -2292,8 +2317,13 @@ Item {
               }
             }
             PiButton {
-              width: Style.space(86)
-              label: root.snapBool("updateChecking") ? "Checking\u2026" : "Check now"
+              width: Style.space(34)
+              label: "\uF021"
+              labelPixelSize: Style.font.caption
+              spin: root.snapBool("updateChecking")
+              tooltipText: root.snapBool("updateChecking")
+                ? "Checking for updates\u2026"
+                : "Check for updates"
               enabled: !root.snapBool("updateChecking")
               onClickedPi: root.writeSettingsCmd({ action: "refresh" })
             }
