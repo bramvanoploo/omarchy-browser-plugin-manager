@@ -115,6 +115,20 @@ Item {
   property string catalogError: ""
   property string manifestError: ""
 
+  readonly property string marketplaceUrl: "https://plugins.omarchy.org/"
+  readonly property string catalogThumb: {
+    var e = root.catalogEntry
+    var t = e ? String(e.previewImage || e.previewThumbnail || "") : ""
+    return /^assets\/[A-Za-z0-9._\/-]+$/.test(t) ? t : ""
+  }
+  readonly property real catalogThumbRatio: 9 / 16
+  readonly property real catalogThumbNative: {
+    var e = root.catalogEntry
+    var w = e ? (Number(e.previewWidth) || Number(e.previewThumbnailWidth) || 0) : 0
+    var h = e ? (Number(e.previewHeight) || Number(e.previewThumbnailHeight) || 0) : 0
+    return w > 0 && h > 0 ? h / w : root.catalogThumbRatio
+  }
+
   // enableProc's own output, reset per attempt, so a discovery-race failure
   // is detected from this run rather than from accumulated output.
   property string enableOutput: ""
@@ -2447,6 +2461,73 @@ Item {
           visible: root.stage === "review" && root.mode === "install"
           width: cardColumn.width
           spacing: Style.spacing.lg
+
+          // Preview image: 100% width, height proportional to the image
+          // up to 16:9 max proportions. Taller images overflow at the
+          // bottom with the top pinned to the top.
+          Rectangle {
+            id: previewBox
+            visible: root.catalogThumb !== ""
+            width: cardColumn.width
+            height: visible
+              ? Math.round((width - 2) * Math.min(root.catalogThumbNative, root.catalogThumbRatio)) + 2
+              : 0
+            implicitHeight: height
+            implicitWidth: width
+            radius: Style.cornerRadius
+            color: Util.alpha(Color.foreground, 0.05)
+            border.color: Util.alpha(Color.foreground, 0.15)
+            border.width: 1
+            clip: true
+
+            Image {
+              id: previewImage
+              x: 1
+              y: 1
+              width: parent.width - 2
+              height: Math.max(parent.height - 2, Math.round(width * root.catalogThumbNative))
+              source: root.catalogThumb !== "" ? root.marketplaceUrl + root.catalogThumb : ""
+              sourceSize.width: Math.round(width * 2)
+              fillMode: Image.Stretch
+              asynchronous: true
+              cache: true
+              smooth: true
+            }
+
+            Rectangle {
+              id: previewShimmer
+              anchors.fill: parent
+              radius: Style.cornerRadius
+              color: "transparent"
+              clip: true
+              visible: previewBox.visible
+                && (previewImage.status !== Image.Ready)
+
+              Rectangle {
+                id: shimmerBand
+                width: Math.round(previewBox.width * 0.45)
+                height: parent.height
+                gradient: Gradient {
+                  orientation: Gradient.Horizontal
+                  GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0) }
+                  GradientStop { position: 0.5; color: Util.alpha(Color.foreground, 0.07) }
+                  GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, 0) }
+                }
+                SequentialAnimation on x {
+                  running: previewShimmer.visible
+                  loops: Animation.Infinite
+                  NumberAnimation {
+                    from: -shimmerBand.width
+                    to: previewBox.width
+                    duration: 1100
+                    easing: Easing.InOutQuad
+                  }
+                  PauseAnimation { duration: 350 }
+                }
+              }
+            }
+          }
+
           // What is about to be installed: the plugin's name, publisher,
           // version, license, kinds, and source. The marketplace listing
           // is the primary source; when it is missing (unlisted plugins)
