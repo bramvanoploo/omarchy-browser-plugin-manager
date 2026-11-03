@@ -26,8 +26,10 @@
     },
     {
       "matches": [
-        "https://plugins.omarchy.org/",
-        "https://plugins.omarchy.org/index.html*"
+        "https://plugins.omarchy.org/*"
+      ],
+      "exclude_matches": [
+        "https://plugins.omarchy.org/plugin.html*"
       ],
       "js": [
         "catalog.js"
