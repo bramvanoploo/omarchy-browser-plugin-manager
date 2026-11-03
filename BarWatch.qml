@@ -280,10 +280,11 @@ Panel {
   // (a status line, the batch button, or a list): with no updates, no
   // status line, and no batch button — e.g. first open before the first
   // check — the rule above the group must hide, or two rules stack.
-  readonly property bool updatesGroupVisible: root.updateCount > 0
+  readonly property bool updatesGroupVisible: root.updateChecking
+    || root.updateCount > 0
     || root.updateCheckFailed
     || root.settingsSaveFailed
-    || (!root.updateChecking && root.lastCheckText !== "never")
+    || (root.lastCheckText !== "never")
   // Ids of the last notified outdated set: a poll offers the update once
   // per new set (ids join), so an unchanged repeat poll never nags.
   property string lastNotifiedKey: ""

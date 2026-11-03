@@ -944,11 +944,11 @@ Item {
   // lines, batch button, or lists have anything to show, so the rule
   // under the toggles only paints when there is a group to separate.
   function settingsUpdatesGroupVisible() {
-    return root.settingsAllRows().length > 0
+    return root.snapBool("updateChecking")
+      || root.settingsAllRows().length > 0
       || root.snapBool("updateCheckFailed")
       || root.snapBool("settingsSaveFailed")
-      || (!root.snapBool("updateChecking")
-          && root.snapStr("lastCheckText") !== "never"
+      || (root.snapStr("lastCheckText") !== "never"
           && root.snapStr("lastCheckText") !== "")
   }
   function toggleAllowUnverified() {
@@ -2436,6 +2436,85 @@ Item {
           }
 
           PiRule { visible: root.settingsUpdatesGroupVisible() }
+
+          // Animated checking indicator: wave-bouncing dots and pulsing text.
+          // Height strictly matches 1-line PiLine so panel height never shifts.
+          Item {
+            id: checkingLine
+            visible: root.snapBool("updateChecking")
+            width: cardColumn.width
+            implicitHeight: checkingTextMeasure.implicitHeight
+            height: implicitHeight
+
+            Text {
+              id: checkingTextMeasure
+              visible: false
+              text: "All installed plugins are up to date."
+              font.family: Style.font.family
+              font.pixelSize: Style.font.body
+            }
+
+            Row {
+              id: checkingRow
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(2)
+
+              Text {
+                id: checkingLabel
+                text: "Checking for plugin updates"
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+                color: Util.alpha(Color.foreground, 0.75)
+
+                SequentialAnimation on color {
+                  running: checkingLine.visible && !Style.reduceMotion
+                  loops: Animation.Infinite
+                  ColorAnimation {
+                    from: Util.alpha(Color.foreground, 0.75)
+                    to: Color.accent
+                    duration: 900
+                    easing.type: Easing.InOutSine
+                  }
+                  ColorAnimation {
+                    from: Color.accent
+                    to: Util.alpha(Color.foreground, 0.75)
+                    duration: 900
+                    easing.type: Easing.InOutSine
+                  }
+                }
+              }
+
+              Repeater {
+                model: 3
+                delegate: Text {
+                  text: "."
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                  color: Color.accent
+                  property real lift: 0
+                  y: lift
+                  SequentialAnimation on lift {
+                    running: checkingLine.visible && !Style.reduceMotion
+                    loops: Animation.Infinite
+                    PauseAnimation { duration: index * 160 }
+                    NumberAnimation { from: 0; to: -4; duration: 220; easing.type: Easing.OutQuad }
+                    NumberAnimation { from: -4; to: 0; duration: 220; easing.type: Easing.InQuad }
+                    PauseAnimation { duration: 600 - (index * 160) }
+                  }
+                  SequentialAnimation on opacity {
+                    running: checkingLine.visible && !Style.reduceMotion
+                    loops: Animation.Infinite
+                    PauseAnimation { duration: index * 160 }
+                    NumberAnimation { from: 0.35; to: 1.0; duration: 220; easing.type: Easing.OutQuad }
+                    NumberAnimation { from: 1.0; to: 0.35; duration: 220; easing.type: Easing.InQuad }
+                    PauseAnimation { duration: 600 - (index * 160) }
+                  }
+                }
+              }
+            }
+          }
 
           PiLine {
             visible: !root.snapBool("updateChecking")
