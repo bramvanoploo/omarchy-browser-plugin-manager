@@ -12,11 +12,11 @@ import qs.Ui
 // The payload is treated as a hint only: the catalog
 // entry and the repository manifest are re-fetched and cross-checked before
 // anything is displayed, and the user confirms the action in this overlay.
-// Installing a bar widget adds a placement step: the user picks the bar
-// section (left/center/right); the manifest's default section is labelled
-// "(default)" but nothing is preselected, and the install worker enables the
-// plugin with the section chosen. Nothing is installed yet at that point, so
-// Cancel is a plain close.
+// Installing a bar widget adds a placement step: a horizontal grid offers
+// every bar section the shell knows (Util.barSections); the manifest's
+// default section is labelled "(default)" and styled as the primary action,
+// and the install worker enables the plugin with the section chosen. Nothing
+// is installed yet at that point, so Cancel is a plain close.
 // When the action finishes, the result is a desktop notification only: no
 // completion dialog is shown and the overlay closes itself.
 // Exception: finishing an install of this manager itself summons the
@@ -70,15 +70,36 @@ Item {
   property bool opened: false
   // review | enable-confirm | disable-confirm | uninstall-confirm
   // | update-confirm | enabling | placement | disabling
-  // | browser-prompt | browser-defer
+  // | browser-prompt | browser-defer | running
   property string stage: "review"
 
   property string pluginId: ""
   property string pluginRepo: ""
   property string pluginName: ""
-  // "install" (default) | "uninstall" | "enable" | "disable" | "update" —
-  // decided by the native host from live local state, never by the page.
+  // "install" (default) | "uninstall" | "enable" | "disable" | "update"
+  // | "running" — decided by the native host from live local state, never
+  // by the page. "running" is the in-progress system panel: summoned by a
+  // detached worker, it shows the themed globe animation until the worker's
+  // marker file lands in the state dir's in-progress/ directory disappears.
   property string mode: "install"
+
+  // Running-stage state: the action ("install" | "uninstall" | "update"),
+  // the display target (plugin name, or a batch summary like "3 plugins"),
+  // the rotating caption index, and the epoch ms the panel opened.
+  property string runningAction: "install"
+  property string runningName: ""
+  property int runningCaption: 0
+  property real runningT0: 0
+
+  // Settings mode: the bar widget publishes a settings snapshot (settings,
+  // check state, update lists) to settings-payload.json and dispatches
+  // commands this overlay writes to settings-cmd.json; the widget owns
+  // settings.json, the catalog poll, and the detached workers.
+  // settingsConfirm arms the settings-confirm stage (update/uninstall).
+  property var settingsSnap: null
+  property var settingsConfirm: null
+  readonly property string settingsPayloadPath: stateDir + "/settings-payload.json"
+  readonly property string settingsCmdPath: stateDir + "/settings-cmd.json"
 
   property bool catalogLoaded: false
   property bool manifestLoaded: false
@@ -91,7 +112,7 @@ Item {
   // is detected from this run rather than from accumulated output.
   property string enableOutput: ""
   property bool isBarWidget: false
-  property string defaultSection: "center"
+  property string defaultSection: "centerEnd"
   property string enabledSection: ""
   property int enableTries: 0
   property bool finalCheck: false
@@ -171,6 +192,19 @@ Item {
         + " \u2014 choose bar section"
     if (root.stage === "enabling") return "Enabling plugin\u2026"
     if (root.stage === "disabling") return "Disabling plugin\u2026"
+    if (root.stage === "running")
+      return (root.runningAction === "uninstall" ? "Uninstalling plugin"
+        : root.runningAction === "update" ? "Updating plugin"
+        : "Installing plugin") + "\u2026"
+    if (root.stage === "settings")
+      return "Settings \u00b7 updates every " + root.settingsPollLabel()
+        + (root.snapBool("updateChecking") ? "  \u00b7  checking\u2026"
+          : root.snapStr("lastCheckText") !== "never"
+            && root.snapStr("lastCheckText") !== ""
+            ? "  \u00b7  last check " + root.snapStr("lastCheckText") : "")
+    if (root.stage === "settings-confirm")
+      return root.settingsConfirm && root.settingsConfirm.kind === "uninstall"
+        ? "Confirm uninstall" : "Confirm update"
     var action = ({ install: "Install plugin", uninstall: "Uninstall plugin",
                     enable: "Enable plugin", disable: "Disable plugin",
                     update: "Update plugin" })[root.mode]
@@ -180,6 +214,7 @@ Item {
   function stopPending() {
     enableRetryTimer.stop()
     finalVerifyTimer.stop()
+    markerTimer.stop()
     catalogProc.running = false
     manifestProc.running = false
     listProc.running = false
@@ -261,13 +296,17 @@ Item {
 
     var newMode = String(payload.mode || "install")
     if (newMode !== "uninstall" && newMode !== "enable" && newMode !== "disable"
-        && newMode !== "update"
-        && newMode !== "browser-prompt" && newMode !== "browser-defer") newMode = "install"
+        && newMode !== "update" && newMode !== "running"
+        && newMode !== "browser-prompt" && newMode !== "browser-defer"
+        && newMode !== "settings" && newMode !== "settings-confirm") newMode = "install"
     // Stage before mode: the title binding chooses its source from stage, and
     // assigning a browser-* mode while the old stage is still a confirm stage
     // would index the title map with it (undefined -> "Unable to assign
     // [undefined] to QString").
-    stage = (newMode === "browser-prompt" || newMode === "browser-defer") ? newMode : "review"
+    stage = (newMode === "browser-prompt" || newMode === "browser-defer"
+      || newMode === "running" || newMode === "settings"
+      || newMode === "settings-confirm")
+      ? (newMode === "settings-confirm" ? "settings-confirm" : newMode) : "review"
     mode = newMode
 
     pluginId = String(payload.id || "")
@@ -284,15 +323,66 @@ Item {
     manifestError = ""
     enableOutput = ""
     isBarWidget = false
-    defaultSection = "center"
+    defaultSection = "centerEnd"
     enabledSection = ""
     enableTries = 0
     finalCheck = false
+    settingsConfirm = null
 
     opened = true
 
+    runningT0 = Date.now()
     // Fresh read of the shared settings (allowUnverified) on every summon.
     settingsFile.reload()
+
+    if (mode === "running") {
+      // In-progress system panel summoned by a detached worker. No
+      // marketplace data: the payload names the action and the target, and
+      // the worker's marker file in stateDir/in-progress/ is the live
+      // signal. The panel closes itself when no fresh marker remains (the
+      // worker finished), leaving the completion notification on screen.
+      // Checked before the id validation: batch workers (the bar widget's
+      // update-all / multi-uninstall runs) carry a summary label like
+      // "3 plugins" and no plugin id at all.
+      catalogLoaded = true
+      manifestLoaded = true
+      runningAction = (payload.action === "uninstall" || payload.action === "update")
+        ? String(payload.action) : "install"
+      runningName = String(payload.name || pluginName || pluginId)
+      runningCaption = 0
+      runningT0 = Date.now()
+      markerProc.running = true
+      markerTimer.start()
+      return
+    }
+
+    if (mode === "settings" || mode === "settings-confirm") {
+      // Bar widget settings panel as a system overlay: the snapshot
+      // arrives with the summon and keeps updating from the payload file
+      // while the panel is open; every control writes a command file the
+      // widget dispatches. No marketplace fetch: the widget already knows
+      // everything the panel shows.
+      catalogLoaded = true
+      manifestLoaded = true
+      pluginId = managerId
+      pluginName = String((root.manifest && root.manifest.name) || managerId)
+      settingsCmdQueue = []
+      // Drop any log a previous session left on disk: this panel is the
+      // only producer, and the widget dedupes live commands by seq.
+      settingsCmdFile.setText("")
+      settingsSession = String(payload.session || "")
+      settingsSnap = (payload.snapshot && typeof payload.snapshot === "object")
+        ? payload.snapshot : settingsSnap
+      if (mode === "settings-confirm") {
+        settingsConfirm = (payload.confirm && typeof payload.confirm === "object")
+          ? payload.confirm : null
+        if (!settingsConfirm) {
+          mode = "settings"
+          stage = "settings"
+        }
+      }
+      return
+    }
 
     if (!validPluginId(pluginId)) {
       catalogError = "Invalid plugin identifier"
@@ -336,6 +426,8 @@ Item {
     // turn calls close(). Clearing `opened` first makes that re-entry a no-op.
     if (!root.opened) return
     root.opened = false
+    if (root.mode === "settings" || root.mode === "settings-confirm")
+      root.writeSettingsCmd({ action: "closed", session: root.settingsSession })
     root.stopPending()
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide((root.manifest && root.manifest.id) || "bramvanoploo.omarchy-browser-plugin-manager")
@@ -400,12 +492,33 @@ Item {
     else root.spawnWorker("install", "")
   }
 
-  // Called from the placement step in install mode with an explicit section
-  // ("left"/"center"/"right"); the manifest default is marked "(default)" on
-  // its own button, so there is no separate "keep default" path.
+  // Called from the placement step in install mode with an explicit
+  // section (from barPlacementSections); the manifest default is marked
+  // "(default)" on its own button, so there is no separate "keep default"
+  // path.
+  // Bar sections offered in the placement stage: the shell's own section
+  // list (Util.barSections). All six are placeable (omarchy-plugin-enable
+  // accepts each); the center box hosts widgets beside the clock behind a
+  // hover reveal, and a manifest's "center" default maps to centerEnd
+  // exactly like omarchy-plugin-add does.
+  readonly property var barPlacementSections: {
+    return (typeof Util !== "undefined" && Array.isArray(Util.barSections))
+      ? Util.barSections
+      : ["left", "centerBegin", "center", "centerEnd", "right", "tray"]
+  }
+  function sectionLabel(section) {
+    if (section === "left") return "Left"
+    if (section === "centerBegin") return "Center begin"
+    if (section === "center") return "Center"
+    if (section === "centerEnd") return "Center end"
+    if (section === "right") return "Right"
+    if (section === "tray") return "Tray"
+    return String(section)
+  }
+
   function installWithSection(section) {
     if (root.mode !== "install" || root.stage !== "placement") return
-    if (!/^(left|center|right)$/.test(section)) return
+    if (root.barPlacementSections.indexOf(section) === -1) return
     root.spawnWorker("install", section)
   }
 
@@ -521,7 +634,10 @@ Item {
             root.manifestError = ""
             root.pluginManifest = m
             root.isBarWidget = (m.kinds || []).indexOf("bar-widget") !== -1
-            root.defaultSection = (m.barWidget && m.barWidget.defaultSection) || "center"
+            root.defaultSection = (m.barWidget
+              && m.barWidget.defaultSection === "center") ? "centerEnd"
+              : (m.barWidget && m.barWidget.defaultSection)
+                ? String(m.barWidget.defaultSection) : "centerEnd"
           }
         }
         root.manifestLoaded = true
@@ -582,6 +698,192 @@ Item {
     }
   }
 
+  // ---- bar widget settings panel (settings mode) ------------------------
+  // The widget publishes a snapshot to settings-payload.json and keeps
+  // republishing while the panel is open; every control here writes a
+  // command to settings-cmd.json, which the widget dispatches (it owns
+  // settings.json, the catalog poll, and the detached workers). Confirm-
+  // ing an update/uninstall hands the plugin ids over and switches to the
+  // running stage: the workers' marker files drive the close, exactly
+  // like the other actions.
+  // Payload updates: FileView's file watch does not fire on external
+  // writes in this environment, so the file is re-read on demand (600ms
+  // while the settings panel is open); the reload's onLoaded applies the
+  // snapshot. The bar republishes every 400ms, so the overlay stays
+  // within about a second of the widget's state.
+  Timer {
+    interval: 600
+    running: root.opened && (root.mode === "settings" || root.mode === "settings-confirm")
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: settingsPayloadFile.reload()
+  }
+
+  FileView {
+    id: settingsPayloadFile
+    path: root.settingsPayloadPath
+    printErrors: false
+    onLoaded: root.applySettingsSnapshot(String(text() || ""))
+    onLoadFailed: root.applySettingsSnapshot("")
+  }
+
+  FileView {
+    id: settingsCmdFile
+    path: root.settingsCmdPath
+    printErrors: false
+  }
+
+  function applySettingsSnapshot(raw) {
+    if (root.mode !== "settings" && root.mode !== "settings-confirm") return
+    try {
+      var d = JSON.parse(raw)
+      if (d && typeof d === "object") root.settingsSnap = d
+    } catch (e) { /* keep the last good snapshot */ }
+  }
+
+  // The command file is an append log (one JSON object per line): clicks
+  // can fire several commands back-to-back (a confirm action plus the
+  // "closed" the panel sends when it shuts), and a single-slot file would
+  // let a fast write clobber a command the widget has not polled yet. The
+  // widget consumes (truncates) the file once it has dispatched a batch,
+  // so the queue here only carries the commands written since.
+  property var settingsCmdQueue: []
+  // Bar-widget minted id of the current settings session, received with
+  // the summon payload and echoed in the "closed" command so the widget
+  // can tell a live close from a stale one left on disk.
+  property string settingsSession: ""
+  function writeSettingsCmd(obj) {
+    var o = obj || {}
+    o.seq = String(Date.now()) + "-"
+      + String(Math.floor(Math.random() * 1e6))
+    settingsCmdQueue = settingsCmdQueue.concat([o])
+    settingsCmdFile.setText(settingsCmdQueue.map(function (c) {
+      return JSON.stringify(c)
+    }).join("\n") + "\n")
+  }
+
+  function snapStr(key) {
+    var s = root.settingsSnap || {}
+    return String(s[key] === undefined || s[key] === null ? "" : s[key])
+  }
+  function snapBool(key) {
+    var s = root.settingsSnap || {}
+    return s[key] === true
+  }
+  function snapList(key) {
+    var s = root.settingsSnap || {}
+    return Array.isArray(s[key]) ? s[key] : []
+  }
+  function snapPatch(props) {
+    var s = root.settingsSnap || {}
+    var out = {}
+    for (var k in s) out[k] = s[k]
+    for (var k2 in props) out[k2] = props[k2]
+    root.settingsSnap = out
+  }
+  function settingsPollLabel() {
+    var vals = root.snapList("pollValues")
+    var labels = root.snapList("pollLabels")
+    var i = vals.indexOf(Number(root.snapStr("pollMinutes")))
+    return i >= 0 && labels[i] ? String(labels[i]) : "1h"
+  }
+  function settingsEligibleRows() {
+    var rows = root.snapList("verified").slice()
+    if (root.snapBool("allowUnverified"))
+      rows = rows.concat(root.snapList("unverified"))
+    return rows
+  }
+  // Every offered row, for the "all up to date" line: unverified rows
+  // count as pending even while the toggle hides them (the widget keeps
+  // polling them; hiding is a preference, not a resolution).
+  function settingsAllRows() {
+    return root.snapList("verified").concat(root.snapList("unverified"))
+  }
+
+  // Mirrors the bar popup's updatesGroupVisible: true when the status
+  // lines, batch button, or lists have anything to show, so the rule
+  // under the toggles only paints when there is a group to separate.
+  function settingsUpdatesGroupVisible() {
+    return root.settingsAllRows().length > 0
+      || root.snapBool("updateCheckFailed")
+      || root.snapBool("settingsSaveFailed")
+      || (!root.snapBool("updateChecking")
+          && root.snapStr("lastCheckText") !== "never"
+          && root.snapStr("lastCheckText") !== "")
+  }
+  function toggleAllowUnverified() {
+    var next = !root.snapBool("allowUnverified")
+    root.snapPatch({ allowUnverified: next })
+    root.writeSettingsCmd({ action: "set_allow_unverified", on: next })
+  }
+  function toggleNotifyUpdates() {
+    var next = !root.snapBool("notifyUpdates")
+    root.snapPatch({ notifyUpdates: next })
+    root.writeSettingsCmd({ action: "set_notify_updates", on: next })
+  }
+  function setPollIntervalMinutes(m) {
+    root.snapPatch({ pollMinutes: Number(m) })
+    root.writeSettingsCmd({ action: "set_poll_interval", minutes: Number(m) })
+  }
+  function beginUpdateConfirm(rows) {
+    if (!rows || rows.length === 0) return
+    var single = rows.length === 1 ? rows[0] : null
+    var text = single
+      ? "Updates " + String(single.name) + " from " + String(single.from)
+        + " to " + String(single.to)
+        + (single.verified === true
+          ? ". The plugin's git repository is fast-forwarded to exactly"
+            + " the reviewed commit (the update fails if upstream advanced"
+            + " past it); the bar reloads when the manager itself updates."
+          : " (unverified version). The plugin's git repository is pulled;"
+            + " the bar reloads when the manager itself updates.")
+      : "Updates " + rows.length + " plugins: verified ones are"
+        + " fast-forwarded to exactly the reviewed commits, unverified"
+        + " ones are pulled; the bar reloads when the manager itself"
+        + " updates."
+    root.settingsConfirm = {
+      kind: "update",
+      ids: rows.map(function (r) { return String(r.id) }),
+      names: rows.map(function (r) { return String(r.name) }),
+      text: text
+    }
+    root.stage = "settings-confirm"
+  }
+  function beginUninstallConfirm(row) {
+    root.settingsConfirm = {
+      kind: "uninstall",
+      ids: [String(row.id)],
+      names: [String(row.name)],
+      text: "Runs omarchy plugin remove on " + String(row.name) + ": deletes"
+        + " its folder in ~/.config/omarchy/plugins (a symlinked dev"
+        + " folder is only unlinked), unloads it from the shell, and drops"
+        + " its bar icon. The catalog entry lets you reinstall it"
+        + " afterwards."
+    }
+    root.stage = "settings-confirm"
+  }
+  function confirmSettingsAction() {
+    var c = root.settingsConfirm
+    if (!c) return
+    var ids = (c.ids || []).map(String).filter(function (x) { return x !== "" })
+    if (ids.length === 0) return
+    root.writeSettingsCmd(c.kind === "uninstall"
+      ? { action: "run_uninstall", ids: ids }
+      : { action: "run_update", ids: ids })
+    root.runningAction = c.kind === "uninstall" ? "uninstall" : "update"
+    root.runningName = c.names && c.names.length === 1
+      ? String(c.names[0]) : ids.length + " plugins"
+    root.runningCaption = 0
+    root.runningT0 = Date.now()
+    root.stage = "running"
+    markerProc.running = true
+    markerTimer.start()
+  }
+  function cancelSettingsConfirm() {
+    root.settingsConfirm = null
+    root.stage = "settings"
+  }
+
   // The bar widget's settings file (allowUnverified opt-in for updates).
   // Read-only here: the widget owns writes; the wizard reloads on open.
   FileView {
@@ -603,7 +905,12 @@ Item {
     // Prints extension-loading guidance on registration; nothing to consume.
   }
 
-  Component.onCompleted: hostSetupProc.running = true
+  Component.onCompleted: {
+    hostSetupProc.running = true
+    // Re-open the running panel if a detached worker is still active
+    // (the shell reload triggered by the install destroyed the panel).
+    bootScanProc.running = true
+  }
 
   // Self-cleanup: removing the plugin (terminal `omarchy plugin remove`)
   // destroys this overlay on the shell reload; a detached watcher checks a
@@ -646,6 +953,281 @@ Item {
     }
   }
 
+  // ---- running stage: in-progress system panel ---------------------------
+  // Detached workers publish one marker file per run into
+  // stateDir/in-progress/ and summon this overlay on mode "running". The
+  // worker's EXIT trap removes the marker at the very end of the run: after
+  // the install/uninstall/update finished, the result was verified (bar
+  // placement re-applied when needed), and the desktop notification was
+  // sent - so the panel keeps showing until the action has fully completed
+  // (bar icon visible, or failure), and closes on the next poll tick, at
+  // most a second after the worker exits.
+  // Markers older than 15 minutes are stale (a worker killed without its
+  // trap, e.g. a self-uninstall that destroyed this very overlay): they are
+  // deleted and ignored so the panel never sticks.
+  readonly property string markerDir: stateDir + "/in-progress"
+  property bool markerSweepQueued: false
+
+  readonly property var runningCaptionsInstall: [
+    "Spinning up the plugin axis\u2026",
+    "Deploying the bar widget into orbit\u2026",
+    "Persuading the shell to share its bar\u2026",
+    "Gravity will do the rest\u2026",
+    "Counting satellites, not seconds\u2026",
+    "Cloning at orbital speed\u2026",
+    "Bribing the plugin scanner with patience\u2026",
+    "The satellites are doing their very best\u2026"
+  ]
+  readonly property var runningCaptionsUninstall: [
+    "Undocking the bar widget\u2026",
+    "Reeling in the satellites\u2026",
+    "Telling the shell to forget about it\u2026",
+    "No hard feelings, plugin\u2026",
+    "Uninstalling at orbital speed\u2026",
+    "Deletion is forever, so choose well\u2026",
+    "The satellites are drifting away\u2026"
+  ]
+  readonly property var runningCaptionsUpdate: [
+    "Fast-forwarding the plugin\u2026",
+    "Fetching orbit updates\u2026",
+    "Rewinding to the verified commit\u2026",
+    "Reading the changelog in zero-g\u2026",
+    "Recalibrating the bar widget\u2026"
+  ]
+
+  function runningCaptionText() {
+    var caps = root.runningAction === "uninstall" ? root.runningCaptionsUninstall
+      : root.runningAction === "update" ? root.runningCaptionsUpdate
+      : root.runningCaptionsInstall
+    return caps[root.runningCaption % caps.length]
+  }
+
+  // Fresh marker entries from a marker-directory dump (newest last); stale
+  // ones (over 15 minutes) queue a sweep. Shared by the running-stage poll
+  // and the boot scan.
+  function freshMarkerEntries(text) {
+    var lines = String(text).split("\n")
+    var now = Math.floor(Date.now() / 1000)
+    var entries = []
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim()
+      if (!line) continue
+      var e = null
+      try { e = JSON.parse(line) } catch (err) { continue }
+      if (!e || typeof e.started !== "number") continue
+      if (now - e.started > 900) { root.markerSweepQueued = true; continue }
+      entries.push(e)
+    }
+    if (root.markerSweepQueued) {
+      root.markerSweepQueued = false
+      staleSweepProc.running = true
+    }
+    entries.sort(function (a, b) { return a.started - b.started })
+    return entries
+  }
+
+  function onMarkers(text) {
+    if (!root.opened || root.stage !== "running") return
+    var entries = root.freshMarkerEntries(text)
+    if (entries.length === 0) {
+      // Every worker finished: the panel's job is done.
+      root.close()
+      return
+    }
+    var newest = entries[entries.length - 1]
+    if (newest.name) root.runningName = String(newest.name)
+    if (newest.mode === "uninstall" || newest.mode === "update")
+      root.runningAction = String(newest.mode)
+  }
+
+  // Re-summon after a shell reload: installing a plugin makes the shell
+  // rescan plugins, and that reload destroys the overlay mid-action (the
+  // worker survives it: detached process, marker file on disk). When the
+  // overlay is instantiated again by the reload, scan the marker directory
+  // once; a fresh marker means an action is still running, so reopen the
+  // running panel directly. The panel then polls as usual and closes when
+  // the worker removes its marker - i.e. once the action is fully done and
+  // verified, which is also the moment the bar icon appears.
+  Process {
+    id: bootScanProc
+    command: ["bash", "-c",
+      "for f in \"$1\"/*.json; do [ -e \"$f\" ] || exit 0; jq -c . \"$f\" 2>/dev/null; done",
+      "bpm-boot", root.markerDir]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (root.opened) return
+        var entries = root.freshMarkerEntries(String(text || ""))
+        if (entries.length === 0) return
+        var newest = entries[entries.length - 1]
+        var payload = { source: "boot", mode: "running",
+          id: String(newest.id || ""), name: String(newest.name || ""),
+          action: String(newest.mode || "install") }
+        root.open(JSON.stringify(payload))
+      }
+    }
+  }
+
+  Process {
+    id: markerProc
+    command: ["bash", "-c",
+      "for f in \"$1\"/*.json; do [ -e \"$f\" ] || exit 0; jq -c . \"$f\" 2>/dev/null; done",
+      "bpm-marker", root.markerDir]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.onMarkers(String(text || ""))
+    }
+    onExited: {
+      if (root.opened && root.stage === "running") markerTimer.restart()
+    }
+  }
+
+  Timer {
+    id: markerTimer
+    interval: 1000
+    onTriggered: markerProc.running = true
+  }
+
+  Process {
+    id: staleSweepProc
+    command: ["bash", "-c",
+      "find \"$1\" -name '*.json' -mmin +15 -delete 2>/dev/null; true",
+      "bpm-sweep", root.markerDir]
+  }
+
+  // Ported from the browser panel: a wireframe lat/lon globe on a sphere
+  // tilted 23 degrees, spun on its axis, orthographically projected (depth
+  // decides alpha). Two satellites ride inclined co-rotating orbits with
+  // fading trails, hidden behind the globe; stars twinkle. On de-orbit
+  // (uninstall) the satellites spiral inward and fade. All colors come from
+  // the live shell palette, so the panel follows the Omarchy theme.
+  function paintGlobe(ctx, W, H, t, escape, gridCol, dotCol, starCol, sats) {
+    // Scene scale relative to the reference 120px-tall canvas: the globe
+    // radius, stroke widths, and satellite dots all follow it, so callers
+    // get a proportionally identical scene at any canvas size.
+    var sc = H / 120
+    var cx = W / 2, cy = H / 2, R = 34 * sc
+    var tilt = 0.41, cosT = Math.cos(tilt), sinT = Math.sin(tilt)
+    var rgba = function (c, a) {
+      return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a.toFixed(3) + ")"
+    }
+    var project = function (x, y, z) {
+      return {
+        x: cx + R * x,
+        y: cy - R * (y * cosT - z * sinT),
+        z: y * sinT + z * cosT
+      }
+    }
+    var depthAlpha = function (z, boost) {
+      var a = z >= 0 ? 0.16 + 0.5 * z : 0.07
+      return boost ? Math.min(1, a * 1.6) : a
+    }
+    var SATS = [
+      { r: 1.4, i: 0.55, n: 0.6, w: 0.75, p: 0 },
+      { r: 1.72, i: -0.9, n: 2.2, w: 0.5, p: 2 }
+    ]
+    var orbitPoint = function (s, th, grow) {
+      var r = s.r * grow
+      var x = r * Math.cos(th), y = 0, z = r * Math.sin(th)
+      var ci = Math.cos(s.i), si = Math.sin(s.i)
+      var y2 = y * ci - z * si, z2 = y * si + z * ci
+      var cn = Math.cos(s.n), sn = Math.sin(s.n)
+      return project(x * cn + z2 * sn, y2, -x * sn + z2 * cn)
+    }
+    var drawArc = function (pt, n, boost) {
+      var prev = null
+      for (var i = 0; i <= n; i++) {
+        var p = pt(i / n)
+        if (prev) {
+          ctx.beginPath()
+          ctx.moveTo(prev.x, prev.y)
+          ctx.lineTo(p.x, p.y)
+          ctx.strokeStyle = rgba(gridCol, depthAlpha((p.z + prev.z) / 2, boost))
+          ctx.stroke()
+        }
+        prev = p
+      }
+    }
+    ctx.clearRect(0, 0, W, H)
+    var spin = t * 0.22
+    for (var i = 0; i < 26; i++) {
+      var sx = (i * 97 + 31) % W, sy = (i * 53 + 17) % H
+      var dx = sx - cx, dy = sy - cy
+      if (dx * dx + dy * dy < (R + 6) * (R + 6)) continue
+      ctx.fillStyle = rgba(starCol, 0.18 + 0.15 * Math.sin(t * 1.3 + i * 2.1))
+      ctx.fillRect(sx, sy, 1.4, 1.4)
+    }
+    ctx.beginPath()
+    ctx.arc(cx, cy, R, 0, 6.2832)
+    ctx.lineWidth = 1
+    ctx.strokeStyle = rgba(gridCol, 0.28)
+    ctx.stroke()
+    var lats = [-60, -30, 0, 30, 60]
+    for (var li = 0; li < lats.length; li++) {
+      var lat = lats[li] * Math.PI / 180
+      drawArc(function (f) {
+        var lon = f * 6.2832 + spin
+        return project(Math.cos(lat) * Math.sin(lon), Math.sin(lat),
+          Math.cos(lat) * Math.cos(lon))
+      }, 64, lats[li] === 0)
+    }
+    for (var mi = 0; mi < 6; mi++) {
+      var lon0 = mi * Math.PI / 6
+      drawArc(function (f) {
+        var la = f * Math.PI - Math.PI / 2
+        return project(Math.cos(la) * Math.sin(lon0 + spin), Math.sin(la),
+          Math.cos(la) * Math.cos(lon0 + spin))
+      }, 48, false)
+    }
+    for (var si2 = 0; si2 < SATS.length; si2++) {
+      var s = SATS[si2]
+      if (escape) continue
+      var prev = null
+      for (var j = 0; j <= 72; j++) {
+        var p = orbitPoint(s, j / 72 * 6.2832, 1)
+        if (prev) {
+          ctx.beginPath()
+          ctx.moveTo(prev.x, prev.y)
+          ctx.lineTo(p.x, p.y)
+          ctx.strokeStyle = rgba(gridCol, (p.z + prev.z) / 2 >= 0 ? 0.16 : 0.05)
+          ctx.stroke()
+        }
+        prev = p
+      }
+    }
+    if (sats === false) return
+    for (var si3 = 0; si3 < SATS.length; si3++) {
+      var s2 = SATS[si3]
+      // Slow de-orbit: ~3.8s per satellite, offset in phase.
+      var cyc = escape ? (t * 0.28 + s2.p * 1.4) % 3.8 : 0
+      var grow = 1 - (escape ? 0.048 * cyc : 0)
+      var fade = escape ? Math.max(0, 1 - cyc / 3.8) : 1
+      var th = s2.p + s2.w * t
+      var pt = orbitPoint(s2, th, grow)
+      var pdx = pt.x - cx, pdy = pt.y - cy
+      if (pt.z < 0 && pdx * pdx + pdy * pdy < R * R) continue
+      for (var k = 10; k >= 1; k--) {
+        var q = orbitPoint(s2, th - 0.05 * k,
+          1 - (escape ? 0.048 * Math.max(cyc - 0.04 * k, 0) : 0))
+        ctx.fillStyle = rgba(dotCol, 0.055 * (11 - k) * fade)
+        ctx.fillRect(q.x - 0.75, q.y - 0.75, 1.5, 1.5)
+      }
+      ctx.beginPath()
+      ctx.arc(pt.x, pt.y, 2.2 * 2.2 * fade * sc, 0, 6.2832)
+      ctx.fillStyle = rgba(dotCol, 0.1 * fade)
+      ctx.fill()
+      ctx.beginPath()
+      ctx.arc(pt.x, pt.y, 2.2 * fade * sc, 0, 6.2832)
+      ctx.fillStyle = rgba(dotCol, 0.95 * fade)
+      ctx.fill()
+    }
+  }
+
+  // Palette color -> [r,g,b] 0..255 array for the canvas painter.
+  function globeRgb(c) {
+    return [Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255)]
+  }
+
   // Every action ends in a notification + close; there is no completion
   // stage. ---- install / uninstall (detached workers) ----------------------
   // Install/uninstall touch the watched plugins directory: the clone (or
@@ -682,7 +1264,20 @@ Item {
       "  [ -f \"$f\" ] || return 0",
       "  jq -e --arg id \"$ID\" --arg s \"$SECTION\" '(.bar.layout[$s] // []) | any(.[]; .id == $id)' \"$f\" >/dev/null 2>&1",
       "}",
-      "OUT=''"
+      "OUT=''",
+      // In-progress system panel: publish a marker file (one per worker,
+      // removed on any exit) and summon the wizard on the running stage.
+      // The panel polls this directory and closes itself once no fresh
+      // marker remains; staleness (15min) guards workers that died without
+      // their EXIT trap.
+      "STATE_DIR=\"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager\"",
+      "MARK_DIR=\"$STATE_DIR/in-progress\"",
+      "mkdir -p \"$MARK_DIR\" 2>/dev/null || true",
+      "MARK=\"$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json\"",
+      "trap 'rm -f \"$MARK\"' EXIT",
+      "jq -cn --arg mode \"" + kind + "\" --arg id \"$ID\" --arg name \"$NAME\" '{mode:$mode,id:$id,name:$name,started:(now|floor)}' > \"$MARK\" 2>/dev/null || true",
+      "PAYLOAD=$(jq -cn --arg id \"$ID\" --arg name \"$NAME\" --arg action \"" + kind + "\" '{source:\"worker\",mode:\"running\",id:$id,name:$name,action:$action}' 2>/dev/null)",
+      "[ -n \"$PAYLOAD\" ] && omarchy-shell -q shell summon bramvanoploo.omarchy-browser-plugin-manager \"$PAYLOAD\" >/dev/null 2>&1 || true"
     ]
     if (kind === "update") {
       // Pinned, fail-closed update mirroring the bar widget's updater: with
@@ -989,6 +1584,53 @@ Item {
     }
   }
 
+  // Settings update-list row: plugin name + installed -> latest, with
+  // per-row Update (primary) and Uninstall (danger) buttons. Every field
+  // is catalog-sourced, so plain-text Text keeps remote strings inert.
+  component PiUpdateRow: Row {
+    width: parent ? parent.width : 0
+    spacing: Style.spacing.controlGap
+    Column {
+      width: parent.width - 2 * Style.space(78) - 2 * Style.spacing.controlGap
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(2)
+      Text {
+        width: parent.width
+        elide: Text.ElideRight
+        textFormat: Text.PlainText
+        text: String(modelData.name)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.body
+        color: Color.foreground
+      }
+      Text {
+        width: parent.width
+        elide: Text.ElideRight
+        textFormat: Text.PlainText
+        text: String(modelData.from) + "  \u2192  " + String(modelData.to)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+        color: Color.muted
+      }
+    }
+    PiButton {
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(78)
+      height: Style.space(30)
+      label: "Update"
+      primary: true
+      onClickedPi: root.beginUpdateConfirm([modelData])
+    }
+    PiButton {
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(78)
+      height: Style.space(30)
+      label: "Uninstall"
+      danger: true
+      onClickedPi: root.beginUninstallConfirm(modelData)
+    }
+  }
+
   // Plain text on purpose: every line here can carry remote marketplace
   // metadata (catalog author, version, license, repo, manifest errors).
   // AutoText would interpret markup in it, so a remote <img src=...> tag
@@ -1002,6 +1644,15 @@ Item {
     font.pixelSize: Style.font.body
   }
 
+  // Hairline separator dividing the settings panel into groups; a muted
+  // foreground alpha so it reads as a rule in any theme (the bar popup's
+  // separator, ported verbatim).
+  component PiRule: Rectangle {
+    width: cardColumn.width
+    height: 1
+    color: Util.alpha(Color.foreground, 0.15)
+  }
+
   // RichText line with clickable <a href> links; activation opens the URL
   // in the default browser via xdg-open. Colors come from the inline style
   // in root.linkTag (RichText ignores Text.linkColor).
@@ -1013,6 +1664,101 @@ Item {
     font.family: Style.font.family
     font.pixelSize: Style.font.body
     onLinkActivated: function (link) { root.openUrl(link) }
+  }
+
+  // Caption-size RichText line: used by the browser-store support lists,
+  // where the HTML is built locally from hardcoded family labels (the
+  // widget wraps installed browsers in an accent span). No links, so no
+  // href is reachable from it.
+  component PiRichLine: Text {
+    width: cardColumn.width
+    wrapMode: Text.Wrap
+    textFormat: Text.RichText
+    color: Color.muted
+    font.family: Style.font.family
+    font.pixelSize: Style.font.caption
+  }
+
+  // One update list: bold title + live count pill, then a capped
+  // scrollable box (three rows, fade hint below the fold), rows carrying
+  // name, installed -> latest, and per-row Update/Uninstall. Same
+  // structure the bar popup's update sections used.
+  component PiUpdateSection: Column {
+    id: piSec
+    property string title: ""
+    property color tone: Color.accent
+    property var items: []
+    width: parent ? parent.width : 0
+    spacing: Style.space(8)
+    visible: items.length > 0
+    readonly property int capRows: 3
+    readonly property real rowHeight: Style.space(30)
+    readonly property real boxHeight: items.length > capRows
+      ? rowHeight * capRows + Style.space(6) * (capRows - 1)
+      : rowHeight * items.length + Style.space(6) * Math.max(0, items.length - 1)
+
+    Row {
+      spacing: Style.space(8)
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: piSec.title
+        color: Color.foreground
+        font.family: Style.font.family
+        font.pixelSize: Style.font.body
+        font.bold: true
+      }
+      Rectangle {
+        anchors.verticalCenter: parent.verticalCenter
+        width: piSecCount.implicitWidth + Style.space(10)
+        height: piSecCount.implicitHeight + Style.space(4)
+        radius: height / 2
+        color: Util.alpha(piSec.tone, 0.15)
+        Text {
+          id: piSecCount
+          anchors.centerIn: parent
+          text: piSec.items.length
+          color: piSec.tone
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+      }
+    }
+
+    Rectangle {
+      width: piSec.width
+      height: piSec.boxHeight
+      radius: Style.cornerRadius
+      color: Util.alpha(Color.foreground, 0.05)
+      clip: true
+      Flickable {
+        id: piSecFlick
+        anchors.fill: parent
+        anchors.margins: Style.space(8)
+        contentHeight: piSecColumn.implicitHeight
+        boundsBehavior: Flickable.StopAtBounds
+        Column {
+          id: piSecColumn
+          width: parent.width
+          spacing: Style.space(6)
+          Repeater {
+            model: piSec.items
+            delegate: PiUpdateRow
+          }
+        }
+      }
+      Text {
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: Style.space(3)
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: (piSec.items.length - piSec.capRows) + " more below \u00b7 scroll"
+        color: Color.muted
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+        visible: piSecFlick.contentHeight > piSecFlick.height + 1
+          && piSecFlick.contentY + piSecFlick.height < piSecFlick.contentHeight - 1
+      }
+    }
   }
 
   Shortcut {
@@ -1041,11 +1787,27 @@ Item {
       onClicked: root.close()
     }
 
+    // Escape closes the panel. The surface grabs exclusive keyboard focus
+    // while open, so a focused item inside it receives the key.
+    Item {
+      anchors.fill: parent
+      focus: true
+      Keys.onEscapePressed: root.close()
+    }
+
     BorderSurface {
       id: card
       anchors.centerIn: parent
-      width: Math.min(Style.space(560), panel.width - Style.space(48))
-      height: Math.min(cardColumn.implicitHeight + Style.space(48),
+      width: Math.min(Style.space(672), panel.width - Style.space(48))
+      // Fit the visible stage. Column.implicitHeight also sums the hidden
+      // stage columns (running, review, placement, browser prompts), which
+      // inflates the card to the tallest possible stage. childrenRect only
+      // bounds the *visible* children, so the card hugs the current stage's
+      // content, clamped to the screen.
+      height: Math.min(cardColumn.anchors.topMargin
+                       + cardColumn.childrenRect.height
+                       + cardColumn.anchors.bottomMargin
+                       + Style.space(48),
                        panel.height - Style.space(48))
       clip: true
       radius: Style.cornerRadius
@@ -1059,16 +1821,24 @@ Item {
       Column {
         id: cardColumn
         anchors.fill: parent
-        anchors.topMargin: card.contentTopInset
+        anchors.topMargin: card.contentTopInset / 4
         anchors.rightMargin: card.contentRightInset
         anchors.bottomMargin: card.contentBottomInset
         anchors.leftMargin: card.contentLeftInset
         spacing: Style.spacing.panelGap
 
-        // Header: icon + plugin name + version pill + action subtitle,
-        // styled like the OmaGuake settings panel header.
-        Row {
+        // Header block: bar icon + plugin name + version pill + action
+        // subtitle, with equal margins above and below (half the panel's
+        // content padding) and a full-width divider under the header. The
+        // icon-to-title spacing matches the bar widget panels (space(14)).
+        Item {
+          id: headerBlock
           width: cardColumn.width
+          height: headerRow.implicitHeight + Style.space(6)
+
+        Row {
+          id: headerRow
+          width: parent.width
           spacing: Style.space(14)
 
           // Extensions glyph (Nerd Font "cod-extensions", U+EAE6): the same
@@ -1134,12 +1904,375 @@ Item {
             }
           }
         }
+
+          // Divider spanning the full card width, under the header.
+          Rectangle {
+            anchors.bottom: parent.bottom
+            x: -card.contentLeftInset
+            width: card.width
+            height: 1
+            color: Qt.rgba(Color.foreground.r, Color.foreground.g,
+              Color.foreground.b, 0.18)
+          }
+        }
+
         PiLine {
           visible: root.stage !== "browser-prompt" && root.stage !== "browser-defer"
+            && root.stage !== "running"
+            && root.mode !== "settings" && root.mode !== "settings-confirm"
           text: root.pluginName + "  \u00b7  " + root.pluginId
           color: Color.foreground
           font.bold: true
           font.pixelSize: Style.font.title
+        }
+
+        // ---- stage: running (in-progress system panel) ----
+        Column {
+          visible: root.stage === "running"
+          width: cardColumn.width
+          spacing: Style.spacing.md
+
+          Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            textFormat: Text.PlainText
+            text: (root.runningAction === "uninstall" ? "Uninstalling "
+                : root.runningAction === "update" ? "Updating " : "Installing ")
+              + root.runningName
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+            font.bold: true
+            color: Color.foreground
+          }
+
+          Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: "this takes a bit \u00b7 Esc hides this panel, the action keeps running"
+              + " \u00b7 a notification lands when it is done"
+            wrapMode: Text.Wrap
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            color: Color.muted
+          }
+
+          // The globe scene, painted from the live palette: grid and stars
+          // in foreground, satellites in accent. De-orbit on uninstall.
+          // Repaint driver: a never-ending NumberAnimation advances `phase`,
+          // each change requests a paint, and the paints keep producing
+          // scene-graph frames - which is what keeps the QML animation clock
+          // (and the caption/marker Timers) running at all: an idle panel
+          // window renders no frames, and a frameless scene graph freezes
+          // plain Timers after their first tick.
+          // Spacer: 10px of breathing room above and below the globe.
+          Item {
+            width: parent.width
+            height: globe.height + 20
+            // Bind visibility explicitly (not just through the hidden stage
+            // Column): a Canvas with a running repaint animation keeps
+            // compositing frames, and a hidden-but-visible Canvas leaves
+            // stray globe fragments painted on the window outside the card.
+            visible: root.opened && root.stage === "running"
+
+            Canvas {
+            id: globe
+            // Zero size outside the running stage: a hidden Canvas (any
+            // render strategy) keeps compositing its last frame onto this
+            // full-screen window, painting globe scenes behind other
+            // stages. A zero-sized item paints nothing.
+            width: root.opened && root.stage === "running" ? Style.space(360) : 0
+            height: root.opened && root.stage === "running" ? Style.space(180) : 0
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 10
+            visible: root.opened && root.stage === "running"
+            // Image strategy: an Immediate canvas composites straight onto
+            // the window surface even while hidden, leaving globe scenes
+            // painted behind other stages. Image-cached content respects
+            // visibility; the phase animation below keeps frames cycling,
+            // which is what keeps the marker Timers alive.
+            renderStrategy: Canvas.Image
+            property real phase: 0
+            onPhaseChanged: requestPaint()
+            // getContext() before the canvas is available returns null (and
+            // Qt warns), so paints wait for availability and repaint once
+            // the context exists.
+            onAvailableChanged: if (available) requestPaint()
+            onVisibleChanged: if (!visible && available) {
+              var c = getContext("2d")
+              if (c) {
+                c.clearRect(0, 0, width, height)
+                c.resetTransform()
+              }
+            }
+            onPaint: {
+              if (!visible || !available) return
+              var ctx = getContext("2d")
+              if (!ctx) return
+              var t = (Date.now() - root.runningT0) / 1000 + 5
+              root.paintGlobe(ctx, width, height, t,
+                root.runningAction === "uninstall",
+                root.globeRgb(Color.foreground), root.globeRgb(Color.accent),
+                root.globeRgb(Color.foreground))
+            }
+            NumberAnimation on phase {
+              from: 0
+              to: 3600
+              duration: 360000
+              loops: Animation.Infinite
+              running: root.opened && root.stage === "running"
+            }
+            }
+          }
+
+          Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            textFormat: Text.PlainText
+            text: root.runningCaptionText()
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+            font.italic: true
+            color: Color.muted
+          }
+
+          // Caption roulette every 3s (kept alive by the globe's frame flow).
+          Timer {
+            interval: 3000
+            running: root.opened && root.stage === "running"
+            triggeredOnStart: true
+            onTriggered: root.runningCaption = root.runningCaption + 1
+          }
+        }
+
+        // ---- stage: settings (the bar widget's settings panel as a
+        // centered system overlay: toggles, update lists, batch update,
+        // poll interval, store links; every control writes a command the
+        // widget dispatches, and the panel repaints from the republished
+        // snapshot within 400ms) ----
+        // Scrollable body: the settings content (toggles with captions,
+        // both capped lists, interval row, store section) can exceed the
+        // card, so the stage scrolls between the fixed header and footer.
+        Flickable {
+          visible: root.stage === "settings"
+          width: cardColumn.width
+          // Fit the content, capped at the space left on screen between the
+          // fixed header and footer (card clamps to panel.height - 48, and
+          // carries 24+24 of padding). Only scrolls when the content is
+          // taller than the available space; never stretches the card.
+          // Must not bind to cardColumn.height: the card height is derived
+          // from this Flickable's rect (childrenRect), so that would loop.
+          height: Math.min(settingsBody.childrenRect.height,
+                           Math.max(Style.space(160), panel.height
+                             - Style.space(96)
+                             - headerBlock.height - footerSpacer.height
+                             - footerRow.height - 3 * cardColumn.spacing))
+          // childrenRect (visible children only): Column.implicitHeight
+          // counts the conditionally hidden rows too, which would leave
+          // blank space at the bottom of the scroll range.
+          contentHeight: settingsBody.childrenRect.height
+          boundsBehavior: Flickable.StopAtBounds
+          Column {
+          id: settingsBody
+          width: parent.width
+          // Same group spacing as the bar popup's settings column.
+          spacing: Style.space(20)
+
+          // Toggles first, directly under the panel header (as in the bar
+          // popup): the unverified toggle gates which versions the update
+          // sections and the batch action below can act on, so it reads as
+          // the setting that shapes the whole panel. Label + explanatory
+          // caption left, On/Off button right.
+          Row {
+            width: parent.width
+            spacing: Style.spacing.controlGap
+            Column {
+              width: parent.width - Style.space(86) - Style.spacing.controlGap
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(2)
+              PiLine { text: "Update to unverified versions"; width: parent.width }
+              PiLine {
+                width: parent.width
+                color: Color.muted
+                font.pixelSize: Style.font.caption
+                text: "Off: plugins only update to catalog-verified versions."
+              }
+            }
+            PiButton {
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(86)
+              label: root.snapBool("allowUnverified") ? "On" : "Off"
+              primary: root.snapBool("allowUnverified")
+              onClickedPi: root.toggleAllowUnverified()
+            }
+          }
+          Row {
+            width: parent.width
+            spacing: Style.spacing.controlGap
+            Column {
+              width: parent.width - Style.space(86) - Style.spacing.controlGap
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(2)
+              PiLine { text: "Notify about plugin updates"; width: parent.width }
+              PiLine {
+                width: parent.width
+                color: Color.muted
+                font.pixelSize: Style.font.caption
+                text: "Off: the badge and panel lists stay live, but no desktop notifications."
+              }
+            }
+            PiButton {
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(86)
+              label: root.snapBool("notifyUpdates") ? "On" : "Off"
+              primary: root.snapBool("notifyUpdates")
+              onClickedPi: root.toggleNotifyUpdates()
+            }
+          }
+
+          PiRule { visible: root.settingsUpdatesGroupVisible() }
+
+          PiLine {
+            visible: !root.snapBool("updateChecking")
+              && !root.snapBool("updateCheckFailed")
+              && root.snapStr("lastCheckText") !== "never"
+              && root.snapStr("lastCheckText") !== ""
+              && root.settingsAllRows().length === 0
+            text: "All installed plugins are up to date."
+          }
+          PiLine {
+            visible: root.snapBool("updateCheckFailed")
+            color: Color.urgent
+            text: "Catalog unreachable: showing the last known update list."
+          }
+          PiLine {
+            visible: root.snapBool("settingsSaveFailed")
+            color: Color.urgent
+            text: "Settings file could not be written: changes apply this session only."
+          }
+
+          // Batch update (hidden while nothing is updatable): sits above
+          // the lists as the primary action; arms a confirmation for the
+          // eligible plugins, which then run through detached workers.
+          PiButton {
+            visible: root.settingsEligibleRows().length > 0
+            width: parent.width
+            primary: true
+            label: "Update " + root.settingsEligibleRows().length
+              + (root.settingsEligibleRows().length === 1
+                ? " plugin now" : " plugins now")
+            onClickedPi: root.beginUpdateConfirm(root.settingsEligibleRows())
+          }
+
+          // Per-plugin update lists: verified first, unverified below.
+          // The unverified list shows its rows under the opt-in toggle
+          // only: with the toggle off the widget never acts on them, and
+          // offering rows the batch refuses to update confuses the
+          // eligible count the batch label announces.
+          PiUpdateSection {
+            title: "Verified plugin updates"
+            tone: Color.accent
+            items: root.snapList("verified")
+          }
+          PiUpdateSection {
+            title: "Unverified plugin updates"
+            tone: Color.urgent
+            items: root.snapBool("allowUnverified") ? root.snapList("unverified") : []
+          }
+
+          PiRule {}
+
+          // Poll interval: five equal segments (selected one primary-marked)
+          // and the refresh button. Sits below the lists: the schedule and
+          // the manual check are settings, not the panel's primary action.
+          PiLine {
+            text: "Check for plugin updates:"
+          }
+          Row {
+            width: parent.width
+            spacing: Style.spacing.controlGap
+            Repeater {
+              model: root.snapList("pollValues")
+              delegate: PiButton {
+                width: (parent.width - Style.space(86)
+                  - 5 * Style.spacing.controlGap) / 6
+                label: String(root.snapList("pollLabels")[index] || "")
+                primary: Number(modelData) === Number(root.snapStr("pollMinutes"))
+                onClickedPi: root.setPollIntervalMinutes(modelData)
+              }
+            }
+            PiButton {
+              width: Style.space(86)
+              label: root.snapBool("updateChecking") ? "Checking\u2026" : "Check now"
+              enabled: !root.snapBool("updateChecking")
+              onClickedPi: root.writeSettingsCmd({ action: "refresh" })
+            }
+          }
+
+          PiRule {}
+
+          // Browser stores: the supported-browser lists (installed browsers
+          // accent-highlighted by the widget) above half-width buttons that
+          // open the store page in the first installed browser of that
+          // family (the labels carry the launch target).
+          Grid {
+            width: parent.width
+            columns: 2
+            columnSpacing: Style.spacing.controlGap
+            rowSpacing: Style.space(6)
+            PiRichLine {
+              width: (parent.width - Style.spacing.controlGap) / 2
+              text: root.snapStr("chromeSupport")
+            }
+            PiRichLine {
+              width: (parent.width - Style.spacing.controlGap) / 2
+              text: root.snapStr("firefoxSupport")
+            }
+            PiButton {
+              width: (parent.width - Style.spacing.controlGap) / 2
+              label: root.snapStr("chromeLabel")
+              onClickedPi: root.writeSettingsCmd({
+                action: "open_store", url: root.snapStr("chromeUrl"),
+                bin: root.snapStr("chromeBin")
+              })
+            }
+            PiButton {
+              width: (parent.width - Style.spacing.controlGap) / 2
+              label: root.snapStr("firefoxLabel")
+              onClickedPi: root.writeSettingsCmd({
+                action: "open_store", url: root.snapStr("firefoxUrl"),
+                bin: root.snapStr("firefoxBin")
+              })
+            }
+          }
+          }
+        }
+
+        // ---- stage: settings-confirm (update / uninstall confirmation) ----
+        Column {
+          visible: root.stage === "settings-confirm"
+          width: cardColumn.width
+          spacing: Style.spacing.md
+
+          PiLine {
+            font.pixelSize: Style.font.title
+            font.bold: true
+            color: Color.foreground
+            text: root.settingsConfirm && root.settingsConfirm.kind === "uninstall"
+              ? "Uninstall plugin?"
+              : "Update " + (root.settingsConfirm
+                ? root.settingsConfirm.ids.length : 0)
+                + (root.settingsConfirm && root.settingsConfirm.ids.length === 1
+                  ? " plugin?" : " plugins?")
+          }
+          PiLine {
+            text: root.settingsConfirm ? String(root.settingsConfirm.text || "") : ""
+          }
+          Repeater {
+            model: root.settingsConfirm ? (root.settingsConfirm.names || []) : []
+            delegate: PiLine {
+              text: "  \u00b7  " + String(modelData)
+            }
+          }
         }
 
         // ---- stage: review (install confirmation) ----
@@ -1147,10 +2280,32 @@ Item {
           visible: root.stage === "review" && root.mode === "install"
           width: cardColumn.width
           spacing: Style.spacing.lg
+          // What is about to be installed: the plugin's name, publisher,
+          // version, license, kinds, and source. The marketplace listing
+          // is the primary source; when it is missing (unlisted plugins)
+          // the fetched plugin manifest fills in the same line.
+          PiLine {
+            visible: root.pluginName.length > 0
+            color: Color.foreground
+            font.bold: true
+            text: root.pluginName
+          }
+          PiLine {
+            visible: root.pluginId.length > 0 && root.pluginId !== root.pluginName
+            color: Color.muted
+            font.pixelSize: Style.font.caption
+            text: root.pluginId
+          }
+          PiLine {
+            visible: !root.catalogEntry && root.pluginManifest
+              && String((root.pluginManifest || {}).description || "").length > 0
+            text: String((root.pluginManifest || {}).description || "")
+          }
           PiLine {
             visible: root.catalogEntry !== null
+              || (root.pluginManifest !== null && root.manifestLoaded)
             text: {
-              var e = root.catalogEntry || {}
+              var e = root.catalogEntry || root.pluginManifest || {}
               var bits = []
               if (e.author) bits.push("by " + e.author)
               if (e.version) bits.push("v" + e.version)
@@ -1161,7 +2316,7 @@ Item {
             }
           }
           PiLine {
-            visible: root.catalogEntry !== null
+            visible: root.pluginRepo.length > 0
             text: "Source: " + root.pluginRepo
           }
           PiLine {
@@ -1279,6 +2434,10 @@ Item {
         }
 
         // ---- stage: placement (install/enable modes, bar widgets) ----
+        // Sections laid out horizontally in an equal-width 3-column grid
+        // (a wider version of the pre-refactor Left/Center/Right row: the
+        // list is the shell's live section list). The manifest's default
+        // section carries a "(default)" suffix and primary coloring.
         Column {
           visible: root.stage === "placement"
           width: cardColumn.width
@@ -1286,33 +2445,34 @@ Item {
           PiLine {
             text: "Where should the bar icon go?"
           }
-          Row {
-            spacing: Style.spacing.controlGap
-            PiButton {
-              label: "Left" + (root.defaultSection === "left" ? " (default)" : "")
-              onClickedPi: root.mode === "install"
-                ? root.installWithSection("left")
-                : root.enable("left")
-            }
-            PiButton {
-              label: "Center" + (root.defaultSection === "center" ? " (default)" : "")
-              onClickedPi: root.mode === "install"
-                ? root.installWithSection("center")
-                : root.enable("center")
-            }
-            PiButton {
-              label: "Right" + (root.defaultSection === "right" ? " (default)" : "")
-              onClickedPi: root.mode === "install"
-                ? root.installWithSection("right")
-                : root.enable("right")
+          Grid {
+            width: parent.width
+            columns: 3
+            columnSpacing: Style.spacing.controlGap
+            rowSpacing: Style.spacing.controlGap
+            Repeater {
+              model: root.barPlacementSections
+              delegate: PiButton {
+                width: (parent.width - 2 * Style.spacing.controlGap) / 3
+                primary: root.defaultSection === modelData
+                label: root.sectionLabel(modelData)
+                  + (root.defaultSection === modelData ? " (default)" : "")
+                onClickedPi: root.mode === "install"
+                  ? root.installWithSection(modelData)
+                  : root.enable(modelData)
+              }
             }
           }
         }
 
-        Item { width: 1; height: Style.spacing.xs }
+        Item { id: footerSpacer; width: 1; height: Style.spacing.xs }
 
         // ---- footer: confirm / cancel ----
+        // Right-to-left layout: the primary action (Install/Uninstall/...)
+        // lands rightmost, Cancel to its left, as in standard dialogs.
         Row {
+          id: footerRow
+          layoutDirection: Qt.RightToLeft
           spacing: Style.spacing.controlGap
           PiButton {
             visible: root.mode === "install" && root.stage === "review"
@@ -1351,6 +2511,27 @@ Item {
             onClickedPi: root.runUpdate()
           }
           PiButton {
+            visible: root.stage === "settings"
+            primary: true
+            label: "Close"
+            onClickedPi: root.close()
+          }
+          PiButton {
+            visible: root.stage === "settings-confirm"
+            primary: !(root.settingsConfirm
+              && root.settingsConfirm.kind === "uninstall")
+            danger: root.settingsConfirm
+              && root.settingsConfirm.kind === "uninstall"
+            label: root.settingsConfirm && root.settingsConfirm.kind === "uninstall"
+              ? "Uninstall" : "Update"
+            onClickedPi: root.confirmSettingsAction()
+          }
+          PiButton {
+            visible: root.stage === "settings-confirm"
+            label: "Cancel"
+            onClickedPi: root.cancelSettingsConfirm()
+          }
+          PiButton {
             visible: root.stage === "review" || root.stage === "uninstall-confirm"
               || root.stage === "enable-confirm" || root.stage === "disable-confirm"
               || root.stage === "update-confirm"
@@ -1375,11 +2556,6 @@ Item {
           }
           PiButton {
             visible: root.stage === "browser-defer"
-            label: "Cancel"
-            onClickedPi: root.close()
-          }
-          PiButton {
-            visible: root.stage === "browser-defer"
             primary: true
             label: root.primaryExtensionLabel
             onClickedPi: root.openExtensionPage()
@@ -1389,6 +2565,11 @@ Item {
             danger: true
             label: "Uninstall Omarchy plugin"
             onClickedPi: root.uninstallManager()
+          }
+          PiButton {
+            visible: root.stage === "browser-defer"
+            label: "Cancel"
+            onClickedPi: root.close()
           }
         }
       }

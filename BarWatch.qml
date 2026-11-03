@@ -20,9 +20,10 @@ import qs.Ui
 // host posted with every open tab, and the click routes through a focus
 // request the tab answers — and the dropdown stays closed for that click.
 // Without a marketplace tab, left click opens a dropdown with the watched
-// plugin's header title (the same identity line the wizard dialogs show)
+// plugin's header title (the same identity line the wizard panels show)
 // and buttons to manage it:
-// Install, Uninstall, Update, and moving its bar icon (Left/Center/Right).
+// Install, Uninstall, Update, and moving its bar icon (a grid over every
+// shell bar section, the active one marked).
 // Install, Uninstall, and Update summon the wizard overlay: the beacon
 // record is a display hint only, and every action is re-validated and
 // confirmed there, exactly like the browser buttons. Moving the icon is a
@@ -53,7 +54,7 @@ Panel {
 
   IpcHandler {
     target: "bramvanoploo.omarchy-browser-plugin-manager.bar"
-    function openSettings(): void { root.settingsOpen = true }
+    function openSettings(): void { root.toggleSettings() }
     function closeSettings(): void { root.settingsOpen = false }
     function toggleSettings(): void { root.toggleSettings() }
   }
@@ -130,26 +131,30 @@ Panel {
   property string moveOutput: ""
   property string enabledOutput: ""
 
-  // ---- right-click settings panel ---------------------------------------
-  // The settings popup is the widget's own popup: it opens on right click
-  // independently of any watched page, and is mutually exclusive with the
-  // plugin popup (one open at a time). Its outside-click dismissal routes
-  // through settingsOwner.close(), the PopupCard owner contract.
+  // ---- settings panel ----------------------------------------------------
+  // The settings panel is a system overlay (the wizard): it opens on right
+  // click independently of any watched page, renders the snapshot published
+  // below, and routes every control back through the cmd file. Opening
+  // never starts a check (the poll and the setting toggles refresh the
+  // lists). Re-summoning while open refreshes the panel in place; the
+  // wizard sends a "closed" command when it closes, which stops the
+  // republish timer.
   property bool settingsOpen: false
-  // Opening the panel (right-click, any path) shows the last poll's update
-  // lists as-is: opening never starts a check (the poll and the setting
-  // toggles refresh the lists).
-  onSettingsOpenChanged: {
-    if (!settingsOpen)
-      root.cancelUpdateConfirm()
-  }
-  readonly property QtObject settingsOwner: QtObject {
-    function close() { root.settingsOpen = false }
-  }
 
   function toggleSettings() {
     root.close()
-    root.settingsOpen = !root.settingsOpen
+    // Fresh command session: drop the seen-seq bookkeeping, truncate
+    // any log a previous (possibly crashed) session left on disk, and
+    // mint a session id the wizard echoes in its "closed" command. The
+    // truncate is async, so a stale "closed" can be read before it
+    // lands; the session gate makes that read inert.
+    root.settingsSeenCmd = ({})
+    root.settingsSession = String(Date.now()) + "-"
+      + String(Math.floor(Math.random() * 1e6))
+    root.consumeSettingsCmd()
+    root.settingsOpen = true
+    root.publishSettingsSnapshot()
+    root.summonSettingsWizard()
   }
 
   function toggleLeft() {
@@ -162,6 +167,18 @@ Panel {
   // update-notification toggle. Defaults: 1h, verified-only, notifications
   // on.
   readonly property string settingsPath: stateDir + "/settings.json"
+  // System settings panel plumbing: the wizard overlay renders from a
+  // snapshot published to settings-payload.json and writes commands back
+  // through settings-cmd.json. The widget owns settings.json, the catalog
+  // poll, and the detached workers; the wizard is pure presentation.
+  readonly property string settingsPayloadPath: stateDir + "/settings-payload.json"
+  readonly property string settingsCmdPath: stateDir + "/settings-cmd.json"
+  property var settingsSeenCmd: ({})
+  // Identifies the current settings-panel open session. The wizard echoes
+  // it in its "closed" command; a "closed" from an older session (one left
+  // on disk, read before the truncate-on-open lands) is ignored, so it can
+  // never instantly re-close a freshly opened panel.
+  property string settingsSession: ""
   readonly property var pollIntervalMinutes: [10, 30, 60, 300, 1440]
   readonly property var pollIntervalLabels: ["10m", "30m", "1h", "5h", "Daily"]
   property int pollMinutes: 60
@@ -455,6 +472,20 @@ Panel {
     "real_shell=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell\"",
     "command -v \"$real_shell\" >/dev/null 2>&1 || real_shell=\"$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)\"",
     "plug=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins\"",
+    // In-progress system panel (same protocol as the wizard's workers): the
+    // first argv is a display label (plugin name, or "N plugins" for a
+    // batch); publish a marker file per run (removed on any exit) and
+    // summon the wizard on its running stage, which polls the marker
+    // directory and closes itself once no fresh marker remains.
+    "LABEL=\"${1:-plugins}\"; shift",
+    "STATE_DIR=\"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager\"",
+    "MARK_DIR=\"$STATE_DIR/in-progress\"",
+    "mkdir -p \"$MARK_DIR\" 2>/dev/null || true",
+    "MARK=\"$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json\"",
+    "trap 'rm -f \"$MARK\"' EXIT",
+    "jq -cn --arg mode \"update\" --arg name \"$LABEL\" '{mode:$mode,id:\"\",name:$name,started:(now|floor)}' > \"$MARK\" 2>/dev/null || true",
+    "PAYLOAD=$(jq -cn --arg name \"$LABEL\" '{source:\"worker\",mode:\"running\",id:\"\",name:$name,action:\"update\"}' 2>/dev/null)",
+    "[ -n \"$PAYLOAD\" ] && \"$real_shell\" -q shell summon bramvanoploo.omarchy-browser-plugin-manager \"$PAYLOAD\" >/dev/null 2>&1 || true",
     "export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true",
     "export GIT_SSH_COMMAND=\"${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}\"",
     "# Verified pin: refuse unless the freshly fetched tip is exactly the",
@@ -552,6 +583,20 @@ Panel {
     "}",
     "real_shell=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell\"",
     "command -v \"$real_shell\" >/dev/null 2>&1 || real_shell=\"$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)\"",
+    // In-progress system panel (same protocol as the wizard's workers): the
+    // first argv is a display label (plugin name, or "N plugins" for a
+    // batch); publish a marker file per run (removed on any exit) and
+    // summon the wizard on its running stage, which polls the marker
+    // directory and closes itself once no fresh marker remains.
+    "LABEL=\"${1:-plugins}\"; shift",
+    "STATE_DIR=\"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager\"",
+    "MARK_DIR=\"$STATE_DIR/in-progress\"",
+    "mkdir -p \"$MARK_DIR\" 2>/dev/null || true",
+    "MARK=\"$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json\"",
+    "trap 'rm -f \"$MARK\"' EXIT",
+    "jq -cn --arg mode \"uninstall\" --arg name \"$LABEL\" '{mode:$mode,id:\"\",name:$name,started:(now|floor)}' > \"$MARK\" 2>/dev/null || true",
+    "PAYLOAD=$(jq -cn --arg name \"$LABEL\" '{source:\"worker\",mode:\"running\",id:\"\",name:$name,action:\"uninstall\"}' 2>/dev/null)",
+    "[ -n \"$PAYLOAD\" ] && \"$real_shell\" -q shell summon bramvanoploo.omarchy-browser-plugin-manager \"$PAYLOAD\" >/dev/null 2>&1 || true",
     "ok=0; fail=0; failed=\"\"",
     "while [ $# -gt 0 ]; do",
     "  id=\"$1\"",
@@ -580,7 +625,8 @@ Panel {
   function startUninstall(ids) {
     ids = (ids || []).map(String).filter(function (s) { return s !== "" })
     if (ids.length === 0) return
-    var argv = ["bash", "-c", root.uninstallWorkerScript, "omarchy-bpm-uninstall"]
+    var argv = ["bash", "-c", root.uninstallWorkerScript, "omarchy-bpm-uninstall",
+      ids.length === 1 ? ids[0] : ids.length + " plugins"]
     Quickshell.execDetached(argv.concat(ids))
     // Closing the popups is harmless: removing this manager unloads the
     // widget, and the detached worker outlives that with its notification.
@@ -593,7 +639,9 @@ Panel {
   function startUpdate(specs) {
     specs = (specs || []).map(String)
     if (specs.length === 0) return
-    var argv = ["bash", "-c", root.updateWorkerScript, "omarchy-bpm-update"]
+    var label = specs.length === 1
+      ? String(specs[0]).split(":")[0] : specs.length + " plugins"
+    var argv = ["bash", "-c", root.updateWorkerScript, "omarchy-bpm-update", label]
     Quickshell.execDetached(argv.concat(specs))
     // Closing the popups is harmless: the shell reloads when the manager
     // itself is among the updated plugins, and the detached worker
@@ -602,52 +650,167 @@ Panel {
     root.close()
   }
 
-  // Update/uninstall confirmation gate: the row buttons and the batch
-  // button arm a request (worker specs or plugin ids + explanatory text)
-  // instead of running the worker, and the settings popup draws a confirm
-  // card over its content. Cancel clears the request; Confirm hands the
-  // request to startUpdate, or to startUninstall for uninstall ids.
-  property var updateConfirmSpecs: []
-  property var uninstallConfirmIds: []
-  property string updateConfirmText: ""
-  readonly property bool updateConfirmOpen:
-    updateConfirmSpecs.length > 0 || uninstallConfirmIds.length > 0
-  readonly property bool uninstallConfirmActive: uninstallConfirmIds.length > 0
-
-  function requestUpdate(specs, text) {
-    specs = (specs || []).map(String)
-    if (specs.length === 0) return
-    root.updateConfirmSpecs = specs
-    root.updateConfirmText = String(text || "")
+  // ---- system settings panel (wizard overlay) ----------------------------
+  // Snapshot the wizard renders: settings, check state, and the two update
+  // lists (names/versions only: plain-text rendering on the wizard side
+  // keeps remote strings inert). Published on open and while the panel is
+  // open (FileView skips identical content, so the wizard repaints only on
+  // real changes).
+  function settingsSnapshotRows(list) {
+    return (list || []).map(function (p) {
+      return {
+        id: String(p.id), name: String(p.name || p.id),
+        from: String(p.installed || ""), to: String(p.latest || ""),
+        verified: p.verified === true
+      }
+    })
   }
 
-  // The row uninstall buttons arm the same card with the plugin id; the
-  // text explains what removal touches and is built from the poll entry's
-  // local name only.
-  function requestUninstall(p) {
-    var id = String(p.id || "")
-    if (id === "") return
-    root.uninstallConfirmIds = [id]
-    root.updateConfirmText = "Runs omarchy plugin remove on " + (p.name || id)
-      + ": deletes its folder in " + root.pluginsDir + " (a symlinked dev"
-      + " folder is only unlinked), unloads it from the shell, and drops its"
-      + " bar icon. The catalog entry lets you reinstall it afterwards."
+  function settingsSnapshot() {
+    return {
+      managerVersion: String(root.managerVersion || ""),
+      pollMinutes: Number(root.pollMinutes),
+      pollValues: root.pollIntervalMinutes,
+      pollLabels: root.pollIntervalLabels,
+      allowUnverified: root.allowUnverified === true,
+      notifyUpdates: root.notifyUpdates === true,
+      lastCheckText: String(root.lastCheckText || "never"),
+      updateChecking: root.updateChecking === true,
+      updateCheckFailed: root.updateCheckFailed === true,
+      settingsSaveFailed: root.settingsSaveFailed === true,
+      verified: settingsSnapshotRows(root.verifiedUpdates()),
+      unverified: settingsSnapshotRows(root.unverifiedUpdates()),
+      chromeLabel: root.storeButtonLabel("Chrome Web Store", root.chromeLaunchLabel),
+      firefoxLabel: root.storeButtonLabel("Firefox Add-ons", root.firefoxLaunchLabel),
+      chromeUrl: root.chromeStoreUrl,
+      firefoxUrl: root.firefoxStoreUrl,
+      chromeBin: String(root.chromeLaunchBin || ""),
+      firefoxBin: String(root.firefoxLaunchBin || ""),
+      // Supported-browser highlight lines: built locally from hardcoded
+      // family labels (installed ones wrapped in an accent span), so the
+      // RichText never carries remote markup.
+      chromeSupport: root.chromeSupportHtml,
+      firefoxSupport: root.firefoxSupportHtml
+    }
   }
 
-  function cancelUpdateConfirm() {
-    root.updateConfirmSpecs = []
-    root.uninstallConfirmIds = []
-    root.updateConfirmText = ""
+  function publishSettingsSnapshot() {
+    settingsPayloadFile.setText(JSON.stringify(root.settingsSnapshot()) + "\n")
   }
 
-  function confirmUpdate() {
-    var ids = root.uninstallConfirmIds
-    var specs = root.updateConfirmSpecs
-    root.cancelUpdateConfirm()
-    if (ids.length > 0) root.startUninstall(ids)
-    else root.startUpdate(specs)
+  function summonSettingsWizard() {
+    var payload = JSON.stringify({
+      source: "bar", mode: "settings", snapshot: root.settingsSnapshot(),
+      session: root.settingsSession
+    })
+    var summoned = false
+    if (root.bar && root.bar.shell && typeof root.bar.shell.summon === "function")
+      summoned = root.bar.shell.summon(root.moduleName, payload) === true
+    if (!summoned)
+      Quickshell.execDetached(["omarchy-shell", "-q", "shell", "summon", root.moduleName, payload])
   }
 
+  // Commands from the settings overlay: the file is an append log (one
+  // JSON object per line, see the wizard's writeSettingsCmd). Every line
+  // with an unseen seq is dispatched; commands the panel sends while
+  // closed are ignored, and a stale log from a dead session is truncated
+  // when the panel opens, so it can never fire late. run_update
+  // re-derives the worker specs from the live eligible list by id, so a
+  // stale panel can never update a plugin the current poll no longer offers.
+  function dispatchSettingsCmd(raw) {
+    if (!root.settingsOpen) return
+    var lines = String(raw || "").split("\n")
+    var handled = false
+    for (var i = 0; i < lines.length; i++) {
+      var cmd = null
+      try { cmd = JSON.parse(String(lines[i] || "")) } catch (e) { continue }
+      if (!cmd || typeof cmd !== "object") continue
+      var seq = String(cmd.seq || "")
+      if (seq === "" || root.settingsSeenCmd[seq] === true) continue
+      root.settingsSeenCmd[seq] = true
+      root.applySettingsCmd(cmd)
+      handled = true
+    }
+    if (handled) root.consumeSettingsCmd()
+  }
+
+  function applySettingsCmd(cmd) {
+    var action = String(cmd.action || "")
+    if (action === "closed") {
+      // Strict session match: a "closed" carrying no (or an older) session
+      // id predates this panel opening and must never close it.
+      if (String(cmd.session || "") !== root.settingsSession) return
+      root.settingsOpen = false
+    } else if (action === "set_allow_unverified") {
+      root.setAllowUnverified(cmd.on === true)
+    } else if (action === "set_notify_updates") {
+      root.setNotifyUpdates(cmd.on === true)
+    } else if (action === "set_poll_interval") {
+      root.setPollInterval(cmd.minutes)
+    } else if (action === "refresh") {
+      root.checkForUpdates()
+    } else if (action === "open_store") {
+      root.openStore(String(cmd.url || ""), String(cmd.bin || ""))
+    } else if (action === "run_update") {
+      var ids = (cmd.ids || []).map(String)
+      var list = root.eligibleUpdates().filter(function (p) {
+        return ids.indexOf(String(p.id)) !== -1
+      })
+      root.startUpdate(root.updateSpecs(list))
+    } else if (action === "run_uninstall") {
+      root.startUninstall((cmd.ids || []).map(String))
+    }
+  }
+
+  // Truncate the command log (consumed after dispatch, and on open, so a
+  // previous session's never-dispatched commands never replay).
+  function consumeSettingsCmd() {
+    settingsCmdWriteFile.setText("")
+  }
+
+  FileView {
+    id: settingsCmdWriteFile
+    path: root.settingsCmdPath
+    printErrors: false
+  }
+
+  FileView {
+    id: settingsPayloadFile
+    path: root.settingsPayloadPath
+    printErrors: false
+  }
+
+  // Command channel: neither FileView's file watch (no external-write
+  // events in this environment) nor FileRead's promise (never settles
+  // here) can deliver the commands, so the file is cat'ed by a Process
+  // on a 500ms poll while the panel is open. Commands are deduped by
+  // seq in dispatchSettingsCmd, so re-reading the same file is inert.
+  Process {
+    id: settingsCmdReadProc
+    command: ["cat", root.settingsCmdPath]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.dispatchSettingsCmd(String(text || ""))
+    }
+  }
+
+  Timer {
+    interval: 500
+    running: root.settingsOpen
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: settingsCmdReadProc.running = true
+  }
+
+  // Republish while the settings panel is open: list, check-state, and
+  // setting changes land in the overlay within 400ms (FileView writes
+  // identical content as a no-op, so this is cheap when idle).
+  Timer {
+    interval: 400
+    running: root.settingsOpen
+    triggeredOnStart: false
+    onTriggered: root.publishSettingsSnapshot()
+  }
 
   // Installed plugin version, from the local plugin manifest (display gate
   // for the Update button: show it only when the catalog version is newer).
@@ -731,17 +894,20 @@ Panel {
     return bits.join("  \u00b7  ")
   }
 
-  // Section of the omarchy bar layout ("left"/"center"/"right") that holds
+  // Section of the omarchy bar layout (one of Util.barSections) that holds
   // the watched plugin's icon, "" when unknown. Bar layout entries carry
   // the plugin id; omarchy bar move writes the same file we read.
   property string iconSection: ""
   function parseIconSection(raw) {
     var sec = ""
     var id = root.watchState ? String(root.watchState.id) : ""
+    // Scan every section the shell knows, not just the classic trio:
+    // omarchy bar move can place icons in any of them.
+    var order = (typeof Util !== "undefined" && Array.isArray(Util.barSections))
+      ? Util.barSections : ["left", "centerBegin", "center", "centerEnd", "right", "tray"]
     try {
       var d = JSON.parse(raw)
       var lay = d && d.bar && d.bar.layout ? d.bar.layout : {}
-      var order = ["left", "center", "right"]
       for (var i = 0; i < order.length && !sec; i++) {
         var arr = lay[order[i]]
         if (!Array.isArray(arr)) continue
@@ -904,8 +1070,27 @@ Panel {
 
   // Bar-section placement is layout config, not an install: no wizard gate,
   // the official CLI command runs directly.
+  // Bar sections offered by the "move this plugin's bar icon" row: the
+  // shell's own section list (Util.barSections), the same source the
+  // wizard's placement stage uses. omarchy bar move accepts each.
+  readonly property var barMoveSections: {
+    return (typeof Util !== "undefined" && Array.isArray(Util.barSections))
+      ? Util.barSections
+      : ["left", "centerBegin", "center", "centerEnd", "right", "tray"]
+  }
+  function sectionLabel(section) {
+    if (section === "left") return "Left"
+    if (section === "centerBegin") return "Center begin"
+    if (section === "center") return "Center"
+    if (section === "centerEnd") return "Center end"
+    if (section === "right") return "Right"
+    if (section === "tray") return "Tray"
+    return String(section)
+  }
+
   function moveIcon(section) {
     if (!root.watchState) return
+    if (root.barMoveSections.indexOf(section) === -1) return
     root.moveSection = section
     root.moveOutput = ""
     moveProc.command = ["omarchy", "bar", "move", String(root.watchState.id), "--section", section]
@@ -1562,184 +1747,6 @@ Panel {
     }
   }
 
-  // One titled list of pending updates, capped at three rows tall with the
-  // rest scrolling behind a bottom fade that carries a "more below" hint
-  // (and a top fade once scrolled down), so the overflow reads as scrollable
-  // at a glance. Rows carry two compact icon buttons: an uninstall (trash)
-  // button left of the update (level-up) button. Both are plain (not
-  // accent-highlighted) and only emit pluginUninstallPicked / pluginPicked
-  // with the row's catalog item: the caller gates every action behind a
-  // confirmation. The section hides itself when there is nothing to show.
-  component BWUpdateSection: Column {
-    id: bwSection
-    property string title: ""
-    property var items: []
-    signal pluginPicked(var item)
-    signal pluginUninstallPicked(var item)
-    spacing: Style.space(8)
-    visible: items.length > 0
-    // Box height fits exactly the visible rows (rows are equal height, so
-    // three rows = three delegates + two row spacings + the 8px Flickable
-    // margins); with 4+ rows the box stays at the cap and the rest scrolls.
-    readonly property int visibleRows: Math.min(items.length, 3)
-    readonly property real rowHeight: secRepeater.itemAt(0)
-      ? secRepeater.itemAt(0).height : Style.space(30)
-    readonly property real boxHeight: rowHeight * visibleRows
-      + Style.space(6) * Math.max(0, visibleRows - 1) + Style.space(16)
-
-    Row {
-      width: bwSection.width
-      spacing: Style.space(8)
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        text: bwSection.title
-        color: Color.foreground
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
-        font.bold: true
-      }
-      Rectangle {
-        anchors.verticalCenter: parent.verticalCenter
-        width: secCountLabel.implicitWidth + Style.space(10)
-        height: secCountLabel.implicitHeight + Style.space(4)
-        radius: height / 2
-        color: Util.alpha(Color.accent, 0.15)
-        Text {
-          id: secCountLabel
-          anchors.centerIn: parent
-          text: bwSection.items.length
-          color: Color.accent
-          font.family: Style.font.family
-          font.pixelSize: Style.font.caption
-          font.bold: true
-        }
-      }
-    }
-
-    Rectangle {
-      id: secList
-      width: bwSection.width
-      radius: Style.cornerRadius
-      // Same surface as the panel behind it (PopupCard draws
-      // Color.popups.background), so the list reads as part of the panel.
-      color: Color.popups.background
-      height: bwSection.boxHeight
-      clip: true
-      readonly property bool canScrollDown: secFlickable.contentHeight > secFlickable.height + 1
-        && secFlickable.contentY + secFlickable.height < secFlickable.contentHeight - 1
-      Flickable {
-        id: secFlickable
-        anchors.fill: parent
-        anchors.margins: Style.space(8)
-        contentHeight: secColumn.implicitHeight
-        boundsBehavior: Flickable.StopAtBounds
-        Column {
-          id: secColumn
-          width: parent.width
-          spacing: Style.space(6)
-          Repeater {
-            id: secRepeater
-            model: bwSection.items
-            // Slightly lighter theme-lifted background (same
-            // Util.alpha(Color.foreground, …) surface idiom as BWButton)
-            // so each updatable plugin reads as its own row.
-            Rectangle {
-              width: secColumn.width
-              height: secRow.implicitHeight + Style.space(8)
-              radius: Style.cornerRadius
-              color: Util.alpha(Color.foreground, 0.05)
-              Row {
-                id: secRow
-                x: Style.space(8)
-                y: Style.space(4)
-                width: secColumn.width - Style.space(16)
-                spacing: Style.space(10)
-                Text {
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: secRow.width - secVersions.implicitWidth
-                    - secUninstallButton.width - secButton.width
-                    - (parent.spacing * 3)
-                  elide: Text.ElideRight
-                  textFormat: Text.PlainText
-                  text: modelData.name
-                  color: Color.foreground
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.body
-                }
-                Text {
-                  id: secVersions
-                  anchors.verticalCenter: parent.verticalCenter
-                  textFormat: Text.PlainText
-                  text: modelData.installed + " \u2192 " + modelData.latest
-                  // Highlighted (accent, bold) so the version bump and the
-                  // arrow between them stand out in every updatable row.
-                  color: Color.accent
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                }
-                BWIconButton {
-                  id: secUninstallButton
-                  anchors.verticalCenter: parent.verticalCenter
-                  label: "\uF1F8" // trash-can (remove plugin) icon
-                  size: Style.space(22) // compact, same size as the update button
-                  danger: true // urgent tone: this deletes the plugin
-                  tooltipText: "Uninstall"
-                  onClickedBw: bwSection.pluginUninstallPicked(modelData)
-                }
-                BWIconButton {
-                  id: secButton
-                  anchors.verticalCenter: parent.verticalCenter
-                  label: "\uF148" // level-up (upgrade) icon
-                  size: Style.space(22) // compact, plain (no primary highlight)
-                  onClickedBw: bwSection.pluginPicked(modelData)
-                }
-              }
-            }
-          }
-        }
-      }
-      // Scroll affordance: the box shows at most three rows, so when rows are
-      // scrolled out of view, fade the edge the list continues past (the list
-      // surface is Color.popups.background, so the fade blends into it).
-      Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: Style.space(18)
-        radius: Style.cornerRadius
-        visible: secList.canScrollDown
-        gradient: Gradient {
-          GradientStop { position: 0.0; color: "transparent" }
-          GradientStop { position: 1.0; color: Color.popups.background }
-        }
-      }
-      // The hint that more rows wait below the fold, sitting on the fade.
-      Text {
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: Style.space(3)
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: (bwSection.items.length - bwSection.visibleRows) + " more below \u00b7 scroll"
-        color: Color.muted
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        visible: secList.canScrollDown
-      }
-      Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        height: Style.space(18)
-        radius: Style.cornerRadius
-        visible: secFlickable.contentY > 1
-        gradient: Gradient {
-          GradientStop { position: 0.0; color: Color.popups.background }
-          GradientStop { position: 1.0; color: "transparent" }
-        }
-      }
-    }
-  }
-
   PopupCard {
     id: popup
     anchorItem: button
@@ -1754,12 +1761,21 @@ Panel {
       id: popupColumn
       width: parent ? parent.width : 0
       spacing: Style.space(14)
+      // Halve the card's top inset above the header (see the header block).
+      y: -Style.space(18)
 
-      // Header (the wizard/OmaGuake panel header pattern): extensions glyph
-      // (accent Text, no background, no border) + plugin name + version pill
-      // + muted status/id subtitle.
-      Row {
+      // Header block (the wizard/OmaGuake panel header pattern): extensions
+      // glyph (accent Text, no background, no border) + plugin name +
+      // version pill + muted status/id subtitle, with equal margins above
+      // and below and a divider spanning the full card width underneath
+      // (the same treatment the wizard's shared panel header got).
+      Item {
         width: popupColumn.width
+        height: bwHeaderRow.implicitHeight + Style.space(6)
+
+      Row {
+        id: bwHeaderRow
+        width: parent.width
         spacing: Style.space(14)
 
         Text {
@@ -1826,6 +1842,17 @@ Panel {
             font.pixelSize: Style.font.caption
             color: Color.muted
           }
+        }
+      }
+
+        // Divider spanning the full card width, under the header.
+        Rectangle {
+          anchors.bottom: parent.bottom
+          x: -Style.space(24)
+          width: popup.width
+          height: 1
+          color: Qt.rgba(Color.foreground.r, Color.foreground.g,
+            Color.foreground.b, 0.18)
         }
       }
 
@@ -2001,416 +2028,24 @@ Panel {
         width: popupColumn.width
         columns: 3
         columnSpacing: Style.spacing.controlGap
-        // Three equal-width buttons spanning the full panel row; the
-        // section the icon currently sits in is disabled and marked
-        // "(active)" (iconSection from the bar layout config).
-        BWButton {
-          Layout.fillWidth: true
-          Layout.preferredHeight: Style.space(30)
-          label: "Left" + (root.iconSection === "left" ? " (active)" : "")
-          enabled: root.iconSection !== "left"
-          onClickedBw: root.moveIcon("left")
-        }
-        BWButton {
-          Layout.fillWidth: true
-          Layout.preferredHeight: Style.space(30)
-          label: "Center" + (root.iconSection === "center" ? " (active)" : "")
-          enabled: root.iconSection !== "center"
-          onClickedBw: root.moveIcon("center")
-        }
-        BWButton {
-          Layout.fillWidth: true
-          Layout.preferredHeight: Style.space(30)
-          label: "Right" + (root.iconSection === "right" ? " (active)" : "")
-          enabled: root.iconSection !== "right"
-          onClickedBw: root.moveIcon("right")
-        }
-      }
-    }
-  }
-
-  // ---- right-click settings panel ----------------------------------------
-  // Same header pattern as the plugin popup (glyph + title + version pill),
-  // own PopupCard with the settingsOwner as dismissal owner. Content: the
-  // unverified-versions toggle directly under the header (it gates what the
-  // update lists and batch action below can act on), status lines, the batch
-  // "Update N plugins now" action above the per-plugin update lists (hidden
-  // when nothing is updatable), the update-poll interval selector with an
-  // immediate-refresh button below the lists, and the two browser-store
-  // links with per-family installed indicators.
-  PopupCard {
-    id: settingsPopup
-    anchorItem: button
-    owner: root.settingsOwner
-    bar: root.bar
-    open: root.settingsOpen
-    padding: Style.space(24)
-    contentWidth: settingsPopup.fittedContentWidth(Style.space(480))
-    contentHeight: settingsPopup.fittedContentHeight(settingsColumn.implicitHeight)
-
-    Column {
-      id: settingsColumn
-      width: parent ? parent.width : 0
-      spacing: Style.space(20)
-
-      Row {
-        width: settingsColumn.width
-        spacing: Style.space(14)
-
-        Text {
-          text: ""
-          font.family: Style.font.family
-          font.pixelSize: Math.max(Style.font.heading,
-            Math.round(spHeaderTextCol.implicitHeight))
-          color: Color.accent
-          anchors.verticalCenter: parent.verticalCenter
-        }
-
-        Column {
-          id: spHeaderTextCol
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(2)
-
-          Row {
-            spacing: Style.space(8)
-
-            Text {
-              text: "Browser Plugin Manager"
-              font.family: Style.font.family
-              font.pixelSize: Style.font.title
-              font.bold: true
-              color: Color.foreground
-              anchors.verticalCenter: parent.verticalCenter
-            }
-
-            Rectangle {
-              visible: root.managerVersion !== ""
-              anchors.verticalCenter: parent.verticalCenter
-              height: Style.space(18)
-              width: spVersionText.implicitWidth + Style.space(12)
-              radius: Style.cornerRadius > 0 ? 4 : 0
-              color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15)
-              border.color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.4)
-              border.width: 1
-
-              Text {
-                id: spVersionText
-                anchors.centerIn: parent
-                text: "v" + root.managerVersion
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                color: Color.accent
-              }
-            }
-          }
-
-          Text {
-            text: "Settings \u00b7 updates every "
-              + root.pollIntervalLabels[Math.max(0, root.pollIntervalMinutes.indexOf(root.pollMinutes))]
-              + (root.updateChecking ? "  \u00b7  checking\u2026"
-                : root.lastCheckText !== "never" ? "  \u00b7  last check " + root.lastCheckText : "")
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            color: Color.muted
-          }
-        }
-      }
-
-      // Unverified toggle: default off (verified catalog entries only).
-      // Sits directly under the panel header: it gates which versions the
-      // update sections and the batch button below can act on, so it reads
-      // as the setting that shapes the whole panel.
-      Row {
-        width: settingsColumn.width
-        spacing: Style.space(10)
-
-        Column {
-          width: parent.width - spUnverifiedSwitch.implicitWidth - parent.spacing
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(2)
-
-          Text {
-            text: "Update to unverified versions"
-            font.family: Style.font.family
-            font.pixelSize: Style.font.body
-            color: Color.foreground
-          }
-          Text {
-            width: parent.width
-            wrapMode: Text.Wrap
-            text: "Off: plugins only update to catalog-verified versions."
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            color: Color.muted
-          }
-        }
-
-        ToggleSwitch {
-          id: spUnverifiedSwitch
-          anchors.verticalCenter: parent.verticalCenter
-          checked: root.allowUnverified
-          onToggled: root.setAllowUnverified(!checked)
-        }
-      }
-
-      // Update-notification toggle: default on. Off silences the desktop
-      // popups only; the poll, badge, tooltip, and panel lists keep
-      // working, so updates stay discoverable without interruptions.
-      Row {
-        width: settingsColumn.width
-        spacing: Style.space(10)
-
-        Column {
-          width: parent.width - spNotifySwitch.implicitWidth - parent.spacing
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(2)
-
-          Text {
-            text: "Notify about plugin updates"
-            font.family: Style.font.family
-            font.pixelSize: Style.font.body
-            color: Color.foreground
-          }
-          Text {
-            width: parent.width
-            wrapMode: Text.Wrap
-            text: "Off: the badge and panel lists stay live, but no desktop notifications."
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            color: Color.muted
-          }
-        }
-
-        ToggleSwitch {
-          id: spNotifySwitch
-          anchors.verticalCenter: parent.verticalCenter
-          checked: root.notifyUpdates
-          onToggled: root.setNotifyUpdates(!checked)
-        }
-      }
-
-      BWRule { visible: root.updatesGroupVisible }
-
-      BWLine {
-        width: settingsColumn.width
-        visible: !root.updateChecking && !root.updateCheckFailed
-          && root.updateCount === 0 && root.lastCheckText !== "never"
-        text: "All installed plugins are up to date."
-      }
-      BWLine {
-        width: settingsColumn.width
-        visible: root.updateCheckFailed
-        text: "Catalog unreachable: showing the last known update list."
-      }
-      BWLine {
-        width: settingsColumn.width
-        visible: root.settingsSaveFailed
-        color: Color.urgent
-        text: "Settings file could not be written: changes apply this session only."
-      }
-
-      // Batch update (hidden while nothing is updatable): sits above the
-      // lists as the primary action, arms a confirmation for the eligible
-      // plugins, which then run through detached workers, one notification
-      // at the end (startUpdate).
-      BWButton {
-        visible: root.eligibleCount > 0
-        width: settingsColumn.width
-        height: Style.space(30)
-        primary: true
-        label: "Update " + root.eligibleCount + " plugin"
-          + (root.eligibleCount === 1 ? "" : "s") + " now"
-        onClickedBw: root.requestUpdate(
-          root.updateSpecs(root.eligibleUpdates()),
-          "Updates all " + root.eligibleCount + " eligible plugin"
-            + (root.eligibleCount === 1 ? "" : "s")
-            + " through the same worker as the row buttons. The bar reloads once when the batch finishes.")
-      }
-
-      // Per-plugin update lists: verified first, unverified below, each
-      // with a concise title, a live count, a capped scrollable area, and a
-      // compact plain install button per row that arms a confirmation for
-      // updating just that plugin through the same detached worker as the
-      // batch button (startUpdate runs only after Confirm). Rows carry the
-      // poll's fetched commit so the worker pins verified updates to it.
-      // Left of each update button sits a danger-toned uninstall icon
-      // button (tooltip "Uninstall") that arms the same confirm card with
-      // the plugin id and runs the detached uninstall worker on Confirm.
-      BWUpdateSection {
-        width: settingsColumn.width
-        title: "Verified plugin updates"
-        items: root.verifiedUpdates()
-        onPluginPicked: function (p) {
-          root.requestUpdate([root.updateSpec(p)],
-            "Updates " + p.name + " from " + p.installed + " to the verified commit"
-            + ". The plugin's git repository is fast-forwarded to exactly that reviewed commit"
-            + " (the update fails if upstream advanced past it); the bar reloads when the manager itself updates.")
-        }
-        onPluginUninstallPicked: function (p) { root.requestUninstall(p) }
-      }
-
-      BWUpdateSection {
-        width: settingsColumn.width
-        title: "Unverified plugin updates"
-        items: root.unverifiedUpdates()
-        onPluginPicked: function (p) {
-          root.requestUpdate([root.updateSpec(p)],
-            "Updates " + p.name + " from " + p.installed + " to " + p.latest
-            + " (unverified version). The plugin's git repository is pulled; the bar reloads when the manager itself updates.")
-        }
-        onPluginUninstallPicked: function (p) { root.requestUninstall(p) }
-      }
-
-      BWRule {}
-
-      // Poll interval: five equal segments (selected one primary-marked)
-      // and the refresh button to check for updates immediately. Sits below
-      // the lists: the schedule and the manual check are settings, not the
-      // panel's primary action.
-      BWLine {
-        width: settingsColumn.width
-        text: "Check for plugin updates:"
-      }
-      GridLayout {
-        width: settingsColumn.width
-        columns: 6
-        columnSpacing: Style.spacing.controlGap
-
+        rowSpacing: Style.spacing.controlGap
+        // Equal-width buttons for every section the shell offers (the same
+        // live list the install wizard's placement stage uses), in a 3-wide
+        // grid. The section the icon currently sits in is disabled and
+        // marked "(active)" (iconSection from the bar layout config).
         Repeater {
-          model: root.pollIntervalMinutes
+          model: root.barMoveSections
           delegate: BWButton {
             Layout.fillWidth: true
             Layout.preferredHeight: Style.space(30)
-            label: root.pollIntervalLabels[index]
-            primary: root.pollMinutes === modelData
-            onClickedBw: root.setPollInterval(modelData)
-          }
-        }
-        BWButton {
-          Layout.preferredWidth: Style.space(30)
-          Layout.preferredHeight: Style.space(30)
-          label: "\uF021"
-          enabled: !root.updateChecking
-          spin: root.updateChecking
-          tooltipText: root.updateChecking
-            ? "Checking for updates ..."
-            : "Check for updates"
-          onClickedBw: root.checkForUpdates()
-        }
-      }
-
-      BWRule {}
-
-      // Browser stores: the supported-browser list with installed names
-      // highlighted in accent, above half-width buttons that open the
-      // store page in the first installed browser of that family. One
-      // grid (text row, button row) so the rows size to their tallest
-      // cell and the buttons align. The cells take an explicit equal
-      // half width (the grid's fill alone sizes columns to content, which
-      // makes the two store buttons uneven). RichText is required: the
-      // StyledText format silently drops the span color.
-      GridLayout {
-        id: spStoreGrid
-        width: settingsColumn.width
-        columns: 2
-        columnSpacing: Style.spacing.controlGap
-        rowSpacing: Style.space(6)
-
-        Text {
-          Layout.fillWidth: true
-          Layout.preferredWidth: (spStoreGrid.width - spStoreGrid.columnSpacing) / 2
-          wrapMode: Text.Wrap
-          textFormat: Text.RichText
-          text: root.chromeSupportHtml
-          font.family: Style.font.family
-          font.pixelSize: Style.font.caption
-          color: Color.muted
-        }
-        Text {
-          Layout.fillWidth: true
-          Layout.preferredWidth: (spStoreGrid.width - spStoreGrid.columnSpacing) / 2
-          wrapMode: Text.Wrap
-          textFormat: Text.RichText
-          text: root.firefoxSupportHtml
-          font.family: Style.font.family
-          font.pixelSize: Style.font.caption
-          color: Color.muted
-        }
-
-        BWButton {
-          Layout.fillWidth: true
-          Layout.preferredWidth: (spStoreGrid.width - spStoreGrid.columnSpacing) / 2
-          Layout.preferredHeight: Style.space(30)
-          label: root.storeButtonLabel("Chrome Web Store", root.chromeLaunchLabel)
-          onClickedBw: root.openStore(root.chromeStoreUrl, root.chromeLaunchBin)
-        }
-        BWButton {
-          Layout.fillWidth: true
-          Layout.preferredWidth: (spStoreGrid.width - spStoreGrid.columnSpacing) / 2
-          Layout.preferredHeight: Style.space(30)
-          label: root.storeButtonLabel("Firefox Add-ons", root.firefoxLaunchLabel)
-          onClickedBw: root.openStore(root.firefoxStoreUrl, root.firefoxLaunchBin)
-        }
-      }
-    }
-
-    // Update/uninstall confirmation card: a scrim over the settings content
-    // (same window, so the popup's focus grab keeps it interactive) gating
-    // every update and uninstall behind an explicit Confirm. Cancel clears
-    // the armed request.
-    Rectangle {
-      id: updateConfirmMask
-      anchors.fill: parent
-      visible: root.updateConfirmOpen
-      color: Util.alpha(Color.popups.background, 0.92)
-      radius: Style.cornerRadius
-
-      Column {
-        anchors.centerIn: parent
-        width: Math.min(parent.width - Style.space(48), Style.space(320))
-        spacing: Style.space(12)
-
-        Text {
-          anchors.horizontalCenter: parent.horizontalCenter
-          text: root.uninstallConfirmActive
-            ? "Uninstall plugin?"
-            : "Update " + root.updateConfirmSpecs.length + " plugin"
-              + (root.updateConfirmSpecs.length === 1 ? "" : "s") + "?"
-          color: Color.foreground
-          font.family: Style.font.family
-          font.pixelSize: Style.font.body
-          font.bold: true
-        }
-        Text {
-          width: parent.width
-          wrapMode: Text.Wrap
-          horizontalAlignment: Text.AlignHCenter
-          color: Util.alpha(Color.foreground, 0.75)
-          font.family: Style.font.family
-          font.pixelSize: Style.font.caption
-          // Catalog/manifest-sourced (plugin name, installed and latest
-          // versions): plain text so an image tag in a changed upstream
-          // version string cannot trigger a remote request when this
-          // confirmation opens, before the new code is accepted.
-          textFormat: Text.PlainText
-          text: root.updateConfirmText
-        }
-        Row {
-          anchors.horizontalCenter: parent.horizontalCenter
-          spacing: Style.space(8)
-          BWButton {
-            label: "Cancel"
-            onClickedBw: root.cancelUpdateConfirm()
-          }
-          BWButton {
-            label: root.uninstallConfirmActive ? "Uninstall" : "Update"
-            primary: !root.uninstallConfirmActive
-            danger: root.uninstallConfirmActive
-            onClickedBw: root.confirmUpdate()
+            label: root.sectionLabel(modelData)
+              + (root.iconSection === modelData ? " (active)" : "")
+            enabled: root.iconSection !== modelData
+            onClickedBw: root.moveIcon(modelData)
           }
         }
       }
     }
   }
+
 }

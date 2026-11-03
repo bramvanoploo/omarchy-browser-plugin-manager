@@ -5,13 +5,22 @@
 Clicking **Install** on a plugin page opens a wizard overlay on the desktop:
 it re-validates the request (live catalog entry + repository manifest), shows
 what will be installed, and for bar widgets first asks which bar section the
-icon goes in (left, center, right; the manifest's default is labelled
-"(default)" — nothing is installed before that choice, so Cancel is a plain
-close). It installs only after you confirm, via the official
+icon goes in — a horizontal grid over the shell's live section list (left,
+center begin, center, center end, right, tray), with the manifest's default
+marked "(default)" (a manifest "center" maps to center end, exactly like
+`omarchy plugin add` does). Nothing is installed before that choice, so
+Cancel is a plain close. It installs only after you confirm, via the official
 `omarchy plugin add` + `omarchy plugin enable --section` (clone + manifest
 validation, no code execution), then verifies the result (enabled flag + bar
 layout entry), re-applying the section if the shell's post-install config
 sweep reverts it.
+
+Actions run in a detached worker process; while one runs, the wizard shows a
+running card (animated globe) that stays up until the worker exits — the
+worker publishes a marker file that the panel polls, so the card survives a
+shell reload (the manager's own install/update included). Confirmation cards
+never show the globe. Escape closes any card; the primary action is always
+the rightmost button.
 
 Once a plugin is installed, the page swaps Install for **Enable/Disable** and
 **Uninstall** buttons (state read live from the host, never from the page).
@@ -30,14 +39,19 @@ that are *not* installable from the browser (no install command, built-in,
 failed upstream check) light the icon too when the plugin is installed on
 this machine, so its panel (update/uninstall/move icon) is reachable; no
 page buttons appear there. Left click opens a dropdown with that plugin's
-header title (as in the dialogs) and buttons to **Install**, **Update**,
-**Uninstall**, and move its bar icon (left/center/right). Install, Update,
-and Uninstall summon the same wizard — the beacon is a display hint, the
-wizard re-validates and asks for confirmation; moving the icon is plain
-layout config, so it runs `omarchy bar move` directly.
+header (the wizard panel's header pattern: glyph, name, version pill, status
+line) and buttons to **Install**, **Update**, **Uninstall**, and move its
+bar icon: the move row is a grid over the shell's live bar-section list —
+the same options as the wizard's placement step — with the section the icon
+currently sits in marked "(active)". Install, Update, and Uninstall summon
+the same wizard — the beacon is a display hint, the wizard re-validates and
+asks for confirmation; moving the icon is plain layout config, so it runs
+`omarchy bar move` directly.
 
-Right click opens the settings panel (same header style): a plugin-update
-poll every **10m / 30m / 1h / 5h / Daily** with a refresh button to check
+Right click opens the settings wizard panel (the same system-panel card as
+the install wizard: fixed header/footer, content-fit height, Escape closes):
+a plugin-update poll every **10m / 30m / 1h / 5h / Daily** with a refresh
+button to check
 immediately, an **Update N plugins now** button (shown only while updates
 are available), a toggle to also update plugins to their *unverified*
 latest versions (default: latest verified only), and links to the Chrome
@@ -118,9 +132,20 @@ browser (extension)  ->  native messaging host  ->  shell IPC  ->  wizard overla
   manifest (the payload is never trusted for display), re-checks local
   state for destructive/toggle/update flows, and drives install / enable /
   disable / remove / update via the official `omarchy plugin` CLI; its own
-  uninstall runs detached (unregistering the host first).
+  uninstall runs detached (unregistering the host first). The card fits its
+  content height; the running stage polls the worker marker files under the
+  state dir's `in-progress/` and closes when none is fresh, so the card
+  reappears after a shell reload. The settings stage renders the panel
+  content (toggles, update lists, poll interval, store links) and exchanges
+  commands with the bar widget through the state dir's `settings-cmd.json`
+  append-log: each command carries a sequence id the widget dedupes, and
+  the panel echoes the widget's open-session id in its `closed` command so
+  a stale file can never wedge the panel.
 - **`BarWatch.qml`** — the bar widget: reads the beacon record, lights up
   while it is live (fresh ≤12s and not paused: a blurred browser dims the
   icon within its 2s poll, a killed browser clears itself via staleness),
   and offers the plugin’s manage dropdown. Install/Update/Uninstall route
-  through the wizard with the beacon’s id/repo/name as hint only.
+  through the wizard with the beacon’s id/repo/name as hint only. It
+  consumes the settings command log (deduped by sequence id) and owns the
+  settings open-session token; the move-icon row and the wizard's placement
+  step share the shell's live section list (`Util.barSections`).

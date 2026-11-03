@@ -49,8 +49,8 @@
 .card-install.pi-card-update { color: var(--accent, #ffcead); }
 .card-install.pi-card-update:hover { color: var(--accent, #ffcead); background: var(--panel-2, rgba(127, 127, 127, 0.12)); }
 .card-install.pi-card-button:disabled { opacity: 0.55; cursor: default; }
-/* Update icon + ribbon + info panel: identical line-art, banner and dialog
- * to the plugin pages (icons draw with currentColor). */
+/* Update icon + ribbon: identical line-art and banner to the plugin pages
+ * (icons draw with currentColor). */
 .pi-icon-update::before {
   inset: 1px;
   border: 1px solid currentColor;
@@ -101,89 +101,6 @@
    * "stable" tone (the install button's tone). */
   background: var(--stable, #b4c96f);
 }
-.pi-panel-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 9000;
-  background: rgb(0 0 0 / 55%);
-}
-.pi-panel {
-  position: fixed;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 9001;
-  width: min(430px, calc(100vw - 48px));
-  box-sizing: border-box;
-  padding: 18px;
-  border: 1px solid var(--line-strong, #666666);
-  border-radius: 0;
-  background: var(--panel, #1b1b21);
-  color: var(--text, #dddddd);
-  font-family: var(--mono, monospace);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
-}
-.pi-panel h2 {
-  margin: 0 0 10px;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--text, #dddddd);
-}
-.pi-panel-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 12px;
-}
-.pi-panel-badge {
-  padding: 1px 6px;
-  border: 1px solid currentColor;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-.pi-panel-badge-verified { color: var(--stable, #b4c96f); }
-.pi-panel-badge-unverified { color: var(--accent, #ffcead); }
-.pi-panel-desc {
-  margin: 12px 0 0;
-  font-family: var(--sans, sans-serif);
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--muted, #999999);
-}
-.pi-panel-foot {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 16px;
-}
-.pi-panel-foot .pi-panel-button {
-  display: inline-flex;
-  position: relative;
-  min-height: 25px;
-  padding: 0 8px;
-  border: 1px solid var(--line-strong, #666666);
-  border-radius: 0;
-  background: transparent;
-  align-items: center;
-  color: var(--text, #dddddd);
-  font-family: var(--mono, monospace);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-}
-.pi-panel-foot .pi-panel-button:hover { background: var(--panel-2, rgba(127, 127, 127, 0.12)); }
-.pi-panel-foot .pi-panel-button:disabled { opacity: 0.55; }
-.pi-panel-foot .pi-panel-button-update { color: var(--accent, #ffcead); }
-.pi-panel-note {
-  margin: 12px 0 0;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--stable, #b4c96f);
-}
-.pi-panel-note[data-error="1"] { color: var(--accent, #ffcead); }
 `;
 
   function injectStyles() {
@@ -311,7 +228,7 @@
     });
   }
 
-  // ---- Update ribbon + info panel ---------------------------------------
+  // ---- Update ribbon -----------------------------------------------------
   // Cards get a diagonal corner banner driven by live host state:
   //   installed + update available -> UPDATE banner (--accent)
   //   installed + up to date       -> INSTALLED banner (--stable)
@@ -356,105 +273,6 @@
     banner.textContent = text;
     ribbon.append(banner);
     card.append(ribbon);
-  }
-
-  let panelNodes = null;
-  let panelKeydown = null;
-
-  function closePanel() {
-    if (!panelNodes) return;
-    panelNodes.backdrop.remove();
-    panelNodes.panel.remove();
-    if (panelKeydown) document.removeEventListener("keydown", panelKeydown);
-    panelKeydown = null;
-    panelNodes = null;
-  }
-
-  function openUpdatePanel(plugin, status) {
-    closePanel();
-    const backdrop = document.createElement("div");
-    backdrop.className = "pi-panel-backdrop";
-    const panel = document.createElement("div");
-    panel.className = "pi-panel";
-    panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-modal", "true");
-    panel.setAttribute("aria-label", `Update ${plugin.name}`);
-
-    const title = document.createElement("h2");
-    title.textContent = plugin.name;
-
-    const row = document.createElement("div");
-    row.className = "pi-panel-row";
-    const versions = document.createElement("span");
-    versions.textContent = `Installed v${status.installedVersion || "?"} → Update to v${status.latestVersion || "?"}`;
-    const badge = document.createElement("span");
-    badge.className = "pi-panel-badge "
-      + (status.verified ? "pi-panel-badge-verified" : "pi-panel-badge-unverified");
-    badge.textContent = status.verified ? "verified" : "unverified";
-    row.append(versions, badge);
-
-    panel.append(title, row);
-    if (plugin.description) {
-      const desc = document.createElement("p");
-      desc.className = "pi-panel-desc";
-      desc.textContent = plugin.description;
-      panel.append(desc);
-    }
-
-    const foot = document.createElement("div");
-    foot.className = "pi-panel-foot";
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "pi-panel-button";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", closePanel);
-    const update = document.createElement("button");
-    update.type = "button";
-    update.className = "pi-panel-button pi-panel-button-update";
-    update.textContent = "Update";
-    foot.append(cancel, update);
-
-    const note = document.createElement("p");
-    note.className = "pi-panel-note";
-    note.hidden = true;
-
-    panel.append(foot, note);
-    document.body.append(backdrop, panel);
-    panelNodes = { backdrop, panel };
-
-    const dismiss = (event) => {
-      if (event.key === "Escape") closePanel();
-    };
-    document.addEventListener("keydown", dismiss);
-    panelKeydown = dismiss;
-    backdrop.addEventListener("click", closePanel);
-
-    update.addEventListener("click", async () => {
-      update.disabled = true;
-      cancel.disabled = true;
-      const response = await talkToHost({
-        type: "update",
-        id: plugin.id,
-        repo: plugin.repo,
-        name: plugin.name,
-      }, HOST_ACTION_TIMEOUT_MS);
-      note.hidden = false;
-      if (response && response.ok) {
-        if (foot.parentNode) foot.remove();
-        note.textContent = "Confirm the update in the Omarchy window.";
-        // Identity guard: a stale timer must not close a panel that the
-        // user opened again within the 4s window.
-        setTimeout(() => {
-          if (panelNodes && panelNodes.backdrop === backdrop) closePanel();
-        }, 4000);
-      } else {
-        update.disabled = false;
-        cancel.disabled = false;
-        note.dataset.error = "1";
-        note.textContent = `Could not start the update (${(response && response.reason) || "no-response"}).`;
-      }
-    });
-    update.focus();
   }
 
   // The card's live update state: installed + behind, gate already applied
@@ -530,13 +348,10 @@
       button.append(label);
     }
     button.append(tip);
-    if (update) {
-      // Update goes through the info panel first (version + verification
-      // details); the panel's Update button summons the desktop wizard.
-      button.addEventListener("click", () => openUpdatePanel(plugin, update));
-    } else {
-      wireCardAction(button, plugin);
-    }
+    // Every state (install / uninstall / update) acts through the host:
+    // the desktop wizard panels are the only confirm and progress surface
+    // (the update confirmation with version details lives there).
+    wireCardAction(button, plugin);
     return button;
   }
 
