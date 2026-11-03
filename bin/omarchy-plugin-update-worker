@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Bar widget update worker (BarWatch.qml's startUpdate runs this detached).
+# Specs ride in as argv after a display label, as "id:expected_sha" (sha
+# empty for unverified): no shell interpolation of plugin ids. A verified
+# spec pins the update to the catalog's verificationCommit via
+# omarchy-plugin-update apply, which fails closed if upstream advanced past
+# it after the poll, so confirming a "Verified plugin update" can never load
+# an unreviewed commit. Unverified specs (and verified rows whose poll fetch
+# had no sha) go through the plain CLI, which loads the current branch tip
+# under the user's explicit unverified choice.
+#
+# Detached like the manager's own updates: a git pull takes time, and
+# updating the manager itself reloads the shell and destroys the widget
+# mid-run; this worker outlives that with its summary notification.
+#
+# Each CLI call ends with "omarchy-shell shell rescanPlugins" when it
+# updated something, which reloaded the bar once per plugin. This worker
+# shadows omarchy-shell on PATH to swallow those per-plugin rescans and
+# fires one real rescan after the whole batch, so the bar reloads once.
+set -u
+export PATH="${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH"
+notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
+command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)"
+notify() {
+  "$notify_cmd" --app-name omarchy-browser-plugin-manager --expire-time 8000 "$1" "$2"
+}
+real_shell="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell"
+command -v "$real_shell" >/dev/null 2>&1 || real_shell="$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)"
+updater="$(dirname -- "$0")/omarchy-plugin-update"
+plug="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"
+export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}"
+
+# In-progress system panel (same protocol as the wizard's workers): the
+# first argv is a display label (plugin name, or "N plugins" for a
+# batch); publish a marker file per run (removed on any exit) and summon
+# the wizard on its running stage, which polls the marker directory and
+# closes itself once no fresh marker remains.
+LABEL="${1:-plugins}"; shift
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager"
+MARK_DIR="$STATE_DIR/in-progress"
+mkdir -p "$MARK_DIR" 2>/dev/null || true
+MARK="$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json"
+trap 'rm -f "$MARK"' EXIT
+jq -cn --arg mode "update" --arg name "$LABEL" '{mode:$mode,id:"",name:$name,started:(now|floor)}' > "$MARK" 2>/dev/null || true
+PAYLOAD=$(jq -cn --arg name "$LABEL" '{source:"worker",mode:"running",id:"",name:$name,action:"update"}' 2>/dev/null)
+[ -n "$PAYLOAD" ] && "$real_shell" -q shell summon bramvanoploo.omarchy-browser-plugin-manager "$PAYLOAD" >/dev/null 2>&1 || true
+
+# apply's one-word status codes mapped back to this widget's notification
+# wording (batch summaries list failures with their reason).
+reason() {
+  case "$1" in
+    fetch-failed) echo "fetch failed" ;;
+    upstream-advanced) echo "upstream advanced past the verified commit" ;;
+    ff-failed) echo "cannot fast-forward to the verified commit" ;;
+    validate-failed) echo "update failed validation (rolled back)" ;;
+    not-git) echo "no git clone to fast-forward" ;;
+    invalid-sha) echo "verified commit pin is malformed" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+bin_dir=$(mktemp -d)
+printf '%s\n' '#!/bin/bash' '[ "${1:-}" = shell ] && [ "${2:-}" = rescanPlugins ] && exit 0' 'exec '"$real_shell"' "$@"' > "$bin_dir/omarchy-shell"
+chmod +x "$bin_dir/omarchy-shell"
+export PATH="$bin_dir:$PATH"
+ok=0; fail=0; failed=""
+while [ $# -gt 0 ]; do
+  spec="$1"
+  id="${spec%%:*}"; expected="${spec#*:}"
+  case "$id" in *[!a-z0-9.-]*|.*|*..*|*:*) id="" ;; esac
+# A spec carrying a pin must pin to a full 40 hex sha; an unpinned spec
+# carries an empty sha. A present-but-invalid sha is a violation and
+# never falls through to the unverified CLI path (fail closed).
+  bad_sha=0
+  if [ -n "$expected" ]; then
+    if [ ${#expected} -ne 40 ]; then
+      bad_sha=1
+    else
+      tmp_sha="${expected//[0-9a-f]/}"
+      [ -n "$tmp_sha" ] && bad_sha=1
+    fi
+  fi
+  OUT=""
+  if [ -n "$id" ] && [ "$bad_sha" -eq 0 ] && [ -n "$expected" ] && [ -d "$plug/$id/.git" ]; then
+    if OUT=$("$updater" apply "$id" "$expected" 2>&1); then
+      ok=$((ok+1))
+    else
+      fail=$((fail+1)); failed="$failed $id ($(reason "$OUT"))"
+    fi
+  elif [ -n "$id" ] && [ "$bad_sha" -eq 0 ] && "$updater" apply "$id" "" >/dev/null 2>&1; then
+    ok=$((ok+1))
+  else
+    fail=$((fail+1)); failed="$failed ${id:-$spec}"
+  fi
+  shift
+done
+rm -rf "$bin_dir"
+if [ "$ok" -gt 0 ]; then
+  "$real_shell" -q shell rescanPlugins >/dev/null 2>&1 || true
+fi
+if [ "$fail" -gt 0 ]; then
+  notify "Plugin updates finished" "$ok updated, $fail failed:$failed"
+elif [ "$ok" -gt 0 ]; then
+  notify "Plugins updated" "$ok plugin(s) updated to the latest verified version."
+else
+  notify "No plugin updated" "No plugin update was applied."
+fi

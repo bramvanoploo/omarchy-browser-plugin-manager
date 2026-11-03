@@ -130,8 +130,6 @@ Panel {
   property bool isBarWidget: false
   property string statusForId: ""
   property string moveSection: ""
-  property string moveOutput: ""
-  property string enabledOutput: ""
 
   // ---- settings panel ----------------------------------------------------
   // The settings panel is a system overlay (the wizard): it opens on right
@@ -453,114 +451,22 @@ Panel {
     Quickshell.execDetached(target)
   }
 
-  // Batch update runs as a detached bash worker (the wizard's per-plugin
-  // update pattern): a git pull takes time, and updating the manager itself
-  // reloads the shell and destroys this widget mid-run. Specs ride in as
-  // argv ($1..$n) as "id:expected_sha" (sha empty for unverified): no shell
-  // interpolation of plugin ids. A verified spec pins the update to the
-  // catalog's verificationCommit: the worker re-fetches and fast-forwards to
-  // exactly that commit, and fails closed if upstream advanced past it after
-  // the poll, so confirming a "Verified plugin update" can never load an
-  // unreviewed commit. Unverified specs (and verified rows whose poll fetch
-  // had no sha) go through the plain CLI, which loads the current branch tip
-  // under the user's explicit unverified choice.
-  // Each CLI call ends with "omarchy-shell shell rescanPlugins" when it
-  // updated something, which reloaded the bar once per plugin. The worker
-  // shadows omarchy-shell on PATH to swallow those per-plugin rescans and
-  // fires one real rescan after the whole batch, so the bar reloads once.
-  readonly property string updateWorkerScript: [
-    "set -u",
-    "export PATH=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH\"",
-    "notify_cmd=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send\"",
-    "command -v \"$notify_cmd\" >/dev/null 2>&1 || notify_cmd=\"$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)\"",
-    "notify() {",
-    "  \"$notify_cmd\" --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
-    "}",
-    "real_shell=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell\"",
-    "command -v \"$real_shell\" >/dev/null 2>&1 || real_shell=\"$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)\"",
-    "plug=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins\"",
-    // In-progress system panel (same protocol as the wizard's workers): the
-    // first argv is a display label (plugin name, or "N plugins" for a
-    // batch); publish a marker file per run (removed on any exit) and
-    // summon the wizard on its running stage, which polls the marker
-    // directory and closes itself once no fresh marker remains.
-    "LABEL=\"${1:-plugins}\"; shift",
-    "STATE_DIR=\"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager\"",
-    "MARK_DIR=\"$STATE_DIR/in-progress\"",
-    "mkdir -p \"$MARK_DIR\" 2>/dev/null || true",
-    "MARK=\"$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json\"",
-    "trap 'rm -f \"$MARK\"' EXIT",
-    "jq -cn --arg mode \"update\" --arg name \"$LABEL\" '{mode:$mode,id:\"\",name:$name,started:(now|floor)}' > \"$MARK\" 2>/dev/null || true",
-    "PAYLOAD=$(jq -cn --arg name \"$LABEL\" '{source:\"worker\",mode:\"running\",id:\"\",name:$name,action:\"update\"}' 2>/dev/null)",
-    "[ -n \"$PAYLOAD\" ] && \"$real_shell\" -q shell summon bramvanoploo.omarchy-browser-plugin-manager \"$PAYLOAD\" >/dev/null 2>&1 || true",
-    "export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true",
-    "export GIT_SSH_COMMAND=\"${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}\"",
-    "# Verified pin: refuse unless the freshly fetched tip is exactly the",
-    "# reviewed commit, then fast-forward to only that commit and validate",
-    "# (same validation and ORIG_HEAD rollback as the CLI). Fails closed:",
-    "# any divergence between poll and update leaves the plugin untouched.",
-    "update_pinned() { # id expected_sha -> stdout explains the outcome",
-    "  local id=\"$1\" sha=\"$2\" d=\"$plug/$1\" tip",
-    "  timeout 30 git -C \"$d\" fetch --quiet origin HEAD || { echo \"fetch failed\"; return 1; }",
-    "  tip=$(git -C \"$d\" rev-parse --verify FETCH_HEAD 2>/dev/null) || { echo \"fetch produced no tip\"; return 1; }",
-    "  [ \"$tip\" = \"$sha\" ] || { echo \"upstream advanced past the verified commit\"; return 1; }",
-    "  git -C \"$d\" merge --ff-only \"$sha\" >/dev/null 2>&1 || { echo \"cannot fast-forward to the verified commit\"; return 1; }",
-    "  if ! omarchy plugin validate \"$d\" >/dev/null 2>&1; then",
-    "    git -C \"$d\" reset --hard ORIG_HEAD >/dev/null 2>&1",
-    "    echo \"update failed validation (rolled back)\"",
-    "    return 1",
-    "  fi",
-    "  echo \"pinned\"",
-    "}",
-    "bin_dir=$(mktemp -d)",
-    "printf '%s\\n' '#!/bin/bash' '[ \"${1:-}\" = shell ] && [ \"${2:-}\" = rescanPlugins ] && exit 0' 'exec '\"$real_shell\"' \"$@\"' > \"$bin_dir/omarchy-shell\"",
-    "chmod +x \"$bin_dir/omarchy-shell\"",
-    "export PATH=\"$bin_dir:$PATH\"",
-    "ok=0; fail=0; failed=\"\"",
-    "while [ $# -gt 0 ]; do",
-    "  spec=\"$1\"",
-    "  id=\"${spec%%:*}\"; expected=\"${spec#*:}\"",
-    "  case \"$id\" in *[!a-z0-9.-]*|.*|*..*|*:*) id=\"\" ;; esac",
-    "# A spec carrying a pin must pin to a full 40 hex sha; an unpinned spec",
-    "# carries an empty sha. A present-but-invalid sha is a violation and",
-    "# never falls through to the unverified CLI path (fail closed).",
-    "  bad_sha=0",
-    "  if [ -n \"$expected\" ]; then",
-    "    if [ ${#expected} -ne 40 ]; then",
-    "      bad_sha=1",
-    "    else",
-    "      tmp_sha=\"${expected//[0-9a-f]/}\"",
-    "      [ -n \"$tmp_sha\" ] && bad_sha=1",
-    "    fi",
-    "  fi",
-    "  OUT=\"\"",
-    "  if [ -n \"$id\" ] && [ \"$bad_sha\" -eq 0 ] && [ -n \"$expected\" ] && [ -d \"$plug/$id/.git\" ]; then",
-    "    if OUT=$(update_pinned \"$id\" \"$expected\"); then",
-    "      ok=$((ok+1))",
-    "    else",
-    "      fail=$((fail+1)); failed=\"$failed $id ($OUT)\"",
-    "    fi",
-    "  elif [ -n \"$id\" ] && [ \"$bad_sha\" -eq 0 ] && OUT=\"$(omarchy plugin update \"$id\" --yes 2>&1)\" && [ $? -eq 0 ]; then",
-    "    ok=$((ok+1))",
-    "  else",
-    "    fail=$((fail+1)); failed=\"$failed ${id:-$spec}\"",
-    "  fi",
-    "  shift",
-    "done",
-    "rm -rf \"$bin_dir\"",
-    "if [ \"$ok\" -gt 0 ]; then",
-    "  \"$real_shell\" -q shell rescanPlugins >/dev/null 2>&1 || true",
-    "fi",
-    "if [ \"$fail\" -gt 0 ]; then",
-    "  notify \"Plugin updates finished\" \"$ok updated, $fail failed:$failed\"",
-    "elif [ \"$ok\" -gt 0 ]; then",
-    "  notify \"Plugins updated\" \"$ok plugin(s) updated to the latest verified version.\"",
-    "else",
-    "  notify \"No plugin updated\" \"No plugin update was applied.\"",
-    "fi"
-  ].join("\n")
-
-  // The worker spec for one poll entry: "id:remote_sha". The sha is the
+  // Batch update runs as a detached bash worker (bin/omarchy-plugin-update-worker,
+  // the wizard's per-plugin update pattern): a git pull takes time, and
+  // updating the manager itself reloads the shell and destroys this widget
+  // mid-run. Specs ride in as argv as "id:expected_sha" (sha empty for
+  // unverified): no shell interpolation of plugin ids. A verified spec pins
+  // the update to the catalog's verificationCommit through the shared
+  // updater (bin/omarchy-plugin-update apply): it re-fetches and
+  // fast-forwards to exactly that commit, and fails closed if upstream
+  // advanced past it after the poll, so confirming a "Verified plugin
+  // update" can never load an unreviewed commit. Unverified specs (and
+  // verified rows whose poll fetch had no sha) go through the plain CLI,
+  // which loads the current branch tip under the user's explicit
+  // unverified choice. The worker swallows the rescanPlugins each CLI call
+  // fires and issues one real rescan after the whole batch, so the bar
+  // reloads once.
+: "id:remote_sha". The sha is the
   // commit the poll fetched and matched against the catalog's
   // verificationCommit; the worker pins verified updates to it and ignores
   // it for unverified ones (entries never carry a sha the poll did not see).
@@ -573,66 +479,19 @@ Panel {
     return (list || []).map(updateSpec)
   }
 
-  // Uninstall worker: runs the official CLI removal (omarchy plugin remove
-  // --yes) per plugin id, mirroring its id validation (same pattern as the
-  // CLI's valid_plugin_id), then fires one rescan so the bar drops removed
-  // icons. The CLI unloads an enabled plugin from the shell itself; a
-  // symlinked plugin (dev clone) is only unlinked, never followed. Detached
-  // like the update worker, so removing this manager itself still finishes
-  // and notifies after the shell reload destroys the widget.
-  readonly property string uninstallWorkerScript: [
-    "set -u",
-    "export PATH=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH\"",
-    "notify_cmd=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send\"",
-    "command -v \"$notify_cmd\" >/dev/null 2>&1 || notify_cmd=\"$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)\"",
-    "notify() {",
-    "  \"$notify_cmd\" --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
-    "}",
-    "real_shell=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell\"",
-    "command -v \"$real_shell\" >/dev/null 2>&1 || real_shell=\"$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)\"",
-    // In-progress system panel (same protocol as the wizard's workers): the
-    // first argv is a display label (plugin name, or "N plugins" for a
-    // batch); publish a marker file per run (removed on any exit) and
-    // summon the wizard on its running stage, which polls the marker
-    // directory and closes itself once no fresh marker remains.
-    "LABEL=\"${1:-plugins}\"; shift",
-    "STATE_DIR=\"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager\"",
-    "MARK_DIR=\"$STATE_DIR/in-progress\"",
-    "mkdir -p \"$MARK_DIR\" 2>/dev/null || true",
-    "MARK=\"$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json\"",
-    "trap 'rm -f \"$MARK\"' EXIT",
-    "jq -cn --arg mode \"uninstall\" --arg name \"$LABEL\" '{mode:$mode,id:\"\",name:$name,started:(now|floor)}' > \"$MARK\" 2>/dev/null || true",
-    "PAYLOAD=$(jq -cn --arg name \"$LABEL\" '{source:\"worker\",mode:\"running\",id:\"\",name:$name,action:\"uninstall\"}' 2>/dev/null)",
-    "[ -n \"$PAYLOAD\" ] && \"$real_shell\" -q shell summon bramvanoploo.omarchy-browser-plugin-manager \"$PAYLOAD\" >/dev/null 2>&1 || true",
-    "ok=0; fail=0; failed=\"\"",
-    "while [ $# -gt 0 ]; do",
-    "  id=\"$1\"",
-    "  case \"$id\" in *[!A-Za-z0-9._-]*|*..*|'') id=\"\" ;; esac",
-    "  if [ -n \"$id\" ] && omarchy plugin remove \"$id\" --yes >/dev/null 2>&1; then",
-    "    ok=$((ok+1))",
-    "  else",
-    "    fail=$((fail+1)); failed=\"$failed $id\"",
-    "  fi",
-    "  shift",
-    "done",
-    "if [ \"$ok\" -gt 0 ]; then",
-    "  \"$real_shell\" -q shell rescanPlugins >/dev/null 2>&1 || true",
-    "fi",
-    "if [ \"$fail\" -gt 0 ]; then",
-    "  notify \"Plugin removals finished\" \"$ok removed, $fail failed:$failed\"",
-    "elif [ \"$ok\" -gt 0 ]; then",
-    "  notify \"Plugins uninstalled\" \"$ok plugin(s) removed.\"",
-    "else",
-    "  notify \"No plugin removed\" \"No plugin was uninstalled.\"",
-    "fi"
-  ].join("\n")
-
+  // Uninstall runs as a detached bash worker (bin/omarchy-plugin-uninstall-worker):
+  // the official CLI removal (omarchy plugin remove --yes) per plugin id,
+  // with the CLI's own id validation, then one rescan so the bar drops
+  // removed icons. The CLI unloads an enabled plugin from the shell itself;
+  // a symlinked plugin (dev clone) is only unlinked, never followed.
+  // Detached like the update worker, so removing this manager itself still
+  // finishes and notifies after the shell reload destroys the widget.
   // Runs the detached uninstall worker for the given plugin ids (the
   // per-row uninstall buttons pass a single one, after confirmation).
   function startUninstall(ids) {
     ids = (ids || []).map(String).filter(function (s) { return s !== "" })
     if (ids.length === 0) return
-    var argv = ["bash", "-c", root.uninstallWorkerScript, "omarchy-bpm-uninstall",
+    var argv = ["bash", root.pluginDir + "/bin/omarchy-plugin-uninstall-worker",
       ids.length === 1 ? ids[0] : ids.length + " plugins"]
     Quickshell.execDetached(argv.concat(ids))
     // Closing the popups is harmless: removing this manager unloads the
@@ -648,7 +507,7 @@ Panel {
     if (specs.length === 0) return
     var label = specs.length === 1
       ? String(specs[0]).split(":")[0] : specs.length + " plugins"
-    var argv = ["bash", "-c", root.updateWorkerScript, "omarchy-bpm-update", label]
+    var argv = ["bash", root.pluginDir + "/bin/omarchy-plugin-update-worker", label]
     Quickshell.execDetached(argv.concat(specs))
     // Closing the popups is harmless: the shell reloads when the manager
     // itself is among the updated plugins, and the detached worker
@@ -909,8 +768,8 @@ Panel {
     onTriggered: root.publishSettingsSnapshot()
   }
 
-  // Installed plugin version, from the local plugin manifest (display gate
-  // for the Update button: show it only when the catalog version is newer).
+  // Installed plugin version, from the local plugin manifest (displayed in
+  // the panel header next to the title).
   property string installedVersion: ""
 
   readonly property string pluginsDir: {
@@ -923,14 +782,29 @@ Panel {
     return s && s.indexOf("..") === -1 ? root.pluginsDir + "/" + s + "/manifest.json" : ""
   }
 
-  // Catalog version vs installed version (numeric semver-ish compare).
+  // Update-button gate: an entry for this plugin in the shared poll
+  // (updateList) — the git-ancestry behind-set the badge, the settings
+  // lists, and the extension all act on. The old gate compared catalog and
+  // manifest version numbers, which disagrees with all of them whenever a
+  // version number lags real commits (a fix shipped without a bump shows no
+  // button although the badge counts the plugin, and vice versa: a bumped
+  // version already fetched is "newer" on paper yet up to date on disk).
+  // Only entries the verification setting allows qualify: verified-only
+  // unless "Update to unverified versions" is on, exactly the badge count
+  // and the batch button's set. A poll that has not run yet offers nothing
+  // (offline never invents an update).
   readonly property bool hasUpdate: {
-    var e = root.catalogEntry
-    if (!e || e.id !== root.statusForId || !root.pluginInstalled) return false
-    var remote = String(e.version || "")
-    var local = root.installedVersion
-    if (!remote || !local) return false
-    return root.compareVersions(remote, local) > 0
+    if (!root.pluginInstalled) return false
+    var s = root.statusForId
+    var l = root.updateList
+    if (s === "" || !Array.isArray(l)) return false
+    for (var i = 0; i < l.length; i++) {
+      var p = l[i]
+      if (p && String(p.id) === s &&
+          (root.allowUnverified || p.verified === true))
+        return true
+    }
+    return false
   }
 
   // Version of the watched plugin: prefers local installed version, falls back
@@ -940,21 +814,6 @@ Panel {
     var e = root.catalogEntry
     if (e && e.version) return String(e.version)
     return ""
-  }
-
-  function compareVersions(a, b) {
-    var sa = String(a || "").trim().replace(/^v/i, "")
-    var sb = String(b || "").trim().replace(/^v/i, "")
-    var pa = sa.split(".")
-    var pb = sb.split(".")
-    for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
-      var na = parseInt(pa[i], 10)
-      var nb = parseInt(pb[i], 10)
-      na = isNaN(na) ? 0 : na
-      nb = isNaN(nb) ? 0 : nb
-      if (na !== nb) return na > nb ? 1 : -1
-    }
-    return 0
   }
 
   // Marketplace catalog entry for the watched plugin (display only: the
@@ -1209,7 +1068,6 @@ Panel {
     if (!root.watchState) return
     if (root.barMoveSections.indexOf(section) === -1) return
     root.moveSection = section
-    root.moveOutput = ""
     moveProc.command = [
       "bash", "-c",
       'omarchy bar move "$1" --section "$2" 2>/dev/null || omarchy bar put "$1" --section "$2" 2>/dev/null || omarchy plugin enable "$1" --section "$2"',
@@ -1226,7 +1084,6 @@ Panel {
   // commands directly. The popup stays open and the status row refreshes.
   function setEnabledForWatch(activate) {
     if (!root.watchState) return
-    root.enabledOutput = ""
     enabledProc.command = [
       "omarchy", "plugin", activate ? "enable" : "disable", String(root.watchState.id)
     ]
@@ -1300,8 +1157,8 @@ Panel {
     }
   }
 
-  // Local manifest of the watched plugin (installed version for the
-  // Update-button gate). Path follows statusForId, so it reloads per plugin.
+  // Local manifest of the watched plugin (installed version shown in the
+  // panel header). Path follows statusForId, so it reloads per plugin.
   FileView {
     id: manifestFile
     path: root.installedManifestPath
@@ -1380,74 +1237,28 @@ Panel {
     onLoadFailed: root.managerVersion = ""
   }
 
-  // Update poll: detection identical to omaplug's plugin-state.sh — an
-  // installed user plugin is outdated when its git HEAD is a strict ancestor
-  // of origin/HEAD (git fetch + merge-base --is-ancestor), so both widgets
-  // agree on the exact same set (version numbers in manifest/catalog can lag
-  // behind real commits, e.g. a fix shipped without a version bump). Dev
-  // symlinks, non-git dirs, detached HEADs, and dirty working trees are
-  // skipped (omaplug shows those as LOCAL_CHANGES, never as an UPDATE), a
-  // failed fetch counts as "not an
-  // update" (offline never invents one). Emits the behind set as JSON
-  // ({ok, plugins: [{id, name, installed, latest, remote, verified}]}); the
-  // catalog (15 MB, far over the kernel's per-arg limit, so it rides in on
-  // stdin — --argjson on the command line fails with "Argument list too
-  // long") only decorates entries with the latest version and the verified
-  // flag. Verification is pinned to the catalog's verificationCommit, so an
-  // entry is verified only when the fetched remote tip IS that exact commit:
-  // if upstream advanced after the catalog observation (remote tip differs),
-  // the new tip was never reviewed and the update is demoted to unverified.
-  // Each entry's remote (the fetched tip sha) is the commit a verified
-  // update pins to in the worker (updateWorkerScript re-verifies it).
-  readonly property string checkScript: [
-    "set -u",
-    "export GIT_TERMINAL_PROMPT=0",
-    "export GIT_ASKPASS=true",
-    "export GIT_SSH_COMMAND=\"${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}\"",
-    "PLUG=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins\"",
-    "list=$(omarchy plugin list --json 2>/dev/null) || list=\"[]\"",
-    "catalog=$(curl -fsSL --proto '=https' --max-time 30 --max-filesize 16777216 \"https://plugins.omarchy.org/catalog.json\" 2>/dev/null) || catalog=\"\"",
-    "[ -n \"$catalog\" ] || { printf '%s' '{\"ok\":false,\"error\":\"catalog-unreachable\"}'; exit 0; }",
-    "rows=\"\"",
-    "for ID in $(jq -r '(if type == \"array\" then . else [] end)[] | select(type == \"object\" and ((.firstParty // false) | not)) | .id // empty' <<<\"$list\" 2>/dev/null); do",
-    "  case \"$ID\" in *[!a-z0-9.-]*|.*|*..*) continue ;; esac",
-    "  D=\"$PLUG/$ID\"",
-    "  [ -L \"$D\" ] && continue",
-    "  [ -d \"$D/.git\" ] || continue",
-    "  HEAD_SHA=$(git -C \"$D\" rev-parse HEAD 2>/dev/null) || continue",
-    "  git -C \"$D\" remote get-url origin >/dev/null 2>&1 || continue",
-    "  git -C \"$D\" symbolic-ref --quiet HEAD >/dev/null 2>&1 || continue",
-    "  [ -z \"$(git -C \"$D\" status --porcelain --untracked-files=normal 2>/dev/null)\" ] || continue",
-    "  timeout 15 git -C \"$D\" fetch --quiet origin HEAD 2>/dev/null || continue",
-    "  REMOTE=$(git -C \"$D\" rev-parse --verify FETCH_HEAD 2>/dev/null) || continue",
-    "  if [ -n \"$REMOTE\" ] && [ \"$HEAD_SHA\" != \"$REMOTE\" ] && git -C \"$D\" merge-base --is-ancestor \"$HEAD_SHA\" \"$REMOTE\" 2>/dev/null; then",
-    "    M=\"$D/manifest.json\"",
-    "    VER=$(jq -r '.version // \"\"' \"$M\" 2>/dev/null | tr -d '\\t\\r\\n')",
-    "    NAME=$(jq -r '.name // \"\"' \"$M\" 2>/dev/null | tr -d '\\t\\r\\n')",
-    "    rows+=$(printf '%s\\t%s\\t%s\\t%s' \"$ID\" \"$VER\" \"$NAME\" \"$REMOTE\")$'\\n'",
-    "  fi",
-    "done",
-    "plugins=$(printf '%s' \"$catalog\" | jq -c --arg rows \"$rows\" '",
-    "(.plugins // []) as $pl",
-    "| [ $rows | split(\"\\n\")[] | select(length > 0) | split(\"\\t\")",
-    "  | {id: .[0], installed: .[1], name: (if length > 2 then .[2] else \"\" end), remote: (if length > 3 then .[3] else \"\" end) }",
-    "] | map(. as $p",
-    "  | ($pl | map(select(type == \"object\" and .id == $p.id)) | first) as $e",
-    "  | ((if $e == null then \"\" else ($e.verificationCommit // \"\") end) | tostring) as $vc",
-    "  | {id: $p.id, name: (if $p.name != \"\" then $p.name else $p.id end),",
-    "    installed: ($p.installed | tostring),",
-    "    latest: ((if $e == null then \"\" else ($e.version // \"\") end) | tostring),",
-    "    remote: $p.remote,",
-    "    verified: ((if $e == null then \"\" else ($e.verificationStatus // \"\") end) | tostring) == \"verified\"",
-    "      and $vc != \"\" and $p.remote == $vc})",
-    "' 2>/dev/null) || plugins=\"[]\"",
-    "[ \"${plugins:0:1}\" = \"[\" ] || plugins=\"[]\"",
-    "printf '%s' \"{\\\"ok\\\":true,\\\"plugins\\\":$plugins}\""
-  ].join("\n")
-
+  // Update poll: detection lives in the shared detector (bin/omarchy-plugin-update
+  // check — the same implementation behind the native host's update cache),
+  // so the badge, the wizard, and the extension agree on the exact same
+  // set: an installed user plugin is outdated when its git HEAD is a strict
+  // ancestor of origin's freshly fetched HEAD (version numbers in
+  // manifest/catalog can lag behind real commits, e.g. a fix shipped
+  // without a version bump). Dev symlinks, non-git dirs, detached HEADs,
+  // and dirty working trees are skipped (omaplug shows those as
+  // LOCAL_CHANGES, never as an UPDATE), a failed fetch counts as "not an
+  // update" (offline never invents one). The detector emits the behind set
+  // as JSON ({ok, plugins: [{id, name, installed, latest, remote,
+  // verified}]}); the catalog (15 MB, far over the kernel's per-arg limit)
+  // rides in on its stdin and only decorates entries with the latest
+  // version and the verified flag. Verification is pinned to the catalog's
+  // verificationCommit: an entry is verified only when the fetched remote
+  // tip IS that exact commit — if upstream advanced after the catalog
+  // observation, the new tip was never reviewed and the update is demoted
+  // to unverified. Each entry's remote (the fetched tip sha) is the commit
+  // a verified update pins to in the worker (apply re-verifies it).
   Process {
     id: updateCheckProc
-    command: ["bash", "-c", root.checkScript]
+    command: ["bash", root.pluginDir + "/bin/omarchy-plugin-update", "check"]
     stdout: StdioCollector {
       id: updateCheckOut
       waitForEnd: true
@@ -1623,7 +1434,7 @@ Panel {
         entry = null
       }
       root.catalogEntry = entry
-      if (entry && ((entry.kind || "").indexOf("Bar widget") !== -1 || entry.category === "Bar widgets" || entry.category === "Widgets")) {
+      if (entry && (String(entry.kind || "").indexOf("Bar widget") !== -1 || entry.category === "Bar widgets" || entry.category === "Widgets")) {
         root.isBarWidget = true
       }
       root.catalogLoading = false

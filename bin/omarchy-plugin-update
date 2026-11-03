@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# omarchy-plugin-update — the plugin system's single update-detection and
+# pinned-update implementation, shared by the bar widget (BarWatch.qml),
+# the wizard (bin/omarchy-plugin-worker), and the native messaging host
+# (bin/omarchy-plugin-install-host). Keeping one copy means the bar badge,
+# the extension's Update buttons, and the confirm dialogs can never drift
+# on what "an update" means or which commit an update may load.
+#
+#   check                Print {"ok":true,"plugins":[...]}: one entry per
+#                        plugin that is behind, in omaplug's git-ancestry
+#                        model — fetch origin's HEAD, behind iff the fetched
+#                        tip differs from local HEAD and HEAD is an ancestor
+#                        of it; symlinks, dirty worktrees, detached HEADs,
+#                        and clones without an origin are skipped silently.
+#                        Each entry is decorated with the catalog:
+#                        {id, name, installed, latest, remote, verified}
+#                        plus installedVersion/latestVersion aliases for the
+#                        host's update-cache.json schema. remote is the
+#                        fetched tip only when it is a real 40-hex sha. An
+#                        entry is verified only when the fetched tip IS the
+#                        catalog's verificationCommit: if upstream advanced
+#                        after the catalog observation, the new tip was
+#                        never reviewed and the update demotes to unverified.
+#                        A catalog failure prints {"ok":false,...} (exit 0):
+#                        callers keep their last good view, offline never
+#                        invents an update.
+#   apply <id> <sha>     Apply one update. A verified update pins to the
+#                        exact commit the poll saw: re-fetch origin and
+#                        refuse unless the fresh tip IS that commit (any
+#                        divergence since the poll leaves the plugin
+#                        untouched), then fast-forward to exactly that
+#                        commit and re-validate the plugin before the shell
+#                        could run any of its code, rolling back to
+#                        ORIG_HEAD on validation failure. An empty <sha> is the
+#                        explicit unverified
+#                        opt-in (allowUnverified): the plain CLI update,
+#                        which loads the current branch tip by user choice.
+#                        Prints one status word:
+#                          exit 0: pinned | cli-updated | cli-uptodate
+#                          exit 1: fetch-failed | upstream-advanced |
+#                                  ff-failed | validate-failed | not-git |
+#                                  cli-failed (raw CLI output follows)
+#                          exit 2: invalid-id | invalid-sha
+#                        Callers map the code to their own notification
+#                        wording; a present-but-malformed pin never falls
+#                        through to the unverified CLI path.
+set -u
+export GIT_TERMINAL_PROMPT=0
+export GIT_ASKPASS=true
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}"
+
+CATALOG_URL="${OMARCHY_CATALOG_URL:-https://plugins.omarchy.org/catalog.json}"
+PLUG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"
+
+cmd_check() {
+  local list="" catalog="" rows="" id d head_sha remote ver name plugins
+  list=$(omarchy plugin list --json 2>/dev/null) || list="[]"
+  [[ -n $list ]] || list="[]"
+  catalog=$(curl -fsSL --proto '=https' --max-time 30 --max-filesize 16777216 "$CATALOG_URL" 2>/dev/null) || catalog=""
+  if [[ -z $catalog ]]; then
+    printf '{"ok":false,"error":"catalog-unreachable"}'
+    return 0
+  fi
+  rows=""
+  for id in $(jq -r '(if type == "array" then . else [] end)[] | select(type == "object" and ((.firstParty // false) | not)) | .id // empty' <<<"$list" 2>/dev/null); do
+    case "$id" in *[!a-z0-9.-]*|.*|*..*) continue ;; esac
+    d="$PLUG_DIR/$id"
+    [[ -L $d ]] && continue
+    [[ -d $d/.git ]] || continue
+    head_sha=$(git -C "$d" rev-parse HEAD 2>/dev/null) || continue
+    git -C "$d" remote get-url origin >/dev/null 2>&1 || continue
+    git -C "$d" symbolic-ref --quiet HEAD >/dev/null 2>&1 || continue
+    [[ -z "$(git -C "$d" status --porcelain --untracked-files=normal 2>/dev/null)" ]] || continue
+    timeout 15 git -C "$d" fetch --quiet origin HEAD 2>/dev/null || continue
+    remote=$(git -C "$d" rev-parse --verify FETCH_HEAD 2>/dev/null) || continue
+    if [[ -n $remote && $head_sha != "$remote" ]] && git -C "$d" merge-base --is-ancestor "$head_sha" "$remote" 2>/dev/null; then
+      ver=$(jq -r '.version // ""' "$d/manifest.json" 2>/dev/null | tr -d '\t\r\n') || ver=""
+      name=$(jq -r '.name // ""' "$d/manifest.json" 2>/dev/null | tr -d '\t\r\n') || name=""
+      rows+=$(printf '%s\t%s\t%s\t%s' "$id" "$ver" "$name" "$remote")$'\n'
+    fi
+  done
+  plugins=$(printf '%s' "$catalog" | jq -c --arg rows "$rows" '
+    (.plugins // []) as $pl
+    | [ $rows | split("\n")[] | select(length > 0) | split("\t")
+        | {id: .[0], installedVersion: .[1], name: (if length > 2 then .[2] else "" end),
+           remote: (if length > 3 then .[3] else "" end)}
+      ]
+    | map(. as $p
+      | ($pl | map(select(type == "object" and .id == $p.id)) | first) as $e
+      | (if $e == null then "" else ($e.verificationStatus // "") end) as $st
+      | (if $e == null then "" else ($e.verificationCommit // "") end) as $vc
+      | {id: $p.id,
+        name: (if $p.name != "" then $p.name else $p.id end),
+        installedVersion: ($p.installedVersion | tostring),
+        installed: ($p.installedVersion | tostring),
+        latestVersion: ((if $e == null then "" else ($e.version // "") end) | tostring),
+        latest: ((if $e == null then "" else ($e.version // "") end) | tostring),
+        remote: (if ($p.remote | test("^[0-9a-f]{40}$")) then $p.remote else "" end),
+        verified: ($st == "verified"
+                   and ($p.remote | test("^[0-9a-f]{40}$"))
+                   and $p.remote == $vc)})
+  ' 2>/dev/null) || plugins="[]"
+  [[ ${plugins:0:1} == "[" ]] || plugins="[]"
+  printf '{"ok":true,"plugins":%s}' "$plugins"
+}
+
+cmd_apply() {
+  local id="${1:-}" expected="${2:-}" d="" tip="" out="" rc=0
+  # Same id contract as the bar worker's specs and omaplug's valid_plugin_id
+  # (lowercase, dotted, no dots-as-components); anything else is rejected
+  # rather than interpolated anywhere.
+  case "$id" in ''|*[!a-z0-9.-]*|.*|*..*|*:*)
+    printf 'invalid-id\n'
+    return 2
+  ;; esac
+  d="$PLUG_DIR/$id"
+  if [[ -z $expected ]]; then
+    # Explicit unverified opt-in: the plain CLI update. It ends with its own
+    # "omarchy-shell shell rescanPlugins"; the batch worker shadows that on
+    # PATH and fires one rescan for the whole batch.
+    out=$(omarchy plugin update "$id" --yes 2>&1)
+    rc=$?
+    if (( rc != 0 )); then
+      printf 'cli-failed\n'
+      [[ -n $out ]] && printf '%s\n' "$out"
+      return 1
+    fi
+    if printf '%s' "$out" | grep -qi 'up to date'; then
+      printf 'cli-uptodate\n'
+    else
+      printf 'cli-updated\n'
+    fi
+    return 0
+  fi
+  # A pin must be a full lowercase 40-hex sha; malformed pins are refused
+  # outright (exit 2) instead of falling through to the CLI.
+  if (( ${#expected} != 40 )) || [[ -n ${expected//[0-9a-f]/} ]]; then
+    printf 'invalid-sha\n'
+    return 2
+  fi
+  if [[ ! -d $d/.git ]]; then
+    printf 'not-git\n'
+    return 1
+  fi
+  if ! timeout 30 git -C "$d" fetch --quiet origin HEAD; then
+    printf 'fetch-failed\n'
+    return 1
+  fi
+  tip=$(git -C "$d" rev-parse --verify FETCH_HEAD 2>/dev/null) || { printf 'fetch-failed\n'; return 1; }
+  if [[ $tip != "$expected" ]]; then
+    # The commit the poll reviewed is no longer origin's tip: anything newer
+    # went unreviewed, so the fail-closed path leaves the plugin alone.
+    printf 'upstream-advanced\n'
+    return 1
+  fi
+  if ! git -C "$d" merge --ff-only "$expected" >/dev/null 2>&1; then
+    printf 'ff-failed\n'
+    return 1
+  fi
+  if ! omarchy plugin validate "$d" >/dev/null 2>&1; then
+    # ORIG_HEAD is the pre-fast-forward commit git recorded: undo the
+    # checkout so an unvalidated plugin never stays on disk.
+    git -C "$d" reset --hard ORIG_HEAD >/dev/null 2>&1 || true
+    printf 'validate-failed\n'
+    return 1
+  fi
+  printf 'pinned\n'
+  return 0
+}
+
+case "${1:-}" in
+  check) cmd_check ;;
+  apply) shift; cmd_apply "${1:-}" "${2:-}" ;;
+  *)
+    printf 'usage: omarchy-plugin-update check | apply <id> [expected-sha]\n' >&2
+    exit 2
+  ;;
+esac

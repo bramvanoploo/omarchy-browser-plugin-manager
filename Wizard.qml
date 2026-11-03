@@ -58,7 +58,7 @@ Item {
   // AMO; Chromium-based browsers that support Chrome Web Store extensions
   // install from the CWS listing page (store-assigned item id URL).
   readonly property string amoUrl:
-    "https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/"
+    "https://addons.mozilla.org/firefox/addon/omarchy-browser-plugin-manager/"
   readonly property string cwsUrl:
     "https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf"
 
@@ -665,7 +665,7 @@ Item {
           root.catalogError = ""
           root.catalogEntry = entry
           if (entry.name) root.pluginName = String(entry.name)
-          if ((entry.kind || "").indexOf("Bar widget") !== -1 || entry.category === "Bar widgets" || entry.category === "Widgets") {
+          if (String(entry.kind || "").indexOf("Bar widget") !== -1 || entry.category === "Bar widgets" || entry.category === "Widgets") {
             root.isBarWidget = true
           }
         }
@@ -1424,189 +1424,18 @@ Item {
   // wizard: it performs the CLI work, retries the enable through the
   // shell's post-clone discovery race ("is not known"), verifies the end
   // state, and finishes with the usual desktop notification.
-  // Positional parameters ($1=id, $2=name, $3=repo, $4=bar section) are
-  // passed directly via execve argv, avoiding temporary script files and
-  // shell interpolation.
-
-  function buildWorkerScript(kind) {
-    var s = [
-      "set -u",
-      "export PATH=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH\"",
-      "ID=\"$1\"",
-      "NAME=\"$2\"",
-      "REPO=\"$3\"",
-      "SECTION=\"$4\"",
-      "notify_cmd=\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send\"",
-      "command -v \"$notify_cmd\" >/dev/null 2>&1 || notify_cmd=\"$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)\"",
-      "notify() {",
-      "  \"$notify_cmd\" --app-name omarchy-browser-plugin-manager --expire-time 8000 \"$1\" \"$2\"",
-      "}",
-      "list() { omarchy plugin list --json 2>/dev/null; }",
-      "enabled() { list | jq -e --arg id \"$ID\" 'any(.[]; .id == $id and .enabled == true)' >/dev/null 2>&1; }",
-      // The bar layout entry is the real placement record; a missing
-      // user config means defaults are in use and nothing verifies it.
-      "placed() {",
-      "  local f=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json\"",
-      "  [ -n \"$SECTION\" ] || return 0",
-      "  [ -f \"$f\" ] || return 0",
-      "  jq -e --arg id \"$ID\" --arg s \"$SECTION\" '(.bar.layout[$s] // []) | any(.[]; .id == $id)' \"$f\" >/dev/null 2>&1",
-      "}",
-      "OUT=''",
-      // In-progress system panel: publish a marker file (one per worker,
-      // removed on any exit) and summon the wizard on the running stage.
-      // The panel polls this directory and closes itself once no fresh
-      // marker remains; staleness (15min) guards workers that died without
-      // their EXIT trap.
-      "STATE_DIR=\"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager\"",
-      "MARK_DIR=\"$STATE_DIR/in-progress\"",
-      "mkdir -p \"$MARK_DIR\" 2>/dev/null || true",
-      "MARK=\"$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json\"",
-      "trap 'rm -f \"$MARK\"' EXIT",
-      "jq -cn --arg mode \"" + kind + "\" --arg id \"$ID\" --arg name \"$NAME\" '{mode:$mode,id:$id,name:$name,started:(now|floor)}' > \"$MARK\" 2>/dev/null || true",
-      "PAYLOAD=$(jq -cn --arg id \"$ID\" --arg name \"$NAME\" --arg action \"" + kind + "\" '{source:\"worker\",mode:\"running\",id:$id,name:$name,action:$action}' 2>/dev/null)",
-      "[ -n \"$PAYLOAD\" ] && omarchy-shell -q shell summon bramvanoploo.omarchy-browser-plugin-manager \"$PAYLOAD\" >/dev/null 2>&1 || true"
-    ]
-    if (kind === "update") {
-      // Pinned, fail-closed update mirroring the bar widget's updater: with
-      // a verified commit ($4), fast-forward the clone to exactly that sha,
-      // validate it, and roll back on validation failure. Upstream advanced
-      // past the pin leaves the plugin untouched. An empty pin is the
-      // explicit unverified opt-in: the plain CLI update. --yes because the
-      // user already confirmed in this dialog; the shell reloads the plugin
-      // itself, and a manager update reloads the shell, so this worker is
-      // detached like install/uninstall.
-      s = s.concat([
-        "export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true",
-        "export GIT_SSH_COMMAND=\"${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}\"",
-        "EXPECTED=\"$4\"",
-        "D=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$ID\"",
-        "if [ -n \"$EXPECTED\" ]; then",
-        "  if [ ${#EXPECTED} -ne 40 ] || [ -n \"${EXPECTED//[0-9a-f]/}\" ]; then",
-        "    notify \"Plugin update failed\" \"$NAME: the verified commit pin is malformed; refusing to update.\"",
-        "    exit 1",
-        "  fi",
-        "  if [ ! -d \"$D/.git\" ]; then",
-        "    notify \"Plugin update failed\" \"$NAME: no git clone to fast-forward at $D.\"",
-        "    exit 1",
-        "  fi",
-        "  if ! timeout 30 git -C \"$D\" fetch --quiet origin HEAD; then",
-        "    notify \"Plugin update failed\" \"$NAME: fetching the verified commit failed.\"",
-        "    exit 1",
-        "  fi",
-        "  TIP=\"$(git -C \"$D\" rev-parse --verify FETCH_HEAD 2>/dev/null || true)\"",
-        "  if [ \"$TIP\" != \"$EXPECTED\" ]; then",
-        "    notify \"Update unavailable\" \"$NAME: upstream advanced past the verified commit; the plugin was left untouched.\"",
-        "    exit 1",
-        "  fi",
-        "  if ! git -C \"$D\" merge --ff-only \"$EXPECTED\"; then",
-        "    notify \"Plugin update failed\" \"$NAME: the clone could not fast-forward to the verified commit.\"",
-        "    exit 1",
-        "  fi",
-        "  if ! OUT=\"$(omarchy plugin validate \"$D\" 2>&1)\"; then",
-        "    git -C \"$D\" reset --hard ORIG_HEAD >/dev/null 2>&1 || true",
-        "    notify \"Plugin update failed\" \"$NAME: the verified commit failed validation and was rolled back.\"",
-        "    exit 1",
-        "  fi",
-        "  notify \"Plugin updated\" \"$NAME is updated to verified commit ${EXPECTED:0:7}.\"",
-        "  exit 0",
-        "fi",
-        "if ! OUT=\"$(omarchy plugin update \"$ID\" --yes 2>&1)\"; then",
-        "  notify \"Plugin update failed\" \"$NAME: $OUT\"",
-        "  exit 1",
-        "fi",
-        "if printf '%s' \"$OUT\" | grep -qi 'up to date'; then",
-        "  notify \"Plugin up to date\" \"$NAME was already at the latest version.\"",
-        "else",
-        "  notify \"Plugin updated\" \"$NAME is updated to the latest version.\"",
-        "fi"
-      ])
-    } else if (kind === "install") {
-      s = s.concat([
-        "# The chosen bar section cannot ride on add's --enable, so clone",
-        "# first and let the enable loop below apply --section.",
-        "if ! OUT=\"$(omarchy plugin add \"$REPO\" --yes 2>&1)\"; then",
-        "  # The clone can land while add fails on its own enable attempt;",
-        "  # only re-add when the plugin directory did not arrive.",
-        "  if [ ! -d \"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$ID\" ]; then",
-        "    notify \"Plugin install failed\" \"$NAME: $OUT\"",
-        "    exit 1",
-        "  fi",
-        "fi",
-        "is_bar_widget() {",
-        "  local m=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$ID/manifest.json\"",
-        "  [ -f \"$m\" ] || return 1",
-        "  jq -e '((.kinds // []) | index(\"bar-widget\")) != null or .barWidget != null or (.entryPoints.barWidget != null)' \"$m\" >/dev/null 2>&1",
-        "}",
-        "EN=(omarchy plugin enable \"$ID\")",
-        "if is_bar_widget && [ -n \"$SECTION\" ]; then",
-        "  EN+=(--section \"$SECTION\")",
-        "fi",
-        "# The clone storm triggers a shell-wide rescan that can keep the",
-        "# fresh plugin unknown (\"is not known\") well past the add's 2s",
-        "# discovery window; wait for discovery, then enable (the shell IPC",
-        "# is idempotent) until the state reads enabled.",
-        "for _ in $(seq 1 15); do enabled && break; sleep 1; done",
-        "for _ in $(seq 1 10); do",
-        "  enabled && break",
-        "  OUT=\"$(\"${EN[@]}\" 2>&1)\"",
-        "  sleep 1",
-        "done",
-        "if enabled; then",
-        "  # Land the placement through the scan's config sweep: the sweep",
-        "  # re-persists shell.json from the registry snapshot and can revert",
-        "  # the flag and drop the bar layout entry, so re-check both -- the",
-        "  # layout entry, not just the flag -- and re-run the enable",
-        "  # (idempotent, and it re-applies the section) while either lags.",
-        "  if is_bar_widget && [ -n \"$SECTION\" ]; then",
-        "    for _ in $(seq 1 4); do",
-        "      sleep 2",
-        "      enabled && placed && break",
-        "      \"${EN[@]}\" >/dev/null 2>&1",
-        "    done",
-        "  fi",
-        "fi",
-        "if enabled && { ! is_bar_widget || [ -z \"$SECTION\" ] || placed; }; then",
-        "  if is_bar_widget && [ -n \"$SECTION\" ]; then",
-        "    notify \"Plugin installed\" \"$NAME is installed and enabled on the bar ($SECTION section).\"",
-        "  else",
-        "    notify \"Plugin installed\" \"$NAME is installed and enabled.\"",
-        "  fi",
-        "  # Installing the manager itself is only half the system: its",
-        "  # browser extension carries the Install buttons. Re-summon the",
-        "  # (freshly reloaded) wizard on the browser-extension prompt.",
-        "  if [ \"$ID\" = \"bramvanoploo.omarchy-browser-plugin-manager\" ]; then",
-        "    PAYLOAD=$(jq -cn --arg id \"$ID\" --arg repo \"$REPO\" --arg name \"$NAME\" '{source:\"worker\",mode:\"browser-prompt\",id:$id,repo:$repo,name:$name}' 2>/dev/null) || PAYLOAD=\"{\\\"source\\\":\\\"worker\\\",\\\"mode\\\":\\\"browser-prompt\\\",\\\"id\\\":\\\"$ID\\\",\\\"repo\\\":\\\"$REPO\\\",\\\"name\\\":\\\"$NAME\\\"}\"",
-        "    omarchy-shell -q shell summon \"$ID\" \"$PAYLOAD\"",
-        "  fi",
-        "elif enabled; then",
-        "  notify \"Plugin installed\" \"$NAME is enabled, but its bar icon placement did not stick. Retry: omarchy plugin enable $ID --section $SECTION\"",
-        "else",
-        "  notify \"Plugin install incomplete\" \"$NAME was installed but failed to enable. Retry: omarchy plugin enable $ID\"",
-        "fi"
-      ])
-    } else {
-      s = s.concat([
-        // Unregister the native messaging host while the plugin directory
-        // still exists: the setup script lives inside it, and after removal
-        // nothing can find it.
-        "PLUG=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager\"",
-        "if [ -x \"$PLUG/bin/plugin-installer-setup\" ]; then",
-        "  \"$PLUG/bin/plugin-installer-setup\" --uninstall >/dev/null 2>&1 || true",
-        "fi",
-        "if ! OUT=\"$(omarchy plugin remove \"$ID\" --yes 2>&1)\"; then",
-        "  notify \"Plugin uninstall failed\" \"$NAME: $OUT\"",
-        "  exit 1",
-        "fi",
-        "notify \"Plugin uninstalled\" \"$NAME has been removed.\""
-      ])
-    }
-    return s.join("\n") + "\n"
-  }
+  // All three modes share one file worker (bin/omarchy-plugin-worker): the
+  // positional parameters ($1=mode, $2=id, $3=name, $4=repo, $5=bar section
+  // or — for update — the verified commit pin) ride directly on execve
+  // argv, avoiding temporary script files and shell interpolation. The
+  // pinned-update logic is the shared bin/omarchy-plugin-update apply, so
+  // confirming a verified update here loads exactly the reviewed commit or
+  // nothing at all, like the bar widget's updater.
 
   function spawnWorker(kind, section) {
     Quickshell.execDetached([
-      "bash", "-c", root.buildWorkerScript(kind),
-      "omarchy-plugin-worker",
+      "bash", root.pluginDir + "/bin/omarchy-plugin-worker",
+      kind,
       root.pluginId,
       root.pluginName,
       root.pluginRepo,
@@ -1704,7 +1533,7 @@ Item {
                     root.pluginName + " is enabled" + where)
         // Close like every other action: the browser-extension prompt is
         // shown exactly once, by the install worker directly after a
-        // successful install of the manager (see buildWorkerScript).
+        // successful install of the manager (see bin/omarchy-plugin-worker).
         root.close()
       } else if (root.enableTries >= 8) {
         root.fail("plugin is not enabled after repeated enable attempts (the shell config reverted it)")
