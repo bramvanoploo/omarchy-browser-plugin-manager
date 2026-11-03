@@ -1901,8 +1901,6 @@ Panel {
       id: popupColumn
       width: parent ? parent.width : 0
       spacing: Style.space(14)
-      // Halve the card's top inset above the header (see the header block).
-      y: -Style.space(18)
 
       // Header block (the wizard/OmaGuake panel header pattern): extensions
       // glyph (accent Text, no background, no border) + plugin name +
@@ -1911,7 +1909,7 @@ Panel {
       // (the same treatment the wizard's shared panel header got).
       Item {
         width: popupColumn.width
-        height: bwHeaderRow.implicitHeight + Style.space(6)
+        height: bwHeaderRow.implicitHeight + Style.space(24)
 
       Row {
         id: bwHeaderRow
@@ -2160,12 +2158,12 @@ Panel {
       }
 
       BWLine {
-        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled && root.isBarWidget
+        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
         text: "Move this plugin's bar icon:"
         horizontalAlignment: Text.AlignHCenter
       }
       Row {
-        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled && root.isBarWidget
+        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: Style.spacing.controlGap
         Repeater {

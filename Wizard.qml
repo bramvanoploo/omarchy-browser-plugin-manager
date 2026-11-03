@@ -503,10 +503,7 @@ Item {
 
   function install() {
     if (!root.canInstall) return
-    // Bar widgets get a placement step first; the chosen section is applied
-    // by the worker via `omarchy plugin enable --section`.
-    if (root.isBarWidget) root.stage = "placement"
-    else root.spawnWorker("install", "")
+    root.stage = "placement"
   }
 
   // Called from the placement step in install mode with an explicit
@@ -576,8 +573,7 @@ Item {
 
   function confirmEnable() {
     if (!root.canAct) return
-    if (root.isBarWidget) root.stage = "placement"
-    else root.enable("")
+    root.stage = "placement"
   }
 
   function runDisable() {
@@ -1975,19 +1971,18 @@ Item {
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.topMargin: card.contentTopInset / 2
+        anchors.topMargin: card.contentTopInset
         anchors.rightMargin: card.contentRightInset
         anchors.leftMargin: card.contentLeftInset
         spacing: Style.spacing.panelGap
 
         // Header block: bar icon + plugin name + version pill + action
-        // subtitle, with equal margins above and below (half the panel's
-        // content padding) and a full-width divider under the header. The
-        // icon-to-title spacing matches the bar widget panels (space(14)).
+        // subtitle, with equal margins above and below (matching the left
+        // content margin) and a full-width divider under the header.
         Item {
           id: headerBlock
           width: cardColumn.width
-          implicitHeight: headerRow.implicitHeight + Style.space(6)
+          implicitHeight: headerRow.implicitHeight + card.contentTopInset
           height: implicitHeight
 
         Row {
@@ -2135,8 +2130,8 @@ Item {
             // render strategy) keeps compositing its last frame onto this
             // full-screen window, painting globe scenes behind other
             // stages. A zero-sized item paints nothing.
-            width: root.opened && root.stage === "running" ? Style.space(360) : 0
-            height: root.opened && root.stage === "running" ? Style.space(180) : 0
+            width: root.opened && root.stage === "running" ? Style.space(540) : 0
+            height: root.opened && root.stage === "running" ? Style.space(270) : 0
             anchors.horizontalCenter: parent.horizontalCenter
             y: 10
             visible: root.opened && root.stage === "running"
