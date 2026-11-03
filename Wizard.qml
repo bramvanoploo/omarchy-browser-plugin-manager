@@ -203,6 +203,23 @@ Item {
   readonly property bool canAct: reviewBlocked.length === 0
   readonly property bool canInstall: canAct && stage === "review"
 
+  // Header version: the version pill shown in the panel header next to the title.
+  readonly property string headerVersion: {
+    if (root.stage === "settings") {
+      return (root.manifest && root.manifest.version) ? String(root.manifest.version) : ""
+    }
+    if (root.catalogEntry && root.catalogEntry.version) {
+      return String(root.catalogEntry.version)
+    }
+    if (root.pluginManifest && root.pluginManifest.version) {
+      return String(root.pluginManifest.version)
+    }
+    if (root.manifest && root.manifest.version) {
+      return String(root.manifest.version)
+    }
+    return ""
+  }
+
   // Header subtitle: the action this dialog performs, under the plugin
   // identity (name + version pill).
   readonly property string headerSubtitle: {
@@ -354,8 +371,9 @@ Item {
     opened = true
 
     runningT0 = Date.now()
-    // Fresh read of the shared settings (allowUnverified) on every summon.
+    // Fresh read of the shared settings (allowUnverified) and theme colors on every summon.
     settingsFile.reload()
+    themeColorsFile.reload()
 
     if (mode === "running") {
       // In-progress system panel summoned by a detached worker. No
@@ -1024,6 +1042,43 @@ Item {
     onLoadFailed: root.applySettings("")
   }
 
+  // Active theme palette colors (colors.toml): used for semantic badges
+  // such as the verified / unverified status in the install confirmation panel.
+  readonly property string themeColorsPath: {
+    var base = Quickshell.env("XDG_STATE_HOME")
+    if (!base) base = (Quickshell.env("HOME") || "/tmp") + "/.local/state"
+    return base + "/omarchy/current/theme/colors.toml"
+  }
+  property string themeSuccessColor: "#cfd7c5"
+  property string themeWarningColor: "#d79921"
+
+  FileView {
+    id: themeColorsFile
+    path: root.themeColorsPath
+    printErrors: false
+    onLoaded: root.parseThemeColors(text())
+  }
+
+  function parseThemeColors(raw) {
+    var lines = String(raw || "").split("\n")
+    var green = ""
+    var yellow = ""
+    var orange = ""
+    var red = ""
+    for (var i = 0; i < lines.length; i++) {
+      var m = lines[i].match(/^\s*([A-Za-z0-9_-]+)\s*=\s*["']?(#[0-9A-Fa-f]{3,8})/)
+      if (!m) continue
+      var k = m[1].toLowerCase()
+      if (k === "green" || (k === "color2" && !green)) green = m[2]
+      else if (k === "yellow" || (k === "color3" && !yellow)) yellow = m[2]
+      else if (k === "orange") orange = m[2]
+      else if (k === "red" || (k === "color1" && !red)) red = m[2]
+    }
+    if (green) root.themeSuccessColor = green
+    var warn = yellow || orange || red
+    if (warn) root.themeWarningColor = warn
+  }
+
   // Keep the native messaging host registration in sync with the plugin's
   // presence: registering on every load is idempotent (the script rewrites
   // its manifests, pinned to the published extension IDs), so installing the
@@ -1037,6 +1092,7 @@ Item {
 
   Component.onCompleted: {
     hostSetupProc.running = true
+    themeColorsFile.reload()
     // Re-open the running panel if a detached worker is still active
     // (the shell reload triggered by the install destroyed the panel).
     bootScanProc.running = true
@@ -1997,18 +2053,18 @@ Item {
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.topMargin: card.contentTopInset
+        anchors.topMargin: Math.round(card.contentTopInset * 0.8)
         anchors.rightMargin: card.contentRightInset
         anchors.leftMargin: card.contentLeftInset
         spacing: Style.spacing.panelGap
 
         // Header block: bar icon + plugin name + version pill + action
-        // subtitle, with equal margins above and below (matching the left
+        // subtitle, with equal margins above and below (20% less than the left
         // content margin) and a full-width divider under the header.
         Item {
           id: headerBlock
           width: cardColumn.width
-          implicitHeight: headerRow.implicitHeight + card.contentTopInset
+          implicitHeight: headerRow.implicitHeight + Math.round(card.contentTopInset * 0.8)
           height: implicitHeight
 
         Row {
@@ -2050,7 +2106,7 @@ Item {
               }
 
               Rectangle {
-                visible: root.manifest && root.manifest.version
+                visible: root.headerVersion !== ""
                 anchors.verticalCenter: parent.verticalCenter
                 height: Style.space(18)
                 width: headerVersionText.implicitWidth + Style.space(12)
@@ -2062,7 +2118,7 @@ Item {
                 Text {
                   id: headerVersionText
                   anchors.centerIn: parent
-                  text: "v" + String((root.manifest && root.manifest.version) || "")
+                  text: "v" + String(root.headerVersion)
                   font.family: Style.font.family
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -2241,7 +2297,7 @@ Item {
           height: Math.min(settingsBody.childrenRect.height,
                            Math.max(Style.space(160), panel.height
                              - Style.space(96)
-                             - headerBlock.height - footerSpacer.height
+                             - headerBlock.height - footerDivider.implicitHeight
                              - footerRow.height - 3 * cardColumn.spacing))
           // childrenRect (visible children only): Column.implicitHeight
           // counts the conditionally hidden rows too, which would leave
@@ -2564,25 +2620,38 @@ Item {
               return bits.join("  \u00b7  ")
             }
           }
-          PiLine {
+          PiTextLink {
             visible: root.pluginRepo.length > 0
-            text: "Source: " + root.pluginRepo
+            text: "Source: " + root.linkTag(root.pluginRepo, root.pluginRepo)
+            onLinkActivated: function (link) {
+              root.openUrl(link)
+              root.close()
+            }
           }
           PiLine {
             visible: root.catalogEntry !== null
+            textFormat: Text.RichText
             text: {
               var e = root.catalogEntry
               if (!e) return ""
-              var verification = e.verificationStatus === "verified" ? "verified" : "unverified"
-              var snapshot = e.verificationSnapshotStatus === "verified" ? "snapshot verified" : "snapshot unverified"
+              var isVer = e.verificationStatus === "verified"
+              var verification = isVer
+                ? "<span style='color: " + root.themeSuccessColor + ";'>verified</span>"
+                : "<span style='color: " + root.themeWarningColor + ";'>unverified</span>"
+              var isSnapVer = e.verificationSnapshotStatus === "verified"
+              var snapshot = isSnapVer
+                ? "snapshot <span style='color: " + root.themeSuccessColor + ";'>verified</span>"
+                : "snapshot <span style='color: " + root.themeWarningColor + ";'>unverified</span>"
               return "Marketplace status: " + verification + " \u00b7 " + snapshot
                 + " at " + root.shortSha(e.listingValidatedCommit)
             }
           }
           PiLine {
             visible: root.catalogEntry !== null
+            textFormat: Text.RichText
             color: Color.accent
-            text: "Installs the repository's current HEAD, which may differ from the verified snapshot."
+            text: "Installs the repository's current HEAD, which may differ from the "
+              + "<span style='color: " + root.themeSuccessColor + ";'>verified</span> snapshot."
           }
         }
 
@@ -2712,12 +2781,21 @@ Item {
           }
         }
 
+        // Divider spanning the full card width, above the footer action buttons.
         Item {
-          id: footerSpacer
-          width: 1
-          implicitHeight: footerRow.implicitHeight > 0 ? Style.spacing.xs : 0
+          id: footerDivider
+          visible: footerRow.visible && footerRow.implicitHeight > 0
+          width: cardColumn.width
+          implicitHeight: visible ? 1 : 0
           height: implicitHeight
-          visible: footerRow.implicitHeight > 0
+
+          Rectangle {
+            x: -card.contentLeftInset
+            width: card.width
+            height: 1
+            color: Qt.rgba(Color.foreground.r, Color.foreground.g,
+              Color.foreground.b, 0.18)
+          }
         }
 
         // ---- footer: confirm / cancel ----

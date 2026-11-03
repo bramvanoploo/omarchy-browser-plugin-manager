@@ -930,6 +930,15 @@ Panel {
     return root.compareVersions(remote, local) > 0
   }
 
+  // Version of the watched plugin: prefers local installed version, falls back
+  // to catalog version, displayed in the panel header next to the title.
+  readonly property string watchedVersion: {
+    if (root.installedVersion) return String(root.installedVersion)
+    var e = root.catalogEntry
+    if (e && e.version) return String(e.version)
+    return ""
+  }
+
   function compareVersions(a, b) {
     var sa = String(a || "").trim().replace(/^v/i, "")
     var sb = String(b || "").trim().replace(/^v/i, "")
@@ -1896,21 +1905,25 @@ Panel {
     open: root.opened
     padding: Style.space(24)
     contentWidth: popup.fittedContentWidth(Style.space(380))
-    contentHeight: popup.fittedContentHeight(popupColumn.implicitHeight, Style.space(560))
+    contentHeight: popup.fittedContentHeight(popupColumn.implicitHeight - Math.round(Style.space(24) * 0.2), Style.space(560))
 
     Column {
       id: popupColumn
+      anchors.top: parent ? parent.top : undefined
+      anchors.topMargin: -Math.round(Style.space(24) * 0.2)
       width: parent ? parent.width : 0
       spacing: Style.space(14)
 
       // Header block (the wizard/OmaGuake panel header pattern): extensions
       // glyph (accent Text, no background, no border) + plugin name +
       // version pill + muted status/id subtitle, with equal margins above
-      // and below and a divider spanning the full card width underneath
-      // (the same treatment the wizard's shared panel header got).
+      // and below (20% less than the left margin) and a divider spanning
+      // the full card width underneath.
       Item {
+        id: bwHeaderBlock
         width: popupColumn.width
-        height: bwHeaderRow.implicitHeight + Style.space(24)
+        implicitHeight: bwHeaderRow.implicitHeight + Math.round(Style.space(24) * 0.8)
+        height: implicitHeight
 
       Row {
         id: bwHeaderRow
@@ -1945,8 +1958,7 @@ Panel {
             }
 
             Rectangle {
-              visible: root.popupLive && root.statusChecked
-                && root.pluginInstalled && root.installedVersion !== ""
+              visible: root.popupLive && root.watchedVersion !== ""
               anchors.verticalCenter: parent.verticalCenter
               height: Style.space(18)
               width: bwHeaderVersionText.implicitWidth + Style.space(12)
@@ -1958,7 +1970,7 @@ Panel {
               Text {
                 id: bwHeaderVersionText
                 anchors.centerIn: parent
-                text: "v" + String(root.installedVersion)
+                text: "v" + String(root.watchedVersion)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
                 font.bold: true
@@ -2092,6 +2104,22 @@ Panel {
         text: "Open an installable plugin page on plugins.omarchy.org and the "
           + "icon lights up; click it here to install, uninstall, update, or "
           + "move that plugin's bar icon."
+      }
+
+      // Divider spanning the full card width, above the bottom action buttons.
+      Item {
+        id: bwActionDivider
+        width: popupColumn.width
+        implicitHeight: 1
+        height: implicitHeight
+
+        Rectangle {
+          x: -Style.space(24)
+          width: popup.width
+          height: 1
+          color: Qt.rgba(Color.foreground.r, Color.foreground.g,
+            Color.foreground.b, 0.18)
+        }
       }
 
       Row {
