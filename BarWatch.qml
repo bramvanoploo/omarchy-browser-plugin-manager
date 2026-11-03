@@ -2158,12 +2158,12 @@ Panel {
       }
 
       BWLine {
-        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
+        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled && (root.isBarWidget || root.iconSection !== "")
         text: "Move this plugin's bar icon:"
         horizontalAlignment: Text.AlignHCenter
       }
       Row {
-        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
+        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled && (root.isBarWidget || root.iconSection !== "")
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: Style.spacing.controlGap
         Repeater {

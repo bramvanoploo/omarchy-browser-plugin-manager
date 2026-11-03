@@ -503,7 +503,8 @@ Item {
 
   function install() {
     if (!root.canInstall) return
-    root.stage = "placement"
+    if (root.isBarWidget) root.stage = "placement"
+    else root.spawnWorker("install", "")
   }
 
   // Called from the placement step in install mode with an explicit
@@ -573,7 +574,8 @@ Item {
 
   function confirmEnable() {
     if (!root.canAct) return
-    root.stage = "placement"
+    if (root.isBarWidget) root.stage = "placement"
+    else root.enable("")
   }
 
   function runDisable() {
@@ -1456,8 +1458,15 @@ Item {
         "    exit 1",
         "  fi",
         "fi",
+        "is_bar_widget() {",
+        "  local m=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$ID/manifest.json\"",
+        "  [ -f \"$m\" ] || return 1",
+        "  jq -e '((.kinds // []) | index(\"bar-widget\")) != null or .barWidget != null or (.entryPoints.barWidget != null)' \"$m\" >/dev/null 2>&1",
+        "}",
         "EN=(omarchy plugin enable \"$ID\")",
-        "[ -n \"$SECTION\" ] && EN+=(--section \"$SECTION\")",
+        "if is_bar_widget && [ -n \"$SECTION\" ]; then",
+        "  EN+=(--section \"$SECTION\")",
+        "fi",
         "# The clone storm triggers a shell-wide rescan that can keep the",
         "# fresh plugin unknown (\"is not known\") well past the add's 2s",
         "# discovery window; wait for discovery, then enable (the shell IPC",
@@ -1474,14 +1483,16 @@ Item {
         "  # the flag and drop the bar layout entry, so re-check both -- the",
         "  # layout entry, not just the flag -- and re-run the enable",
         "  # (idempotent, and it re-applies the section) while either lags.",
-        "  for _ in $(seq 1 4); do",
-        "    sleep 2",
-        "    enabled && placed && break",
-        "    \"${EN[@]}\" >/dev/null 2>&1",
-        "  done",
+        "  if is_bar_widget && [ -n \"$SECTION\" ]; then",
+        "    for _ in $(seq 1 4); do",
+        "      sleep 2",
+        "      enabled && placed && break",
+        "      \"${EN[@]}\" >/dev/null 2>&1",
+        "    done",
+        "  fi",
         "fi",
-        "if enabled && placed; then",
-        "  if [ -n \"$SECTION\" ]; then",
+        "if enabled && { ! is_bar_widget || [ -z \"$SECTION\" ] || placed; }; then",
+        "  if is_bar_widget && [ -n \"$SECTION\" ]; then",
         "    notify \"Plugin installed\" \"$NAME is installed and enabled on the bar ($SECTION section).\"",
         "  else",
         "    notify \"Plugin installed\" \"$NAME is installed and enabled.\"",
@@ -1496,7 +1507,7 @@ Item {
         "elif enabled; then",
         "  notify \"Plugin installed\" \"$NAME is enabled, but its bar icon placement did not stick. Retry: omarchy plugin enable $ID --section $SECTION\"",
         "else",
-        "  notify \"Plugin install incomplete\" \"$NAME was installed but failed to enable. Retry: omarchy plugin enable $ID --section $SECTION\"",
+        "  notify \"Plugin install incomplete\" \"$NAME was installed but failed to enable. Retry: omarchy plugin enable $ID\"",
         "fi"
       ])
     } else {
