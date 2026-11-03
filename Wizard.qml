@@ -2562,7 +2562,8 @@ Item {
         // Sections laid out horizontally in an equal-width 3-column grid
         // (a wider version of the pre-refactor Left/Center/Right row: the
         // list is the shell's live section list). The manifest's default
-        // section carries a "(default)" suffix and primary coloring.
+        // section carries a "(default)" suffix; every section button shares
+        // the same neutral styling so the default is only called out by text.
         Column {
           visible: root.stage === "placement"
           width: cardColumn.width
@@ -2579,7 +2580,6 @@ Item {
               model: root.barPlacementSections
               delegate: PiButton {
                 width: (parent.width - 2 * Style.spacing.controlGap) / 3
-                primary: root.defaultSection === modelData
                 label: root.sectionLabel(modelData)
                   + (root.defaultSection === modelData ? " (default)" : "")
                 onClickedPi: root.mode === "install"

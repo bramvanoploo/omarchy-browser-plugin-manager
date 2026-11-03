@@ -868,7 +868,20 @@ Panel {
     running: true
     repeat: true
     triggeredOnStart: true
-    onTriggered: settingsCmdReadProc.running = true
+    // Self-heal: assigning running = true is a no-op on a Process that is
+    // still running, so one run that wedges (a cat killed by a config
+    // reload mid-stream, stdout never reported finished) stops the loop
+    // forever and every later command piles up in the file unconsumed,
+    // which is what makes the settings buttons look dead. A healthy cat
+    // of a small file finishes in milliseconds, so if it is still running
+    // a full interval after it was started it is wedged: kill it, and the
+    // next tick starts a fresh one.
+    onTriggered: {
+      if (settingsCmdReadProc.running)
+        settingsCmdReadProc.signal(9)
+      else
+        settingsCmdReadProc.running = true
+    }
   }
 
   // Republish while the settings panel is open: list, check-state, and
