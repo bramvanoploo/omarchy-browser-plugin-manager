@@ -97,6 +97,13 @@ Item {
   // settings.json, the catalog poll, and the detached workers.
   // settingsConfirm arms the settings-confirm stage (update/uninstall).
   property var settingsSnap: null
+  // Keys patched by a click with the value the click chose. The widget
+  // republishes snapshots on its own cadence, and a click takes up to a
+  // second to land (cmd poll, apply, republish, this reload), so an
+  // incoming snapshot that has not caught up must not repaint the control
+  // back to the pre-click value: pending values are re-asserted over every
+  // snapshot until one confirms them, which retires it.
+  property var settingsPending: ({})
   property var settingsConfirm: null
   readonly property string settingsPayloadPath: stateDir + "/settings-payload.json"
   readonly property string settingsCmdPath: stateDir + "/settings-cmd.json"
@@ -367,12 +374,22 @@ Item {
       pluginId = managerId
       pluginName = String((root.manifest && root.manifest.name) || managerId)
       settingsCmdQueue = []
+      settingsPending = ({})
       // Drop any log a previous session left on disk: this panel is the
       // only producer, and the widget dedupes live commands by seq.
-      settingsCmdFile.setText("")
+      root.settingsCmdWriteText = ""
+      root.flushSettingsCmd()
       settingsSession = String(payload.session || "")
       settingsSnap = (payload.snapshot && typeof payload.snapshot === "object")
         ? payload.snapshot : settingsSnap
+      // Announce the open panel: the widget's open flag can drift from
+      // this overlay's real state (summoned after a shell reload, by the
+      // worker, or on any path that did not route through the bar's own
+      // toggle), and while it is stale the widget never polls commands:
+      // every control bounces back to the pre-click snapshot. The
+      // announcement (and the heartbeat in the snapshot poll below) makes
+      // the widget adopt this session and open its side of the channel.
+      root.writeSettingsCmd({ action: "panel_open" })
       if (mode === "settings-confirm") {
         settingsConfirm = (payload.confirm && typeof payload.confirm === "object")
           ? payload.confirm : null
@@ -727,18 +744,73 @@ Item {
     onLoadFailed: root.applySettingsSnapshot("")
   }
 
-  FileView {
-    id: settingsCmdFile
-    path: root.settingsCmdPath
-    printErrors: false
+  // Command file writer: FileView writes silently skip whenever its
+  // in-memory text matches (file watches never fire on external writes
+  // here, so its view of the file goes stale the moment the widget
+  // consumes it), which made clicks and announcements vanish. The content
+  // rides to the writer as a process argument. A stdin-fed `cat > file`
+  // does not work: Quickshell keeps the stdin pipe open, cat never sees
+  // EOF, the process hangs, and every later send is stuck behind it.
+  // `printf '%s' "$1" | head -c $2` exits after exactly $2 bytes, so each
+  // send is deterministic. A send that wants to start while the previous
+  // one is still running is chained by the onFinished handler, so rapid
+  // clicks never lose a command.
+  Process {
+    id: settingsCmdWriteProc
+    command: ["sh", "-c",
+      'mkdir -p "${1%/*}" && printf %s "$3" | head -c "$2" > "$1"',
+      "sh", root.settingsCmdPath,
+      // Byte bound: 3x the JS string length (each UTF-16 unit is at most
+      // 3 UTF-8 bytes) plus one, so the bound is always above the real
+      // byte count and printf's EOF ends the stream. The cap keeps the
+      // argument under the kernel's per-arg limit.
+      String(Math.min(65536, root.settingsCmdWriteText.length * 3 + 1)),
+      root.settingsCmdWriteText]
+    // Quickshell Process exposes its exit notification as the overridable
+    // onExited handler (onFinished: is not a signal here: assigning it
+    // fails the component load); the flush chain continues queued sends
+    // from it.
+    onExited: function (exitCode) {
+      root.flushSettingsCmd()
+    }
+  }
+  property string settingsCmdWriteText: ""
+  property string settingsCmdStarted: "\u0000"
+
+  function flushSettingsCmd() {
+    if (settingsCmdWriteProc.running) return
+    if (root.settingsCmdWriteText === root.settingsCmdStarted) return
+    root.settingsCmdStarted = root.settingsCmdWriteText
+    settingsCmdWriteProc.running = true
   }
 
   function applySettingsSnapshot(raw) {
     if (root.mode !== "settings" && root.mode !== "settings-confirm") return
-    try {
-      var d = JSON.parse(raw)
-      if (d && typeof d === "object") root.settingsSnap = d
-    } catch (e) { /* keep the last good snapshot */ }
+    // Heartbeat: every snapshot poll also re-announces the open panel, so
+    // a widget that restarted (its flag reset) adopts this session and the
+    // command channel self-heals while the panel stays open.
+    root.writeSettingsCmd({ action: "panel_open" })
+    var d = null
+    try { d = JSON.parse(raw) } catch (e) { /* keep the last good snapshot */ }
+    if (!d || typeof d !== "object") return
+    // Re-assert values the user just clicked: the widget applies commands
+    // on its own cadence, and a snapshot that has not caught up must not
+    // repaint a control back to its pre-click value. A snapshot that
+    // confirms a pending value retires it.
+    var p = root.settingsPending
+    var keys = Object.keys(p)
+    if (keys.length > 0) {
+      var next = {}
+      for (var k in p) next[k] = p[k]
+      var retired = false
+      for (var i = 0; i < keys.length; i++) {
+        var key = keys[i]
+        if (d[key] === next[key]) { delete next[key]; retired = true }
+        else d[key] = next[key]
+      }
+      if (retired) root.settingsPending = next
+    }
+    root.settingsSnap = d
   }
 
   // The command file is an append log (one JSON object per line): clicks
@@ -756,10 +828,18 @@ Item {
     var o = obj || {}
     o.seq = String(Date.now()) + "-"
       + String(Math.floor(Math.random() * 1e6))
+    // Session stamp: the widget ignores commands from any other session,
+    // so lines a previous panel left on disk can never replay.
+    o.session = root.settingsSession
     settingsCmdQueue = settingsCmdQueue.concat([o])
-    settingsCmdFile.setText(settingsCmdQueue.map(function (c) {
+    // Bound the in-memory log: the widget consumes (removes) the file
+    // after dispatch, and consumed lines only inflate the rewrite.
+    if (settingsCmdQueue.length > 60)
+      settingsCmdQueue = settingsCmdQueue.slice(settingsCmdQueue.length - 60)
+    root.settingsCmdWriteText = settingsCmdQueue.map(function (c) {
       return JSON.stringify(c)
-    }).join("\n") + "\n")
+    }).join("\n") + "\n"
+    root.flushSettingsCmd()
   }
 
   function snapStr(key) {
@@ -780,6 +860,14 @@ Item {
     for (var k in s) out[k] = s[k]
     for (var k2 in props) out[k2] = props[k2]
     root.settingsSnap = out
+  }
+  // Mark a clicked value as pending (see settingsPending): kept over every
+  // snapshot that has not confirmed it, retired by one that has.
+  function markPending(key, value) {
+    var p = {}
+    for (var k in root.settingsPending) p[k] = root.settingsPending[k]
+    p[key] = value
+    root.settingsPending = p
   }
   function settingsPollLabel() {
     var vals = root.snapList("pollValues")
@@ -814,15 +902,18 @@ Item {
   function toggleAllowUnverified() {
     var next = !root.snapBool("allowUnverified")
     root.snapPatch({ allowUnverified: next })
+    root.markPending("allowUnverified", next)
     root.writeSettingsCmd({ action: "set_allow_unverified", on: next })
   }
   function toggleNotifyUpdates() {
     var next = !root.snapBool("notifyUpdates")
     root.snapPatch({ notifyUpdates: next })
+    root.markPending("notifyUpdates", next)
     root.writeSettingsCmd({ action: "set_notify_updates", on: next })
   }
   function setPollIntervalMinutes(m) {
     root.snapPatch({ pollMinutes: Number(m) })
+    root.markPending("pollMinutes", Number(m))
     root.writeSettingsCmd({ action: "set_poll_interval", minutes: Number(m) })
   }
   function beginUpdateConfirm(rows) {

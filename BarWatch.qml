@@ -694,8 +694,42 @@ Panel {
     }
   }
 
+  // Publishing rides a Process (same pattern as the wizard's command
+  // writer): FileView writes are unreliable in this environment (external
+  // deletes desync its in-memory text, and non-atomic setText silently
+  // no-ops), which showed up as the overlay never learning that a clicked
+  // value landed. The snapshot rides in as a process argument — a stdin-
+  // fed `cat > file` hangs because Quickshell never closes the stdin pipe,
+  // so the process never finishes and every later publish is stuck behind
+  // it — and `head -c` with a bound above the real byte count ends the
+  // stream at printf's EOF. The flush chain serializes back-to-back
+  // publishes.
+  Process {
+    id: settingsPayloadWriteProc
+    command: ["sh", "-c",
+      'mkdir -p "${1%/*}" && printf %s "$3" | head -c "$2" > "$1"',
+      "sh", root.settingsPayloadPath,
+      // 3x the JS string length (a UTF-16 unit is at most 3 UTF-8 bytes)
+      // plus one, so the bound always exceeds the byte count.
+      String(Math.min(65536, root.settingsPayloadWriteText.length * 3 + 1)),
+      root.settingsPayloadWriteText]
+    // Quickshell Process exit notification: overridable onExited handler
+    // (onFinished: is not a signal; assigning it fails the component load).
+    onExited: function (exitCode) { root.flushSettingsPayload() }
+  }
+  property string settingsPayloadWriteText: ""
+  property string settingsPayloadStarted: "\u0000"
+
+  function flushSettingsPayload() {
+    if (settingsPayloadWriteProc.running) return
+    if (root.settingsPayloadWriteText === root.settingsPayloadStarted) return
+    root.settingsPayloadStarted = root.settingsPayloadWriteText
+    settingsPayloadWriteProc.running = true
+  }
+
   function publishSettingsSnapshot() {
-    settingsPayloadFile.setText(JSON.stringify(root.settingsSnapshot()) + "\n")
+    root.settingsPayloadWriteText = JSON.stringify(root.settingsSnapshot()) + "\n"
+    root.flushSettingsPayload()
   }
 
   function summonSettingsWizard() {
@@ -712,13 +746,14 @@ Panel {
 
   // Commands from the settings overlay: the file is an append log (one
   // JSON object per line, see the wizard's writeSettingsCmd). Every line
-  // with an unseen seq is dispatched; commands the panel sends while
-  // closed are ignored, and a stale log from a dead session is truncated
-  // when the panel opens, so it can never fire late. run_update
-  // re-derives the worker specs from the live eligible list by id, so a
-  // stale panel can never update a plugin the current poll no longer offers.
+  // with an unseen seq is dispatched; commands carry the session id the
+  // wizard received with its summon payload, and a command from any other
+  // session (the log the bar's truncate removes lazily, a panel that
+  // closed, a previous session's clicks) is ignored, so stale lines can
+  // never replay settings writes. run_update re-derives the worker specs
+  // from the live eligible list by id, so a stale panel can never update
+  // a plugin the current poll no longer offers.
   function dispatchSettingsCmd(raw) {
-    if (!root.settingsOpen) return
     var lines = String(raw || "").split("\n")
     var handled = false
     for (var i = 0; i < lines.length; i++) {
@@ -727,6 +762,28 @@ Panel {
       if (!cmd || typeof cmd !== "object") continue
       var seq = String(cmd.seq || "")
       if (seq === "" || root.settingsSeenCmd[seq] === true) continue
+      var session = String(cmd.session || "")
+      // The overlay announces itself while it is open (on summon and with
+      // every snapshot poll). The open flag can drift from the overlay's
+      // real state (a re-summon after a shell reload, any summon that did
+      // not route through toggleSettings), and while it is stale every
+      // control in the panel is inert: the widget republishes the
+      // pre-click snapshot and the overlay repaints back to it. The
+      // announcement re-adopts the overlay's session and opens the widget
+      // side, so the channel self-heals within a poll cycle.
+      if (String(cmd.action || "") === "panel_open") {
+        root.settingsSeenCmd[seq] = true
+        if (session !== root.settingsSession) {
+          root.settingsSession = session
+          root.settingsOpen = true
+          root.publishSettingsSnapshot()
+        } else
+          root.settingsOpen = true
+        handled = true
+        continue
+      }
+      if (!root.settingsOpen) continue
+      if (session !== root.settingsSession) continue
       root.settingsSeenCmd[seq] = true
       root.applySettingsCmd(cmd)
       handled = true
@@ -763,28 +820,40 @@ Panel {
   }
 
   // Truncate the command log (consumed after dispatch, and on open, so a
-  // previous session's never-dispatched commands never replay).
+  // previous session's never-dispatched commands never replay). The rm
+  // rides a Process: FileView.setText("") silently skips when its
+  // in-memory text already matches, which in this environment (external
+  // writes invisible) it nearly always does after the wizard's first
+  // write, so the truncate would never land. The consume flag chains a
+  // consume requested while a rm is still running.
+  property bool settingsCmdConsumePending: false
+
   function consumeSettingsCmd() {
-    settingsCmdWriteFile.setText("")
+    root.settingsCmdConsumePending = true
+    if (!settingsCmdConsumeProc.running)
+      settingsCmdConsumeProc.running = true
   }
 
-  FileView {
-    id: settingsCmdWriteFile
-    path: root.settingsCmdPath
-    printErrors: false
-  }
-
-  FileView {
-    id: settingsPayloadFile
-    path: root.settingsPayloadPath
-    printErrors: false
+  Process {
+    id: settingsCmdConsumeProc
+    command: ["sh", "-c", 'rm -f "$1"', "sh", root.settingsCmdPath]
+    onExited: function (exitCode) {
+      if (root.settingsCmdConsumePending) {
+        root.settingsCmdConsumePending = false
+        settingsCmdConsumeProc.running = true
+      }
+    }
   }
 
   // Command channel: neither FileView's file watch (no external-write
   // events in this environment) nor FileRead's promise (never settles
   // here) can deliver the commands, so the file is cat'ed by a Process
-  // on a 500ms poll while the panel is open. Commands are deduped by
-  // seq in dispatchSettingsCmd, so re-reading the same file is inert.
+  // on a poll. The poll runs always: while the panel is open every 500ms,
+  // and while the widget thinks it is closed at a slower cadence, so a
+  // panel that opens without routing through toggleSettings (a re-summon
+  // after a shell reload) is heard by its self-announcements and the
+  // channel self-heals. Commands are deduped by seq, so re-reading the
+  // same file is inert.
   Process {
     id: settingsCmdReadProc
     command: ["cat", root.settingsCmdPath]
@@ -795,8 +864,8 @@ Panel {
   }
 
   Timer {
-    interval: 500
-    running: root.settingsOpen
+    interval: root.settingsOpen ? 500 : 1800
+    running: true
     repeat: true
     triggeredOnStart: true
     onTriggered: settingsCmdReadProc.running = true
