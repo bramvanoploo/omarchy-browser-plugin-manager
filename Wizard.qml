@@ -1899,7 +1899,11 @@ Item {
     color: Util.alpha(Color.foreground, 0.75)
     font.family: Style.font.family
     font.pixelSize: Style.font.body
-    onLinkActivated: function (link) { root.openUrl(link) }
+    property bool closeOnActivate: false
+    onLinkActivated: function (link) {
+      root.openUrl(link)
+      if (closeOnActivate) root.close()
+    }
   }
 
   // Caption-size RichText line: used by the browser-store support lists,
@@ -2711,11 +2715,8 @@ Item {
           }
           PiTextLink {
             visible: root.pluginRepo.length > 0
+            closeOnActivate: true
             text: "Source: " + root.linkTag(root.pluginRepo, root.pluginRepo)
-            onLinkActivated: function (link) {
-              root.openUrl(link)
-              root.close()
-            }
           }
           PiLine {
             visible: root.catalogEntry !== null
