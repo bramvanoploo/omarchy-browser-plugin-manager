@@ -2494,13 +2494,12 @@ Item {
             text: "Check for plugin updates:"
           }
           Row {
-            width: parent.width
+            anchors.horizontalCenter: parent.horizontalCenter
             spacing: Style.spacing.controlGap
             Repeater {
               model: root.snapList("pollValues")
               delegate: PiButton {
-                width: (parent.width - Style.space(34)
-                  - 5 * Style.spacing.controlGap) / 6
+                width: Style.space(84)
                 label: String(root.snapList("pollLabels")[index] || "")
                 primary: Number(modelData) === Number(root.snapStr("pollMinutes"))
                 onClickedPi: root.setPollIntervalMinutes(modelData)
