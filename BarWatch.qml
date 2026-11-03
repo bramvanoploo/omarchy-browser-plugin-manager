@@ -302,6 +302,7 @@ Panel {
   function checkForUpdates() {
     if (updateCheckProc.running) return
     root.updateChecking = true
+    root.publishSettingsSnapshot()
     updateCheckProc.running = true
   }
 
@@ -336,6 +337,7 @@ Panel {
       // blank the badge); the panel explains the failed check.
       root.updateCheckFailed = true
     }
+    root.publishSettingsSnapshot()
   }
 
   // The browser-extension store pages. The panel shows each family's
@@ -1416,19 +1418,33 @@ Panel {
     id: updateCheckProc
     command: ["bash", "-c", root.checkScript]
     stdout: StdioCollector {
+      id: updateCheckOut
       waitForEnd: true
-      onStreamFinished: {
-        var res = null
-        try { res = JSON.parse(String(text || "")) } catch (e) { res = null }
-        root.applyCheckResult(res)
-      }
     }
     onExited: function (exitCode) {
-      // No stdout handler ran (process died before printing): count it as a
-      // failed check, not an empty catalog.
-      if (exitCode !== 0 && root.updateChecking) {
+      if (exitCode === 0) {
+        var res = null
+        try { res = JSON.parse(String(updateCheckOut.text || "")) } catch (e) { res = null }
+        root.applyCheckResult(res)
+      } else if (root.updateChecking) {
         root.updateChecking = false
         root.updateCheckFailed = true
+        root.publishSettingsSnapshot()
+      }
+    }
+  }
+
+  // Self-heal: a check script hanging (curl or git stalling past its timeout)
+  // must not keep updateChecking permanently stuck true.
+  Timer {
+    interval: 45000
+    running: root.updateChecking
+    onTriggered: {
+      if (root.updateChecking) {
+        root.updateChecking = false
+        root.updateCheckFailed = true
+        if (updateCheckProc.running) updateCheckProc.signal(9)
+        root.publishSettingsSnapshot()
       }
     }
   }
@@ -1441,8 +1457,11 @@ Panel {
     id: browserCheckProc
     command: ["bash", "-c", root.browserProbeScript()]
     stdout: StdioCollector {
+      id: browserCheckOut
       waitForEnd: true
-      onStreamFinished: root.applyProbeOutput(text)
+    }
+    onExited: function (_code) {
+      root.applyProbeOutput(String(browserCheckOut.text || ""))
     }
   }
 
@@ -1512,32 +1531,34 @@ Panel {
     id: listProc
     command: ["omarchy", "plugin", "list", "--json"]
     stdout: StdioCollector {
+      id: listProcOut
       waitForEnd: true
-      onStreamFinished: {
-        var entry = null
-        var parsed = false
-        try {
-          var plugins = JSON.parse(String(text || "[]"))
-          if (Array.isArray(plugins)) {
-            parsed = true
-            entry = plugins.filter(function (item) {
-              return item && String(item.id) === root.statusForId
-            })[0] || null
-          }
-        } catch (e) {
-          parsed = false
-        }
-        // A malformed read must never render as "not installed": leave the
-        // buttons unconfirmed (and re-read on the next open) instead.
-        if (parsed) {
-          root.pluginInstalled = !!entry && entry.firstParty !== true
-          root.pluginEnabled = !!entry && entry.enabled === true
-          root.statusChecked = true
-        }
-      }
     }
     onExited: function (exitCode) {
-      if (exitCode !== 0) root.statusChecked = false
+      if (exitCode !== 0) {
+        root.statusChecked = false
+        return
+      }
+      var entry = null
+      var parsed = false
+      try {
+        var plugins = JSON.parse(String(listProcOut.text || "[]"))
+        if (Array.isArray(plugins)) {
+          parsed = true
+          entry = plugins.filter(function (item) {
+            return item && String(item.id) === root.statusForId
+          })[0] || null
+        }
+      } catch (e) {
+        parsed = false
+      }
+      // A malformed read must never render as "not installed": leave the
+      // buttons unconfirmed (and re-read on the next open) instead.
+      if (parsed) {
+        root.pluginInstalled = !!entry && entry.firstParty !== true
+        root.pluginEnabled = !!entry && entry.enabled === true
+        root.statusChecked = true
+      }
     }
   }
 
@@ -1547,30 +1568,30 @@ Panel {
     id: catalogProc
     command: ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--", "https://plugins.omarchy.org/catalog.json"]
     stdout: StdioCollector {
+      id: catalogProcOut
       waitForEnd: true
-      onStreamFinished: {
-        var entry = null
-        try {
-          var catalog = JSON.parse(String(text || "{}"))
-          // The catalog root is an object ({generatedAt, plugins: [...]});
-          // a bare top-level array is accepted too, like the wizard.
-          var items = Array.isArray(catalog) ? catalog
-            : (catalog && Array.isArray(catalog.plugins) ? catalog.plugins : [])
-          entry = items.filter(function (item) {
-            return item && String(item.id) === root.catalogForId
-          })[0] || null
-        } catch (e) {
-          entry = null
-        }
-        root.catalogEntry = entry
-        root.catalogLoading = false
-      }
     }
     onExited: function (exitCode) {
       if (exitCode !== 0) {
         root.catalogEntry = null
         root.catalogLoading = false
+        return
       }
+      var entry = null
+      try {
+        var catalog = JSON.parse(String(catalogProcOut.text || "{}"))
+        // The catalog root is an object ({generatedAt, plugins: [...]});
+        // a bare top-level array is accepted too, like the wizard.
+        var items = Array.isArray(catalog) ? catalog
+          : (catalog && Array.isArray(catalog.plugins) ? catalog.plugins : [])
+        entry = items.filter(function (item) {
+          return item && String(item.id) === root.catalogForId
+        })[0] || null
+      } catch (e) {
+        entry = null
+      }
+      root.catalogEntry = entry
+      root.catalogLoading = false
     }
   }
 

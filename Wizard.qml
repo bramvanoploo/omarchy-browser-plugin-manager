@@ -805,8 +805,21 @@ Item {
       var retired = false
       for (var i = 0; i < keys.length; i++) {
         var key = keys[i]
-        if (d[key] === next[key]) { delete next[key]; retired = true }
-        else d[key] = next[key]
+        if (key === "updateChecking") {
+          if (d.updateChecking === true
+              || (d.lastCheckText && d.lastCheckText !== root.snapStr("lastCheckText"))
+              || (Date.now() - root.refreshRequestedAt > 15000)) {
+            delete next[key]
+            retired = true
+          } else {
+            d[key] = next[key]
+          }
+        } else if (d[key] === next[key]) {
+          delete next[key]
+          retired = true
+        } else {
+          d[key] = next[key]
+        }
       }
       if (retired) root.settingsPending = next
     }
@@ -915,6 +928,14 @@ Item {
     root.snapPatch({ pollMinutes: Number(m) })
     root.markPending("pollMinutes", Number(m))
     root.writeSettingsCmd({ action: "set_poll_interval", minutes: Number(m) })
+  }
+  property double refreshRequestedAt: 0
+  function refreshUpdates() {
+    if (root.snapBool("updateChecking")) return
+    root.snapPatch({ updateChecking: true })
+    root.markPending("updateChecking", true)
+    root.refreshRequestedAt = Date.now()
+    root.writeSettingsCmd({ action: "refresh" })
   }
   function beginUpdateConfirm(rows) {
     if (!rows || rows.length === 0) return
@@ -2329,7 +2350,7 @@ Item {
                 ? "Checking for updates\u2026"
                 : "Check for updates"
               enabled: !root.snapBool("updateChecking")
-              onClickedPi: root.writeSettingsCmd({ action: "refresh" })
+              onClickedPi: root.refreshUpdates()
             }
           }
 
