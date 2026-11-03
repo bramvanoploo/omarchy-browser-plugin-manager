@@ -57,6 +57,7 @@ Panel {
     function openSettings(): void { root.toggleSettings() }
     function closeSettings(): void { root.settingsOpen = false }
     function toggleSettings(): void { root.toggleSettings() }
+    function togglePopup(): void { root.toggleLeft() }
   }
 
   readonly property string managerId: "bramvanoploo.omarchy-browser-plugin-manager"
@@ -1894,7 +1895,7 @@ Panel {
     bar: root.bar
     open: root.opened
     padding: Style.space(24)
-    contentWidth: popup.fittedContentWidth(Style.space(360))
+    contentWidth: popup.fittedContentWidth(Style.space(380))
     contentHeight: popup.fittedContentHeight(popupColumn.implicitHeight, Style.space(560))
 
     Column {
@@ -2165,11 +2166,11 @@ Panel {
       Row {
         visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled && (root.isBarWidget || root.iconSection !== "")
         anchors.horizontalCenter: parent.horizontalCenter
-        spacing: Style.spacing.controlGap
+        spacing: Style.space(6)
         Repeater {
           model: root.barMoveSections
           delegate: BWIconButton {
-            size: Style.space(32)
+            size: Style.space(48)
             label: root.sectionIcon(modelData)
             tooltipText: root.sectionLabel(modelData)
               + (root.iconSection === modelData ? " (active)" : "")

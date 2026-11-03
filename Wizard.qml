@@ -327,7 +327,8 @@ Item {
     stage = (newMode === "browser-prompt" || newMode === "browser-defer"
       || newMode === "running" || newMode === "settings"
       || newMode === "settings-confirm")
-      ? (newMode === "settings-confirm" ? "settings-confirm" : newMode) : "review"
+      ? (newMode === "settings-confirm" ? "settings-confirm" : newMode)
+      : (payload.stage === "placement" ? "placement" : "review")
     mode = newMode
 
     pluginId = String(payload.id || "")
@@ -2697,8 +2698,9 @@ Item {
             Repeater {
               model: root.barPlacementSections
               delegate: PiButton {
-                width: Style.space(34)
-                height: Style.space(34)
+                width: Style.space(51)
+                height: Style.space(51)
+                labelPixelSize: Style.space(24)
                 label: root.sectionIcon(modelData)
                 tooltipText: root.sectionLabel(modelData)
                   + (root.defaultSection === modelData ? " (default)" : "")
