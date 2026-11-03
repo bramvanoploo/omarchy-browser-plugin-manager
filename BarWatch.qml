@@ -857,9 +857,17 @@ Panel {
   Process {
     id: settingsCmdReadProc
     command: ["cat", root.settingsCmdPath]
+    // StdioCollector.streamFinished is a promise-style signal that, like
+    // FileRead, never settles in this environment, so it silently drops
+    // every batch and the buttons look dead. The collected stdout is
+    // readable on the StdioCollector itself, so dispatch on onExited,
+    // which the consume (rm) process shows is delivered reliably.
     stdout: StdioCollector {
+      id: settingsCmdReadOut
       waitForEnd: true
-      onStreamFinished: root.dispatchSettingsCmd(String(text || ""))
+    }
+    onExited: function (_code) {
+      root.dispatchSettingsCmd(String(settingsCmdReadOut.text || ""))
     }
   }
 
