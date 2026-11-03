@@ -121,7 +121,7 @@ Item {
     var t = e ? String(e.previewImage || e.previewThumbnail || "") : ""
     return /^assets\/[A-Za-z0-9._\/-]+$/.test(t) ? t : ""
   }
-  readonly property real catalogThumbRatio: 9 / 16
+  readonly property real catalogThumbRatio: 5 / 16
   readonly property real catalogThumbNative: {
     var e = root.catalogEntry
     var w = e ? (Number(e.previewWidth) || Number(e.previewThumbnailWidth) || 0) : 0
@@ -2464,7 +2464,7 @@ Item {
           spacing: Style.spacing.lg
 
           // Preview image: 100% width, height proportional to the image
-          // up to 16:9 max proportions. Taller images overflow at the
+          // up to 16:5 max proportions. Taller images overflow at the
           // bottom with the top pinned to the top.
           Rectangle {
             id: previewBox
