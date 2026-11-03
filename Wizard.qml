@@ -159,6 +159,8 @@ Item {
       var d = JSON.parse(String(raw || ""))
       if (d && typeof d.allowUnverified === "boolean")
         value = d.allowUnverified
+      else
+        value = false
     } catch (e) {
       value = false
     }

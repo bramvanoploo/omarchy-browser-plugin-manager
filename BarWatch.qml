@@ -206,6 +206,8 @@ Panel {
           root.pollMinutes = Number(d.pollMinutes)
         if (typeof d.allowUnverified === "boolean")
           root.allowUnverified = d.allowUnverified
+        else
+          root.allowUnverified = false
         if (typeof d.notifyUpdates === "boolean")
           root.notifyUpdates = d.notifyUpdates
       }
