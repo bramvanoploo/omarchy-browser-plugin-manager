@@ -1688,11 +1688,15 @@ Item {
       id: piMouse
       anchors.fill: parent
       hoverEnabled: true
-      // Stay enabled while the button is disabled so the tooltip (e.g.
-      // "Checking for updates...") still follows the pointer; the click
-      // is gated on the button's own enabled state instead.
+      // Kept enabled while the button is dimmed (a running check) so the
+      // tooltip ("Checking for updates...") still follows the pointer and a
+      // click always reaches the bar. The bar's own running-check guard drops
+      // a redundant click, so a click during a check is a safe no-op; gating
+      // the click on the button's enabled state instead made the refresh
+      // button inert whenever the published snapshot lagged with
+      // updateChecking true.
       cursorShape: piButton.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onClicked: if (piButton.enabled) piButton.clickedPi()
+      onClicked: piButton.clickedPi()
     }
     PanelToolTip {
       visible: piMouse.containsMouse && piButton.tooltipText !== ""
