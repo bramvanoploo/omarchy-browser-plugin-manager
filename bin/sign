@@ -7,7 +7,8 @@
 # Prerequisites (free):
 #   1. https://addons.mozilla.org/ -> developer account
 #   2. https://addons.mozilla.org/developers/keys/ -> create API key+secret
-#   3. web-ext:  npm install --global web-ext   (or: npm exec --yes --)
+#   3. web-ext:  npm install --global web-ext   (or: npm exec --yes --
+#      -- web-ext@<pinned>, see below)
 #
 # Usage:
 #   AMO_API_KEY=... AMO_API_SECRET=... bin/sign
@@ -35,7 +36,9 @@ OUT_DIR="$REPO_DIR/dist/signed"
 if command -v web-ext >/dev/null; then
   WEB_EXT=(web-ext)
 elif command -v npm >/dev/null; then
-  WEB_EXT=(npm exec --yes -- web-ext)
+  # Pinned version: this is the signing path, so never pull whatever npm
+  # serves today; bump deliberately after checking the changelog.
+  WEB_EXT=(npm exec --yes -- web-ext@10.8.0)
 else
   echo "web-ext not found; install it with: npm install --global web-ext" >&2
   exit 1

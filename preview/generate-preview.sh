@@ -20,7 +20,12 @@ if [[ ! -f "$MANIFEST_FILE" ]]; then
   exit 1
 fi
 
-VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))['version'])" 2>/dev/null || echo "0.8.3")
+VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))['version'])" 2>/dev/null \
+  || sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MANIFEST_FILE" | head -n1)
+if [[ -z "$VERSION" ]]; then
+  echo "Error: could not read a version from $MANIFEST_FILE" >&2
+  exit 1
+fi
 echo "==> Browser Plugin Manager v$VERSION preview banner"
 
 for asset in catalog_card.png settings_panel.png wizard_confirm.png; do

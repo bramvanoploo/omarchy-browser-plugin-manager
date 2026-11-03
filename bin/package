@@ -43,11 +43,14 @@ rm -f "$DIST_DIR/$NAME-$VERSION.xpi" \
 # --- Firefox .xpi: zip of the extension/ contents at the archive root. ---
 # Firefox's AMO lint REQUIRES the legacy MV2 "background.scripts" array, while
 # Chrome requires "service_worker" and warns about the MV2 key. The shared
-# source manifest keeps only "service_worker" (so Chrome and "Load unpacked"
-# stay warning-free), and the Firefox artifacts REPLACE the background block
-# with "scripts": Firefox ignores "service_worker" anyway, and keeping it
+# source manifest carries BOTH keys, so a plain "Load unpacked" works in
+# either browser family; each packaged artifact then trims the block to what
+# its browser accepts: the Firefox xpis REPLACE the background object with
+# "scripts" only (Firefox ignores "service_worker" anyway, and keeping it
 # beside "scripts" is what made AMO warn "service_worker is unsupported and
-# ignored" (mirrors how the Chrome-only "key" is injected for chrome.zip).
+# ignored"), and the chrome.zip DELETES "scripts" and keeps "service_worker"
+# (see the Chrome section below). No "key" is injected anywhere (see the
+# Chrome section for why).
 mkdir -p "$STAGE/xpi"
 cp -r "$EXT_DIR/." "$STAGE/xpi/"
 rm -f "$STAGE/xpi/.amo-upload-uuid"

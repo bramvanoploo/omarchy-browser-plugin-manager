@@ -644,7 +644,6 @@
     try {
       const state = await talkToHost({ type: "status", id: PLUGIN_ID }, HOST_STATUS_TIMEOUT_MS);
       if (!state || !state.ok || !lastState) return;
-      const prev = lastState;
       if (state.installed !== lastState.installed
         || state.enabled !== lastState.enabled
         || state.updateAvailable !== lastState.updateAvailable) {
