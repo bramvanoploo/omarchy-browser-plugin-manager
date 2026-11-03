@@ -126,6 +126,7 @@ Panel {
   property bool statusChecked: false
   property bool pluginInstalled: false
   property bool pluginEnabled: false
+  property bool isBarWidget: false
   property string statusForId: ""
   property string moveSection: ""
   property string moveOutput: ""
@@ -1053,6 +1054,7 @@ Panel {
       root.statusChecked = false
       root.pluginInstalled = false
       root.pluginEnabled = false
+      root.isBarWidget = false
       root.statusForId = ""
       root.installedVersion = ""
       root.catalogEntry = null
@@ -1180,12 +1182,28 @@ Panel {
     return String(section)
   }
 
+  function sectionIcon(section) {
+    if (section === "left") return "\uF036"
+    if (section === "centerBegin") return "\uF104"
+    if (section === "center") return "\uF037"
+    if (section === "centerEnd") return "\uF105"
+    if (section === "right") return "\uF038"
+    if (section === "tray") return "\uF01C"
+    return "\uF037"
+  }
+
   function moveIcon(section) {
     if (!root.watchState) return
     if (root.barMoveSections.indexOf(section) === -1) return
     root.moveSection = section
     root.moveOutput = ""
-    moveProc.command = ["omarchy", "bar", "move", String(root.watchState.id), "--section", section]
+    moveProc.command = [
+      "bash", "-c",
+      'omarchy bar move "$1" --section "$2" 2>/dev/null || omarchy bar put "$1" --section "$2" 2>/dev/null || omarchy plugin enable "$1" --section "$2"',
+      "bpm-move",
+      String(root.watchState.id),
+      section
+    ]
     moveProc.running = true
     root.close()
   }
@@ -1557,6 +1575,7 @@ Panel {
       if (parsed) {
         root.pluginInstalled = !!entry && entry.firstParty !== true
         root.pluginEnabled = !!entry && entry.enabled === true
+        root.isBarWidget = !!entry && Array.isArray(entry.kinds) && entry.kinds.indexOf("bar-widget") !== -1
         root.statusChecked = true
       }
     }
@@ -1591,6 +1610,9 @@ Panel {
         entry = null
       }
       root.catalogEntry = entry
+      if (entry && ((entry.kind || "").indexOf("Bar widget") !== -1 || entry.category === "Bar widgets" || entry.category === "Widgets")) {
+        root.isBarWidget = true
+      }
       root.catalogLoading = false
     }
   }
@@ -1598,22 +1620,23 @@ Panel {
   Process {
     id: moveProc
     stdout: StdioCollector {
+      id: moveProcOut
       waitForEnd: true
-      onStreamFinished: root.moveOutput += "\n" + String(text || "")
     }
     stderr: StdioCollector {
+      id: moveProcErr
       waitForEnd: true
-      onStreamFinished: root.moveOutput += "\n" + String(text || "")
     }
     onExited: function (exitCode) {
       var name = root.watchedName()
+      var out = (String(moveProcOut.text || "") + "\n" + String(moveProcErr.text || "")).trim()
       shellFile.reload() // reflect the new section in the move buttons
       if (exitCode === 0) {
-        root.notify("Bar icon moved", name + "'s icon now sits in the " + root.moveSection + " section.")
+        root.notify("Bar icon moved", name + "'s icon now sits in the " + root.sectionLabel(root.moveSection) + " section.")
       } else {
         root.notify("Bar icon move failed",
-                    name + ": omarchy bar move exited with code " + exitCode
-                    + (root.moveOutput.trim() ? ": " + root.moveOutput.trim() : ""))
+                    name + ": could not move icon to " + root.sectionLabel(root.moveSection)
+                    + (out ? ": " + out : ""))
       }
     }
   }
@@ -1621,22 +1644,23 @@ Panel {
   Process {
     id: enabledProc
     stdout: StdioCollector {
+      id: enabledProcOut
       waitForEnd: true
-      onStreamFinished: root.enabledOutput += "\n" + String(text || "")
     }
     stderr: StdioCollector {
+      id: enabledProcErr
       waitForEnd: true
-      onStreamFinished: root.enabledOutput += "\n" + String(text || "")
     }
     onExited: function (exitCode) {
       var name = root.watchedName()
       var verb = String(enabledProc.command[2] || "")
+      var out = (String(enabledProcOut.text || "") + "\n" + String(enabledProcErr.text || "")).trim()
       if (exitCode === 0) {
         root.notify("Plugin " + verb + "d", name + " " + verb + "d.")
       } else {
         root.notify("Plugin " + verb + " failed",
                     name + ": omarchy plugin " + verb + " exited with code " + exitCode
-                    + (root.enabledOutput.trim() ? ": " + root.enabledOutput.trim() : ""))
+                    + (out ? ": " + out : ""))
       }
       // Re-read the live state so the popup's buttons follow the change.
       root.statusChecked = false
@@ -1813,43 +1837,48 @@ Panel {
     color: Util.alpha(Color.foreground, 0.15)
   }
 
-  // Icon-only square variant of BWButton, used by the update-list rows.
+  // Icon-only square variant of BWButton, used by positioning rows and update-list rows.
   component BWIconButton: BorderSurface {
     id: bwIcon
     property string label: ""
     property string tooltipText: ""
     property bool primary: false
     property bool danger: false
+    property bool active: false
     property int size: Style.space(30)
     signal clickedBw
     width: size
     height: size
     radius: Style.cornerRadius
     readonly property color tone: root.bar ? root.bar.urgent : Color.urgent
-    color: !enabled ? "transparent"
-      : primary
-        ? (bwIconMouse.containsMouse ? Util.alpha(Color.accent, 0.2) : Util.alpha(Color.accent, 0.12))
-        : danger
-          ? (bwIconMouse.containsMouse ? Util.alpha(tone, 0.2) : Util.alpha(tone, 0.12))
-          : (bwIconMouse.containsMouse ? Util.alpha(Color.foreground, 0.12) : Util.alpha(Color.foreground, 0.05))
-    borderSpec: Border.flat(enabled
-      ? (primary ? Color.accent : danger ? tone : Util.alpha(Color.foreground, 0.3))
-      : Util.alpha(Color.foreground, 0.2), 1)
+    color: active
+      ? Util.alpha(Color.accent, 0.25)
+      : (!enabled ? "transparent"
+        : primary
+          ? (bwIconMouse.containsMouse ? Util.alpha(Color.accent, 0.2) : Util.alpha(Color.accent, 0.12))
+          : danger
+            ? (bwIconMouse.containsMouse ? Util.alpha(tone, 0.2) : Util.alpha(tone, 0.12))
+            : (bwIconMouse.containsMouse ? Util.alpha(Color.foreground, 0.12) : Util.alpha(Color.foreground, 0.05)))
+    borderSpec: Border.flat(active ? Color.accent
+      : (enabled
+        ? (primary ? Color.accent : danger ? tone : Util.alpha(Color.foreground, 0.3))
+        : Util.alpha(Color.foreground, 0.2)), 1)
     Text {
       anchors.centerIn: parent
       text: bwIcon.label
-      font.family: "Material Icons"
-      font.pixelSize: Math.round(size * 0.57)
-      color: bwIcon.enabled
-        ? (bwIcon.primary ? Color.accent : bwIcon.danger ? bwIcon.tone : Color.foreground)
-        : Util.alpha(Color.foreground, 0.35)
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Math.round(size * 0.5)
+      color: bwIcon.active ? Color.accent
+        : (bwIcon.enabled
+          ? (bwIcon.primary ? Color.accent : bwIcon.danger ? bwIcon.tone : Color.foreground)
+          : Util.alpha(Color.foreground, 0.35))
     }
     MouseArea {
       id: bwIconMouse
       anchors.fill: parent
       hoverEnabled: true
-      enabled: bwIcon.enabled
-      cursorShape: Qt.PointingHandCursor
+      enabled: bwIcon.enabled && !bwIcon.active
+      cursorShape: (bwIcon.enabled && !bwIcon.active) ? Qt.PointingHandCursor : Qt.ArrowCursor
       onClicked: bwIcon.clickedBw()
     }
     PanelToolTip {
@@ -2131,27 +2160,22 @@ Panel {
       }
 
       BWLine {
-        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
+        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled && root.isBarWidget
         text: "Move this plugin's bar icon:"
+        horizontalAlignment: Text.AlignHCenter
       }
-      GridLayout {
-        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled
-        width: popupColumn.width
-        columns: 3
-        columnSpacing: Style.spacing.controlGap
-        rowSpacing: Style.spacing.controlGap
-        // Equal-width buttons for every section the shell offers (the same
-        // live list the install wizard's placement stage uses), in a 3-wide
-        // grid. The section the icon currently sits in is disabled and
-        // marked "(active)" (iconSection from the bar layout config).
+      Row {
+        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled && root.isBarWidget
+        anchors.horizontalCenter: parent.horizontalCenter
+        spacing: Style.spacing.controlGap
         Repeater {
           model: root.barMoveSections
-          delegate: BWButton {
-            Layout.fillWidth: true
-            Layout.preferredHeight: Style.space(30)
-            label: root.sectionLabel(modelData)
+          delegate: BWIconButton {
+            size: Style.space(32)
+            label: root.sectionIcon(modelData)
+            tooltipText: root.sectionLabel(modelData)
               + (root.iconSection === modelData ? " (active)" : "")
-            enabled: root.iconSection !== modelData
+            active: root.iconSection === modelData
             onClickedBw: root.moveIcon(modelData)
           }
         }

@@ -533,6 +533,16 @@ Item {
     return String(section)
   }
 
+  function sectionIcon(section) {
+    if (section === "left") return "\uF036"
+    if (section === "centerBegin") return "\uF104"
+    if (section === "center") return "\uF037"
+    if (section === "centerEnd") return "\uF105"
+    if (section === "right") return "\uF038"
+    if (section === "tray") return "\uF01C"
+    return "\uF037"
+  }
+
   function installWithSection(section) {
     if (root.mode !== "install" || root.stage !== "placement") return
     if (root.barPlacementSections.indexOf(section) === -1) return
@@ -584,88 +594,83 @@ Item {
     id: catalogProc
     command: ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--", "https://plugins.omarchy.org/catalog.json"]
     stdout: StdioCollector {
+      id: catalogProcOut
       waitForEnd: true
-      onStreamFinished: {
-        var raw = String(text || "").trim()
-        if (!raw) {
-          root.catalogError = "Marketplace catalog could not be fetched"
-        } else {
-          var entry = null
-          try {
-            var catalog = JSON.parse(raw)
-            entry = (catalog.plugins || []).filter(function (item) {
-              return item && String(item.id) === root.pluginId
-            })[0] || null
-          } catch (e) {
-            entry = null
-          }
-          if (!entry) {
-            root.catalogError = "Plugin not found in the marketplace catalog"
-          } else if (root.mode === "install"
-                     && (!entry.installAvailable
-                         || entry.upstreamCheckStatus === "failed"
-                         || entry.builtIn
-                         || !(entry.installCommand || ""))) {
-            root.catalogError = "This plugin is not one-click installable ("
-              + (entry.status || "unavailable") + ")"
-          } else if (!root.sameRepo(root.pluginRepo, entry.repo)) {
-            root.catalogError = "Repository mismatch between the request and the catalog; aborting"
-          } else {
-            // Clear first: a killed previous-run process can deliver a
-            // stale onExited that sets catalogError after open() reset it.
-            root.catalogError = ""
-            root.catalogEntry = entry
-            if (entry.name) root.pluginName = String(entry.name)
-          }
-        }
-        root.catalogLoaded = true
-      }
     }
     onExited: function (exitCode) {
       if (!root.opened) return
-      if (exitCode !== 0 && !root.catalogLoaded) {
+      var raw = String(catalogProcOut.text || "").trim()
+      if (exitCode !== 0 || !raw) {
         root.catalogError = "Marketplace catalog could not be fetched"
-        root.catalogLoaded = true
+      } else {
+        var entry = null
+        try {
+          var catalog = JSON.parse(raw)
+          var items = Array.isArray(catalog) ? catalog
+            : (catalog && Array.isArray(catalog.plugins) ? catalog.plugins : [])
+          entry = items.filter(function (item) {
+            return item && String(item.id) === root.pluginId
+          })[0] || null
+        } catch (e) {
+          entry = null
+        }
+        if (!entry) {
+          root.catalogError = "Plugin not found in the marketplace catalog"
+        } else if (root.mode === "install"
+                   && (!entry.installAvailable
+                       || entry.upstreamCheckStatus === "failed"
+                       || entry.builtIn
+                       || !(entry.installCommand || ""))) {
+          root.catalogError = "This plugin is not one-click installable ("
+            + (entry.status || "unavailable") + ")"
+        } else if (!root.sameRepo(root.pluginRepo, entry.repo)) {
+          root.catalogError = "Repository mismatch between the request and the catalog; aborting"
+        } else {
+          // Clear first: a killed previous-run process can deliver a
+          // stale onExited that sets catalogError after open() reset it.
+          root.catalogError = ""
+          root.catalogEntry = entry
+          if (entry.name) root.pluginName = String(entry.name)
+          if ((entry.kind || "").indexOf("Bar widget") !== -1 || entry.category === "Bar widgets" || entry.category === "Widgets") {
+            root.isBarWidget = true
+          }
+        }
       }
+      root.catalogLoaded = true
     }
   }
 
   Process {
     id: manifestProc
     stdout: StdioCollector {
+      id: manifestProcOut
       waitForEnd: true
-      onStreamFinished: {
-        var raw = String(text || "").trim()
-        if (!raw) {
-          root.manifestError = "Plugin manifest.json could not be fetched"
-        } else {
-          var m = null
-          try { m = JSON.parse(raw) } catch (e) { m = null }
-          if (!m) {
-            root.manifestError = "Plugin manifest.json is not valid JSON"
-          } else if (String(m.id) !== root.pluginId) {
-            root.manifestError = "Manifest id mismatch (" + String(m.id) + ")"
-          } else {
-            // Clear first: a killed previous-run process can deliver a
-            // stale onExited that sets manifestError after open() reset it.
-            root.manifestError = ""
-            root.pluginManifest = m
-            root.isBarWidget = (m.kinds || []).indexOf("bar-widget") !== -1
-            root.defaultSection = (m.barWidget
-              && m.barWidget.defaultSection === "center") ? "centerEnd"
-              : (m.barWidget && m.barWidget.defaultSection)
-                ? String(m.barWidget.defaultSection) : "centerEnd"
-          }
-        }
-        root.manifestLoaded = true
-      }
     }
     onExited: function (exitCode) {
       if (!root.opened) return
-      if (exitCode !== 0 && !root.manifestLoaded) {
+      var raw = String(manifestProcOut.text || "").trim()
+      if (exitCode !== 0 || !raw) {
         root.manifestError = "Plugin manifest.json could not be fetched"
-        root.manifestLoaded = true
+      } else {
+        var m = null
+        try { m = JSON.parse(raw) } catch (e) { m = null }
+        if (!m) {
+          root.manifestError = "Plugin manifest.json is not valid JSON"
+        } else if (String(m.id) !== root.pluginId) {
+          root.manifestError = "Manifest id mismatch (" + String(m.id) + ")"
+        } else {
+          // Clear first: a killed previous-run process can deliver a
+          // stale onExited that sets manifestError after open() reset it.
+          root.manifestError = ""
+          root.pluginManifest = m
+          root.isBarWidget = root.isBarWidget || (m.kinds || []).indexOf("bar-widget") !== -1
+          root.defaultSection = (m.barWidget
+            && m.barWidget.defaultSection === "center") ? "centerEnd"
+            : (m.barWidget && m.barWidget.defaultSection)
+              ? String(m.barWidget.defaultSection) : "centerEnd"
+        }
       }
+      root.manifestLoaded = true
     }
   }
 
@@ -675,42 +680,42 @@ Item {
     id: listProc
     command: ["omarchy", "plugin", "list", "--json"]
     stdout: StdioCollector {
+      id: listProcOut
       waitForEnd: true
-      onStreamFinished: {
-        var entry = null
-        try {
-          var plugins = JSON.parse(String(text || "[]"))
-          entry = plugins.filter(function (item) {
-            return item && String(item.id) === root.pluginId
-          })[0] || null
-        } catch (e) {
-          entry = null
-        }
-        if (!entry || entry.firstParty) {
-          root.catalogError = "Plugin is not installed as a user plugin; nothing to do"
-        } else if (root.mode === "enable" && entry.enabled) {
-          root.catalogError = "Plugin is already enabled"
-        } else if (root.mode === "disable" && !entry.enabled) {
-          root.catalogError = "Plugin is already disabled"
-        } else if (root.mode === "enable") {
-          root.catalogError = ""
-          root.stage = "enable-confirm"
-        } else if (root.mode === "disable") {
-          root.catalogError = ""
-          root.stage = "disable-confirm"
-        } else if (root.mode === "update") {
-          root.catalogError = ""
-          root.stage = "update-confirm"
-        } else {
-          root.catalogError = ""
-          root.stage = "uninstall-confirm"
-        }
-      }
     }
     onExited: function (exitCode) {
       if (!root.opened) return
-      if (exitCode !== 0 && root.stage === "review") {
-        root.catalogError = "Could not read the local plugin list"
+      if (exitCode !== 0) {
+        if (root.stage === "review") root.catalogError = "Could not read the local plugin list"
+        return
+      }
+      var entry = null
+      try {
+        var plugins = JSON.parse(String(listProcOut.text || "[]"))
+        entry = plugins.filter(function (item) {
+          return item && String(item.id) === root.pluginId
+        })[0] || null
+      } catch (e) {
+        entry = null
+      }
+      if (!entry || entry.firstParty) {
+        root.catalogError = "Plugin is not installed as a user plugin; nothing to do"
+      } else if (root.mode === "enable" && entry.enabled) {
+        root.catalogError = "Plugin is already enabled"
+      } else if (root.mode === "disable" && !entry.enabled) {
+        root.catalogError = "Plugin is already disabled"
+      } else if (root.mode === "enable") {
+        root.catalogError = ""
+        root.stage = "enable-confirm"
+      } else if (root.mode === "disable") {
+        root.catalogError = ""
+        root.stage = "disable-confirm"
+      } else if (root.mode === "update") {
+        root.catalogError = ""
+        root.stage = "update-confirm"
+      } else {
+        root.catalogError = ""
+        root.stage = "uninstall-confirm"
       }
     }
   }
@@ -1050,18 +1055,14 @@ Item {
       "xdg-settings get default-web-browser 2>/dev/null"
       + " || xdg-mime query default x-scheme-handler/https 2>/dev/null || true"]
     stdout: StdioCollector {
+      id: browserProcOut
       waitForEnd: true
-      onStreamFinished: {
-        root.defaultBrowserId = String(text || "").trim()
-        root.defaultBrowserLoaded = true
-      }
     }
     onExited: function (exitCode) {
       if (!root.opened) return
-      if (exitCode !== 0 && !root.defaultBrowserLoaded) {
-        root.defaultBrowserId = ""
-        root.defaultBrowserLoaded = true
-      }
+      var val = String(browserProcOut.text || "").trim()
+      root.defaultBrowserId = exitCode === 0 ? val : ""
+      root.defaultBrowserLoaded = true
     }
   }
 
@@ -1166,17 +1167,18 @@ Item {
       "for f in \"$1\"/*.json; do [ -e \"$f\" ] || exit 0; jq -c . \"$f\" 2>/dev/null; done",
       "bpm-boot", root.markerDir]
     stdout: StdioCollector {
+      id: bootScanProcOut
       waitForEnd: true
-      onStreamFinished: {
-        if (root.opened) return
-        var entries = root.freshMarkerEntries(String(text || ""))
-        if (entries.length === 0) return
-        var newest = entries[entries.length - 1]
-        var payload = { source: "boot", mode: "running",
-          id: String(newest.id || ""), name: String(newest.name || ""),
-          action: String(newest.mode || "install") }
-        root.open(JSON.stringify(payload))
-      }
+    }
+    onExited: function (exitCode) {
+      if (root.opened || exitCode !== 0) return
+      var entries = root.freshMarkerEntries(String(bootScanProcOut.text || ""))
+      if (entries.length === 0) return
+      var newest = entries[entries.length - 1]
+      var payload = { source: "boot", mode: "running",
+        id: String(newest.id || ""), name: String(newest.name || ""),
+        action: String(newest.mode || "install") }
+      root.open(JSON.stringify(payload))
     }
   }
 
@@ -1186,10 +1188,11 @@ Item {
       "for f in \"$1\"/*.json; do [ -e \"$f\" ] || exit 0; jq -c . \"$f\" 2>/dev/null; done",
       "bpm-marker", root.markerDir]
     stdout: StdioCollector {
+      id: markerProcOut
       waitForEnd: true
-      onStreamFinished: root.onMarkers(String(text || ""))
     }
-    onExited: {
+    onExited: function () {
+      root.onMarkers(String(markerProcOut.text || ""))
       if (root.opened && root.stage === "running") markerTimer.restart()
     }
   }
@@ -1534,15 +1537,16 @@ Item {
   Process {
     id: enableProc
     stdout: StdioCollector {
+      id: enableProcOut
       waitForEnd: true
-      onStreamFinished: root.enableOutput += "\n" + String(text || "")
     }
     stderr: StdioCollector {
+      id: enableProcErr
       waitForEnd: true
-      onStreamFinished: root.enableOutput += "\n" + String(text || "")
     }
     onExited: function (exitCode) {
       if (!root.opened) return
+      root.enableOutput = (String(enableProcOut.text || "") + "\n" + String(enableProcErr.text || "")).trim()
       if (exitCode !== 0) {
         // Same discovery race as the add's internal enable: the shell's
         // registry scan may not have reached the fresh clone yet. Retry
@@ -1588,53 +1592,56 @@ Item {
     id: verifyProc
     command: ["omarchy", "plugin", "list", "--json"]
     stdout: StdioCollector {
+      id: verifyProcOut
       waitForEnd: true
-      onStreamFinished: {
-        var entry = null
-        try {
-          var plugins = JSON.parse(String(text || "[]"))
-          entry = plugins.filter(function (item) {
-            return item && String(item.id) === root.pluginId
-          })[0] || null
-        } catch (e) {
-          entry = null
-        }
-        if (entry && entry.enabled) {
-          if (!root.finalCheck) {
-            root.finalCheck = true
-            finalVerifyTimer.restart()
-            return
-          }
-          var where = root.enabledSection
-            ? " on the bar (" + root.enabledSection + " section)"
-            : root.isBarWidget ? " on the bar (" + root.defaultSection + " section)" : ""
-          root.notify(root.mode === "install" ? "Plugin installed" : "Plugin enabled",
-                      root.pluginName + " is enabled" + where)
-          // Close like every other action: the browser-extension prompt is
-          // shown exactly once, by the install worker directly after a
-          // successful install of the manager (see buildWorkerScript).
-          root.close()
-        } else if (root.enableTries >= 8) {
-          root.fail("plugin is not enabled after repeated enable attempts (the shell config reverted it)")
-        } else {
-          root.finalCheck = false
-          root.enableTries++
-          enableRetryTimer.restart()
-        }
-      }
     }
     onExited: function (exitCode) {
       if (!root.opened) return
-      if (exitCode !== 0) root.fail("omarchy plugin list exited with code " + exitCode)
+      if (exitCode !== 0) {
+        root.fail("omarchy plugin list exited with code " + exitCode)
+        return
+      }
+      var entry = null
+      try {
+        var plugins = JSON.parse(String(verifyProcOut.text || "[]"))
+        entry = plugins.filter(function (item) {
+          return item && String(item.id) === root.pluginId
+        })[0] || null
+      } catch (e) {
+        entry = null
+      }
+      if (entry && entry.enabled) {
+        if (!root.finalCheck) {
+          root.finalCheck = true
+          finalVerifyTimer.restart()
+          return
+        }
+        var where = root.enabledSection
+          ? " on the bar (" + root.enabledSection + " section)"
+          : root.isBarWidget ? " on the bar (" + root.defaultSection + " section)" : ""
+        root.notify(root.mode === "install" ? "Plugin installed" : "Plugin enabled",
+                    root.pluginName + " is enabled" + where)
+        // Close like every other action: the browser-extension prompt is
+        // shown exactly once, by the install worker directly after a
+        // successful install of the manager (see buildWorkerScript).
+        root.close()
+      } else if (root.enableTries >= 8) {
+        root.fail("plugin is not enabled after repeated enable attempts (the shell config reverted it)")
+      } else {
+        root.finalCheck = false
+        root.enableTries++
+        enableRetryTimer.restart()
+      }
     }
   }
 
   Process {
     id: disableProc
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.enableOutput += "\n" + String(text || "") }
-    stderr: StdioCollector { waitForEnd: true; onStreamFinished: root.enableOutput += "\n" + String(text || "") }
+    stdout: StdioCollector { id: disableProcOut; waitForEnd: true }
+    stderr: StdioCollector { id: disableProcErr; waitForEnd: true }
     onExited: function (exitCode) {
       if (!root.opened) return
+      root.enableOutput = (String(disableProcOut.text || "") + "\n" + String(disableProcErr.text || "")).trim()
       if (exitCode !== 0) {
         root.fail("omarchy plugin disable exited with code " + exitCode)
         return
@@ -1661,34 +1668,41 @@ Item {
     property int labelPixelSize: Style.font.body
     property bool primary: false
     property bool danger: false
+    property bool active: false
     readonly property color tone: danger
       ? Color.urgent
       : primary ? Color.accent : Color.foreground
     readonly property bool hot: piMouse.containsMouse
     signal clickedPi
 
-    width: labelText.implicitWidth + Style.space(36)
-    height: Style.space(34)
+    implicitWidth: labelText.implicitWidth + Style.space(36)
+    implicitHeight: Style.space(34)
+    width: implicitWidth
+    height: implicitHeight
     radius: Style.cornerRadius
-    color: !enabled ? "transparent"
-      : primary || danger
-        ? (hot ? Util.alpha(tone, 0.2) : Util.alpha(tone, 0.12))
-        : (hot ? Util.alpha(Color.foreground, 0.12) : Util.alpha(Color.foreground, 0.05))
-    borderSpec: Border.flat(enabled
-      ? (primary || danger ? tone : Util.alpha(Color.foreground, 0.3))
-      : Util.alpha(Color.foreground, 0.2),
+    color: active
+      ? Util.alpha(Color.accent, 0.25)
+      : (!enabled ? "transparent"
+        : primary || danger
+          ? (hot ? Util.alpha(tone, 0.2) : Util.alpha(tone, 0.12))
+          : (hot ? Util.alpha(Color.foreground, 0.12) : Util.alpha(Color.foreground, 0.05)))
+    borderSpec: Border.flat(active ? Color.accent
+      : (enabled
+        ? (primary || danger ? tone : Util.alpha(Color.foreground, 0.3))
+        : Util.alpha(Color.foreground, 0.2)),
       1)
 
     Text {
       id: labelText
       anchors.centerIn: parent
       text: piButton.label
-      color: piButton.enabled
-        ? (piButton.primary || piButton.danger ? piButton.tone : Color.foreground)
-        : Util.alpha(Color.foreground, 0.35)
+      color: piButton.active ? Color.accent
+        : (piButton.enabled
+          ? (piButton.primary || piButton.danger ? piButton.tone : Color.foreground)
+          : Util.alpha(Color.foreground, 0.35))
       font.family: Style.font.family
       font.pixelSize: piButton.labelPixelSize
-      font.bold: piButton.primary || piButton.danger
+      font.bold: piButton.primary || piButton.danger || piButton.active
       transformOrigin: Item.Center
 
       // NumberAnimation (GUI-thread timer driven) rather than
@@ -1940,15 +1954,12 @@ Item {
       id: card
       anchors.centerIn: parent
       width: Math.min(Style.space(672), panel.width - Style.space(48))
-      // Fit the visible stage. Column.implicitHeight also sums the hidden
-      // stage columns (running, review, placement, browser prompts), which
-      // inflates the card to the tallest possible stage. childrenRect only
-      // bounds the *visible* children, so the card hugs the current stage's
+      // Fit the visible stage dynamically: cardColumn.implicitHeight sums only
+      // the visible children in the Column, so the card hugs the current stage's
       // content, clamped to the screen.
       height: Math.min(cardColumn.anchors.topMargin
-                       + cardColumn.childrenRect.height
-                       + cardColumn.anchors.bottomMargin
-                       + Style.space(48),
+                       + cardColumn.implicitHeight
+                       + card.contentBottomInset,
                        panel.height - Style.space(48))
       clip: true
       radius: Style.cornerRadius
@@ -1961,10 +1972,11 @@ Item {
 
       Column {
         id: cardColumn
-        anchors.fill: parent
-        anchors.topMargin: card.contentTopInset / 4
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.topMargin: card.contentTopInset / 2
         anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
         anchors.leftMargin: card.contentLeftInset
         spacing: Style.spacing.panelGap
 
@@ -1975,7 +1987,8 @@ Item {
         Item {
           id: headerBlock
           width: cardColumn.width
-          height: headerRow.implicitHeight + Style.space(6)
+          implicitHeight: headerRow.implicitHeight + Style.space(6)
+          height: implicitHeight
 
         Row {
           id: headerRow
@@ -2108,7 +2121,8 @@ Item {
           // Spacer: 10px of breathing room above and below the globe.
           Item {
             width: parent.width
-            height: globe.height + 20
+            implicitHeight: (root.opened && root.stage === "running") ? (globe.height + 20) : 0
+            height: implicitHeight
             // Bind visibility explicitly (not just through the hidden stage
             // Column): a Canvas with a running repaint animation keeps
             // compositing frames, and a hidden-but-visible Canvas leaves
@@ -2196,6 +2210,7 @@ Item {
         Flickable {
           visible: root.stage === "settings"
           width: cardColumn.width
+          implicitHeight: visible ? height : 0
           // Fit the content, capped at the space left on screen between the
           // fixed header and footer (card clamps to panel.height - 48, and
           // carries 24+24 of padding). Only scrolls when the content is
@@ -2580,29 +2595,27 @@ Item {
         }
 
         // ---- stage: placement (install/enable modes, bar widgets) ----
-        // Sections laid out horizontally in an equal-width 3-column grid
-        // (a wider version of the pre-refactor Left/Center/Right row: the
-        // list is the shell's live section list). The manifest's default
-        // section carries a "(default)" suffix; every section button shares
-        // the same neutral styling so the default is only called out by text.
+        // Horizontal row of square icon buttons with tooltips, centered in the panel.
         Column {
           visible: root.stage === "placement"
           width: cardColumn.width
           spacing: Style.spacing.rowGap
           PiLine {
             text: "Where should the bar icon go?"
+            horizontalAlignment: Text.AlignHCenter
           }
-          Grid {
-            width: parent.width
-            columns: 3
-            columnSpacing: Style.spacing.controlGap
-            rowSpacing: Style.spacing.controlGap
+          Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.spacing.controlGap
             Repeater {
               model: root.barPlacementSections
               delegate: PiButton {
-                width: (parent.width - 2 * Style.spacing.controlGap) / 3
-                label: root.sectionLabel(modelData)
+                width: Style.space(34)
+                height: Style.space(34)
+                label: root.sectionIcon(modelData)
+                tooltipText: root.sectionLabel(modelData)
                   + (root.defaultSection === modelData ? " (default)" : "")
+                primary: root.defaultSection === modelData
                 onClickedPi: root.mode === "install"
                   ? root.installWithSection(modelData)
                   : root.enable(modelData)
@@ -2611,13 +2624,20 @@ Item {
           }
         }
 
-        Item { id: footerSpacer; width: 1; height: Style.spacing.xs }
+        Item {
+          id: footerSpacer
+          width: 1
+          implicitHeight: footerRow.implicitHeight > 0 ? Style.spacing.xs : 0
+          height: implicitHeight
+          visible: footerRow.implicitHeight > 0
+        }
 
         // ---- footer: confirm / cancel ----
         // Right-to-left layout: the primary action (Install/Uninstall/...)
         // lands rightmost, Cancel to its left, as in standard dialogs.
         Row {
           id: footerRow
+          width: cardColumn.width
           layoutDirection: Qt.RightToLeft
           spacing: Style.spacing.controlGap
           PiButton {
