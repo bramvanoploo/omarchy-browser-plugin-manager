@@ -2610,7 +2610,6 @@ Item {
                 label: root.sectionIcon(modelData)
                 tooltipText: root.sectionLabel(modelData)
                   + (root.defaultSection === modelData ? " (default)" : "")
-                primary: root.defaultSection === modelData
                 onClickedPi: root.mode === "install"
                   ? root.installWithSection(modelData)
                   : root.enable(modelData)
