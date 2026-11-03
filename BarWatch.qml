@@ -143,6 +143,7 @@ Panel {
 
   function toggleSettings() {
     root.close()
+    managerManifestFile.reload()
     // Fresh command session: drop the seen-seq bookkeeping, truncate
     // any log a previous (possibly crashed) session left on disk, and
     // mint a session id the wizard echoes in its "closed" command. The
@@ -274,15 +275,6 @@ Panel {
   property bool updateChecking: false
   property bool updateCheckFailed: false
   property string lastCheckText: "never"
-  // True when the settings group between the update rules carries content
-  // (a status line, the batch button, or a list): with no updates, no
-  // status line, and no batch button — e.g. first open before the first
-  // check — the rule above the group must hide, or two rules stack.
-  readonly property bool updatesGroupVisible: root.updateChecking
-    || root.updateCount > 0
-    || root.updateCheckFailed
-    || root.settingsSaveFailed
-    || (root.lastCheckText !== "never")
   // Ids of the last notified outdated set: a poll offers the update once
   // per new set (ids join), so an unchanged repeat poll never nags.
   property string lastNotifiedKey: ""
@@ -466,7 +458,8 @@ Panel {
   // unverified choice. The worker swallows the rescanPlugins each CLI call
   // fires and issues one real rescan after the whole batch, so the bar
   // reloads once.
-: "id:remote_sha". The sha is the
+  //
+  // Worker spec format: "id:remote_sha". The sha is the
   // commit the poll fetched and matched against the catalog's
   // verificationCommit; the worker pins verified updates to it and ignores
   // it for unverified ones (entries never carry a sha the poll did not see).
@@ -573,7 +566,7 @@ Panel {
   Process {
     id: settingsPayloadWriteProc
     command: ["sh", "-c",
-      'mkdir -p "${1%/*}" && printf %s "$3" | head -c "$2" > "$1"',
+      'umask 077 && mkdir -p "${1%/*}" && printf %s "$3" | head -c "$2" > "$1"',
       "sh", root.settingsPayloadPath,
       // 3x the JS string length (a UTF-16 unit is at most 3 UTF-8 bytes)
       // plus one, so the bound always exceeds the byte count.
@@ -810,10 +803,20 @@ Panel {
   // Version of the watched plugin: prefers local installed version, falls back
   // to catalog version, displayed in the panel header next to the title.
   readonly property string watchedVersion: {
+    if (root.watchState && root.watchState.id === root.managerId && root.managerVersion)
+      return String(root.managerVersion)
     if (root.installedVersion) return String(root.installedVersion)
     var e = root.catalogEntry
     if (e && e.version) return String(e.version)
     return ""
+  }
+
+  // Version displayed in the panel header next to the title:
+  // when popupLive is true (watching a plugin page), uses the watched plugin's version;
+  // when popupLive is false (no page open), displays the manager's own version.
+  readonly property string headerVersion: {
+    if (root.popupLive) return root.watchedVersion
+    return String(root.managerVersion || "")
   }
 
   // Marketplace catalog entry for the watched plugin (display only: the
@@ -1065,7 +1068,7 @@ Panel {
   }
 
   function moveIcon(section) {
-    if (!root.watchState) return
+    if (!root.watchState || !/^[a-z0-9][a-z0-9.-]{0,127}$/.test(root.watchState.id || "")) return
     if (root.barMoveSections.indexOf(section) === -1) return
     root.moveSection = section
     moveProc.command = [
@@ -1083,9 +1086,9 @@ Panel {
   // buttons route the same way through the host, which runs the official CLI
   // commands directly. The popup stays open and the status row refreshes.
   function setEnabledForWatch(activate) {
-    if (!root.watchState) return
+    if (!root.watchState || !/^[a-z0-9][a-z0-9.-]{0,127}$/.test(root.watchState.id || "")) return
     enabledProc.command = [
-      "omarchy", "plugin", activate ? "enable" : "disable", String(root.watchState.id)
+      "omarchy", "plugin", activate ? "enable" : "disable", "--", String(root.watchState.id)
     ]
     enabledProc.running = true
   }
@@ -1220,7 +1223,10 @@ Panel {
 
   // This plugin's own manifest: the settings header shows the manager
   // version in the same pill the plugin popup uses for the watched plugin.
-  readonly property string pluginDir: String(Qt.resolvedUrl(".")).replace("file://", "").replace(/\/$/, "")
+  readonly property string pluginDir: {
+    var u = String(Qt.resolvedUrl("."))
+    return u.startsWith("file://") ? decodeURIComponent(u.slice(7)).replace(/\/$/, "") : u.replace(/\/$/, "")
+  }
   property string managerVersion: ""
   FileView {
     id: managerManifestFile
@@ -1360,6 +1366,7 @@ Panel {
       // reload lands while opened is already true; applyWatch honors this
       // flag exactly once so the capture is not frozen away).
       root.captureOnOpen = true
+      managerManifestFile.reload()
       watchFile.reload()
       shellFile.reload()
       Qt.callLater(root.refreshStatus)
@@ -1772,7 +1779,7 @@ Panel {
             }
 
             Rectangle {
-              visible: root.popupLive && root.watchedVersion !== ""
+              visible: root.headerVersion !== ""
               anchors.verticalCenter: parent.verticalCenter
               height: Style.space(18)
               width: bwHeaderVersionText.implicitWidth + Style.space(12)
@@ -1784,7 +1791,7 @@ Panel {
               Text {
                 id: bwHeaderVersionText
                 anchors.centerIn: parent
-                text: "v" + String(root.watchedVersion)
+                text: "v" + String(root.headerVersion)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
                 font.bold: true

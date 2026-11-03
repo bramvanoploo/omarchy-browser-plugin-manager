@@ -2,12 +2,13 @@
 
 One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org).
 
-> **Note:** The Chromium-browser extension is live on the
-> [Chrome Web Store](https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf).
-> The Firefox-browser extension is still under review at Firefox Add-ons;
-> until it is approved, install it directly from this repository with the
-> [signed .xpi](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/download/v0.9.1/omarchy-browser-plugin-manager-0.9.1-signed.xpi)
-> of the latest release — see [documentation/INSTALL.md](documentation/INSTALL.md).
+> [!IMPORTANT]
+> **Browser Extension Availability & Setup:**
+> - **Chromium-based browsers** (Google Chrome, Chromium, Brave, Microsoft Edge, Vivaldi, Opera): Available directly in the [Chrome Web Store](https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf).
+> - **Firefox & Firefox-based browsers** (Firefox, LibreWolf, Waterfox, Zen Browser): The Firefox Add-on is currently **still under review** at Mozilla Add-ons (AMO) and must be installed manually:
+>   1. Download the signed `.xpi` file (`omarchy-browser-plugin-manager-*-signed.xpi`) from the [latest GitHub release](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/latest).
+>   2. In Firefox, open `about:addons`, click the gear icon (⚙️), and choose **Install Add-on From File...**.
+>   3. **Permissions requirement:** You must manually allow all requested permissions for the extension during installation or under the add-on's Permissions tab (access to `plugins.omarchy.org`, exchange messages with programs outside Firefox, and access browser tabs). Without these permissions enabled, the extension cannot communicate with the native messaging host and will not work. For additional details, see [documentation/INSTALL.md](documentation/INSTALL.md).
 
 ![Omarchy Browser Plugin Manager](preview.png)
 
@@ -48,7 +49,7 @@ After removing the plugin, also remove the browser extension
 
 | Browser | Extension |
 | --- | --- |
-| Firefox-based (Firefox incl. ESR, Waterfox, LibreWolf, Tor Browser, GNU IceCat, Zen) | [Firefox Add-on](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/) |
+| Firefox-based (Firefox incl. ESR, Waterfox, LibreWolf, Tor Browser, GNU IceCat, Zen) | [Signed .xpi from Releases](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/latest) *(under review at [AMO](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/))* |
 | Chromium-based (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) | [Chrome Web Store](https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf) |
 
 Prefer not to use the stores? Every [GitHub release](https://github.com/bramvanoploo/omarchy-browser-plugin-manager/releases/latest) ships the extension packages for direct download — the AMO-signed Firefox `.xpi`, the Chrome-family build, and the full source archive; see [documentation/INSTALL.md](documentation/INSTALL.md).

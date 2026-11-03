@@ -43,6 +43,7 @@ fi
 
 echo "==> Rendering $OUTPUT_FILE via $CHROMIUM_BIN"
 TMP_HTML="$SCRIPT_DIR/_render.html"
+trap 'rm -f "$TMP_HTML"' EXIT
 sed "s/{{VERSION}}/$VERSION/g" "$SCRIPT_DIR/template.html" > "$TMP_HTML"
 
 "$CHROMIUM_BIN" \
@@ -56,6 +57,7 @@ sed "s/{{VERSION}}/$VERSION/g" "$SCRIPT_DIR/template.html" > "$TMP_HTML"
   "file://$TMP_HTML" >/dev/null 2>&1
 
 rm -f "$TMP_HTML"
+trap - EXIT
 
 if command -v identify >/dev/null 2>&1; then
   identify "$OUTPUT_FILE"

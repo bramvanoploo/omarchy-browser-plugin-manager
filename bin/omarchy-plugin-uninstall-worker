@@ -35,9 +35,19 @@ PAYLOAD=$(jq -cn --arg name "$LABEL" '{source:"worker",mode:"running",id:"",name
 ok=0; fail=0; failed=""
 while [ $# -gt 0 ]; do
   id="$1"
-  case "$id" in *[!A-Za-z0-9._-]*|*..*|'') id="" ;; esac
-  if [ -n "$id" ] && omarchy plugin remove "$id" --yes >/dev/null 2>&1; then
-    ok=$((ok+1))
+  case "$id" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*) id="" ;; esac
+  if [ -n "$id" ]; then
+    if [ "$id" = "bramvanoploo.omarchy-browser-plugin-manager" ]; then
+      plug="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager"
+      if [ -x "$plug/bin/plugin-installer-setup" ]; then
+        "$plug/bin/plugin-installer-setup" --uninstall >/dev/null 2>&1 || true
+      fi
+    fi
+    if omarchy plugin remove "$id" --yes >/dev/null 2>&1; then
+      ok=$((ok+1))
+    else
+      fail=$((fail+1)); failed="$failed $id"
+    fi
   else
     fail=$((fail+1)); failed="$failed $id"
   fi

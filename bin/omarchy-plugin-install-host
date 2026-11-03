@@ -64,7 +64,11 @@ umask 077
 export LC_ALL=C.UTF-8
 
 HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
-HOST_VERSION="0.9.1"
+HOST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOST_VERSION="$(jq -r '.version // empty' "$HOST_DIR/../manifest.json" 2>/dev/null || true)"
+if [[ -z "$HOST_VERSION" ]]; then
+  HOST_VERSION="0.9.2"
+fi
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
 MAX_FRAME_BYTES=65536
@@ -104,6 +108,7 @@ UPDATE_FAST_WINDOW_SECONDS=120
 ensure_private_state() {
   mkdir -p "$STATE_DIR" || return 1
   chmod 700 "$STATE_DIR" 2>/dev/null || true
+  rm -f "$STATE_DIR"/*.tmp.* "$STATE_DIR"/.*.tmp 2>/dev/null || true
   local entry
   shopt -s nullglob
   for entry in "$STATE_DIR"/* "$STATE_DIR"/.[!.]* "$STATE_DIR"/..?*; do
@@ -123,8 +128,12 @@ byte_length() {
 
 send_frame() {
   local LC_ALL=C payload="$1"
-  local len=${#payload}
-  printf "\\x$(printf '%02x' $(( len & 0xff )))\\x$(printf '%02x' $(( (len >> 8) & 0xff )))\\x$(printf '%02x' $(( (len >> 16) & 0xff )))\\x$(printf '%02x' $(( (len >> 24) & 0xff )))%s" "$payload"
+  local len=${#payload} h0 h1 h2 h3
+  printf -v h0 "%02x" $(( len & 0xff ))
+  printf -v h1 "%02x" $(( (len >> 8) & 0xff ))
+  printf -v h2 "%02x" $(( (len >> 16) & 0xff ))
+  printf -v h3 "%02x" $(( (len >> 24) & 0xff ))
+  printf "\\x$h0\\x$h1\\x$h2\\x$h3%s" "$payload"
 }
 
 reply() { send_frame "$(jq -cn "$@")"; }
@@ -132,7 +141,7 @@ reply() { send_frame "$(jq -cn "$@")"; }
 reply_ok() { send_frame '{"ok":true}'; }
 
 reply_err() {
-  local reason="$1"
+  local reason="${1:-error}"
   reply --arg reason "$reason" '{ok:false, reason:$reason}'
 }
 
@@ -176,18 +185,23 @@ plugin_status() {
 # the state dir, written by BarWatch.qml). Prints "true" or "false"; a
 # missing or corrupt file means the default: verified-only.
 allow_unverified_setting() {
-  local v
-  v=$(jq -r '.allowUnverified == true' "$SETTINGS_FILE" 2>/dev/null) || v="false"
-  [[ $v == "true" ]] || v="false"
-  printf '%s' "$v"
+  local content=""
+  [[ -f "$SETTINGS_FILE" ]] && content=$(<"$SETTINGS_FILE")
+  if [[ $content =~ \"allowUnverified\"[[:space:]]*:[[:space:]]*true ]]; then
+    printf 'true'
+  else
+    printf 'false'
+  fi
 }
 
 # Age of the update cache in seconds (huge when absent/corrupt → refresh).
 update_cache_age() {
-  local ts now
-  ts=$(jq -r '.checked // 0' "$UPDATE_CACHE_FILE" 2>/dev/null) || ts=0
-  [[ $ts =~ ^[0-9]+$ ]] || ts=0
-  now=$(date +%s)
+  local content="" ts=0 now=0
+  [[ -f "$UPDATE_CACHE_FILE" ]] && content=$(<"$UPDATE_CACHE_FILE")
+  if [[ $content =~ \"checked\"[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
+    ts="${BASH_REMATCH[1]}"
+  fi
+  now=${EPOCHSECONDS:-$(date +%s)}
   printf '%s' "$(( now - ts ))"
 }
 
@@ -226,7 +240,7 @@ run_update_check() {
 effective_update_ttl() {
   local now mtime
   [[ -e $UPDATE_ACTION_STAMP ]] || { printf '%s' "$UPDATE_TTL_SECONDS"; return 0; }
-  now=$(date +%s)
+  now=${EPOCHSECONDS:-$(date +%s)}
   mtime=$(stat -c %Y "$UPDATE_ACTION_STAMP" 2>/dev/null) || mtime=0
   if (( now - mtime < UPDATE_FAST_WINDOW_SECONDS )); then
     printf '%s' "$UPDATE_FAST_TTL_SECONDS"
@@ -438,7 +452,7 @@ record_watch() {
   local payload="$1" ts="" tmp="" json="" paused="false"
   normalize_target "$payload" || return 1
   paused=$(jq -r 'if type == "object" and (.paused == true) then "true" else "false" end' <<<"$payload" 2>/dev/null) || paused="false"
-  ts=$(date +%s)
+  ts=${EPOCHSECONDS:-$(date +%s)}
   ensure_private_state || return 1
   (
     exec 7>"$WATCH_LOCK_FILE" 2>/dev/null || exit 1
@@ -519,7 +533,7 @@ clear_watch_for_id() {
 # the tab.
 record_visit() {
   local payload="$1" entry="" key="" state="" ts="" tmp="" merged="" en_in=""
-  ts=$(date +%s)
+  ts=${EPOCHSECONDS:-$(date +%s)}
   # The heartbeat fields are validated, truncated, and assembled in a single
   # jq pass over stdin: the marketplace URL is browsing activity, so it must
   # never appear in a process argument (every local account can read argv
@@ -595,7 +609,7 @@ drain_focus_request() {
     flock -x 9 || exit 0
     [[ -f $FOCUS_FILE ]] || exit 0
     ts=$(jq -r '.ts // 0' "$FOCUS_FILE" 2>/dev/null) || ts=0
-    now=$(( $(date +%s) * 1000 ))
+    now=$(( ${EPOCHSECONDS:-$(date +%s)} * 1000 ))
     if (( now - ts > 8000 )); then
       # Nobody answered in time (no live tab): drop it, the widget cleans up
       # its own state on timeout.
@@ -664,7 +678,7 @@ main() {
         # stdin, never in argv) so the update-info merge can match the
         # cache entry.
         local_status=$(merge_updates_into "$local_status" "$(allow_unverified_setting)" "$(cached_update_plugins)")
-        send_frame "$(jq -c '. + {ok:true}' <<<"$local_status")"
+        send_frame "${local_status%\}},\"ok\":true}"
         ;;
       status_all)
         # Batch report for the catalog page: every installed user (non

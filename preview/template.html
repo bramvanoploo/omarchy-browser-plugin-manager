@@ -10,9 +10,9 @@
     width: 1920px;
     height: 1080px;
     overflow: hidden;
-    background-color: #0b0e14;
+    background-color: #0d1418;
     font-family: "Liberation Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: #f1f5f9;
+    color: #f7f5ea;
     position: relative;
   }
 
@@ -20,8 +20,8 @@
   .bg-grid {
     position: absolute; inset: 0;
     background-image:
-      linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
+      linear-gradient(rgba(204, 203, 192, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(204, 203, 192, 0.04) 1px, transparent 1px);
     background-size: 40px 40px;
     z-index: 0;
   }
@@ -34,22 +34,22 @@
   .glow-tl {
     width: 1100px; height: 1100px;
     left: -350px; top: -350px;
-    background: radial-gradient(circle, rgba(234, 88, 12, 0.22) 0%, rgba(234, 88, 12, 0) 62%);
+    background: radial-gradient(circle, rgba(214, 93, 14, 0.22) 0%, rgba(214, 93, 14, 0) 62%);
   }
   .glow-tr {
     width: 1000px; height: 1000px;
     right: -250px; top: -200px;
-    background: radial-gradient(circle, rgba(249, 115, 22, 0.16) 0%, rgba(249, 115, 22, 0) 60%);
+    background: radial-gradient(circle, rgba(215, 124, 23, 0.16) 0%, rgba(215, 124, 23, 0) 60%);
   }
   .glow-mid {
     width: 800px; height: 800px;
     left: 800px; top: 100px;
-    background: radial-gradient(circle, rgba(56, 189, 248, 0.10) 0%, rgba(56, 189, 248, 0) 65%);
+    background: radial-gradient(circle, rgba(106, 133, 154, 0.12) 0%, rgba(106, 133, 154, 0) 65%);
   }
   .glow-b {
     width: 1200px; height: 800px;
     right: 0px; bottom: -350px;
-    background: radial-gradient(circle, rgba(234, 88, 12, 0.14) 0%, rgba(234, 88, 12, 0) 60%);
+    background: radial-gradient(circle, rgba(214, 93, 14, 0.14) 0%, rgba(214, 93, 14, 0) 60%);
   }
 
   /* Left column */
@@ -68,64 +68,64 @@
     letter-spacing: 1.5px;
   }
   .pill-orange {
-    border: 1px solid #f97316;
-    color: #f97316;
-    background: rgba(249, 115, 22, 0.13);
+    border: 1px solid #d65d0e;
+    color: #fc7d32;
+    background: rgba(214, 93, 14, 0.14);
   }
   .pill-gray {
-    border: 1px solid #334155;
-    color: #94a3b8;
-    background: rgba(30, 41, 59, 0.35);
+    border: 1px solid rgba(204, 203, 192, 0.20);
+    color: #cccbc0;
+    background: rgba(36, 42, 47, 0.55);
   }
   .pill-cyan {
-    border: 1px solid rgba(56, 189, 248, 0.4);
-    color: #38bdf8;
-    background: rgba(56, 189, 248, 0.10);
+    border: 1px solid rgba(106, 133, 154, 0.45);
+    color: #89a4ba;
+    background: rgba(106, 133, 154, 0.14);
   }
 
   .head-row { display: flex; align-items: center; gap: 24px; margin-top: 36px; }
   .tile {
     width: 64px; height: 64px; flex-shrink: 0;
     border-radius: 16px;
-    border: 1px solid rgba(249, 115, 22, 0.35);
-    background: rgba(249, 115, 22, 0.08);
+    border: 1px solid rgba(214, 93, 14, 0.35);
+    background: rgba(214, 93, 14, 0.10);
     display: grid; place-items: center;
   }
-  h1 { font-size: 44px; font-weight: 700; color: #f8fafc; letter-spacing: -0.5px; white-space: nowrap; }
+  h1 { font-size: 44px; font-weight: 700; color: #f7f5ea; letter-spacing: -0.5px; white-space: nowrap; }
   .subtitle {
     margin-top: 18px;
     width: 680px;
     font-size: 19px;
     line-height: 1.55;
-    color: #94a3b8;
+    color: #cccbc0;
   }
   .cards { margin-top: 32px; display: flex; flex-direction: column; gap: 14px; }
   .card {
     display: flex; gap: 16px;
     padding: 15px 22px 15px 18px;
     border-radius: 12px;
-    border: 1px solid rgba(249, 115, 22, 0.20);
-    background: rgba(30, 41, 59, 0.30);
+    border: 1px solid rgba(214, 93, 14, 0.22);
+    background: rgba(36, 42, 47, 0.55);
   }
   .card .cicon {
     width: 40px; height: 40px; flex-shrink: 0;
     border-radius: 10px;
-    border: 1px solid rgba(249, 115, 22, 0.30);
-    background: rgba(249, 115, 22, 0.08);
+    border: 1px solid rgba(214, 93, 14, 0.32);
+    background: rgba(214, 93, 14, 0.10);
     display: grid; place-items: center;
   }
   .card .ctext { padding-top: 1px; }
   .card h3 {
     display: inline;
-    font-size: 19px; font-weight: 700; color: #f1f5f9;
+    font-size: 19px; font-weight: 700; color: #f7f5ea;
   }
   .badge {
     display: inline-block;
     margin-left: 12px;
     padding: 3px 9px;
     border-radius: 5px;
-    background: rgba(249, 115, 22, 0.15);
-    color: #f97316;
+    background: rgba(214, 93, 14, 0.16);
+    color: #fc7d32;
     font-size: 11.5px; font-weight: 700;
     letter-spacing: 1px;
     vertical-align: 3px;
@@ -134,13 +134,13 @@
     margin-top: 7px;
     font-size: 14.5px;
     line-height: 1.5;
-    color: #94a3b8;
+    color: #cccbc0;
   }
   .footer {
     position: absolute;
     left: 85px; bottom: 46px;
     font-size: 15px;
-    color: #64748b;
+    color: #737373;
     z-index: 2;
   }
 
@@ -165,19 +165,19 @@
     backdrop-filter: blur(8px);
   }
   .tag-cyan {
-    background: rgba(8, 20, 36, 0.85);
-    border: 1px solid #38bdf8;
-    color: #38bdf8;
+    background: rgba(13, 20, 24, 0.90);
+    border: 1px solid #6a859a;
+    color: #89a4ba;
   }
   .tag-orange {
-    background: rgba(24, 14, 10, 0.85);
-    border: 1px solid #f97316;
-    color: #f97316;
+    background: rgba(24, 18, 14, 0.90);
+    border: 1px solid #d65d0e;
+    color: #fc7d32;
   }
   .tag-emerald {
-    background: rgba(6, 24, 16, 0.85);
-    border: 1px solid #34d399;
-    color: #34d399;
+    background: rgba(18, 24, 20, 0.90);
+    border: 1px solid #cfd7c5;
+    color: #cfd7c5;
   }
 
   /* Card 1: Web Marketplace Discovery (Top-Left, tilted) */
@@ -187,11 +187,11 @@
     width: 450px;
     border-radius: 12px;
     overflow: hidden;
-    border: 1px solid rgba(56, 189, 248, 0.35);
-    background: #020617;
+    border: 1px solid rgba(106, 133, 154, 0.40);
+    background: #141a1e;
     box-shadow:
-      0 0 35px rgba(56, 189, 248, 0.12),
-      0 20px 60px rgba(0, 0, 0, 0.70);
+      0 0 35px rgba(106, 133, 154, 0.12),
+      0 20px 60px rgba(0, 0, 0, 0.75);
     transform: rotate(-2.5deg);
     transform-origin: center center;
     z-index: 2;
@@ -208,11 +208,11 @@
     width: 475px;
     border-radius: 12px;
     overflow: hidden;
-    border: 1px solid rgba(249, 115, 22, 0.35);
-    background: #080f1b;
+    border: 1px solid rgba(214, 93, 14, 0.40);
+    background: #141a1e;
     box-shadow:
-      0 0 40px rgba(249, 115, 22, 0.14),
-      0 20px 60px rgba(0, 0, 0, 0.70);
+      0 0 40px rgba(214, 93, 14, 0.16),
+      0 20px 60px rgba(0, 0, 0, 0.75);
     transform: rotate(2.0deg);
     transform-origin: center center;
     z-index: 2;
@@ -225,16 +225,16 @@
   /* Card 3: Live Desktop Install Wizard (Bottom, Separated with breathing room) */
   .card-wizard {
     position: absolute;
-    left: 960px; top: 575px;
-    width: 720px;
+    left: 980px; top: 480px;
+    width: 680px;
     border-radius: 10px;
     overflow: hidden;
-    border: 1.5px solid rgba(249, 115, 22, 0.55);
-    background: #080f1b;
+    border: 1.5px solid rgba(214, 93, 14, 0.60);
+    background: #141a1e;
     box-shadow:
-      0 0 50px rgba(249, 115, 22, 0.20),
-      0 0 16px rgba(249, 115, 22, 0.14),
-      0 28px 85px rgba(2, 6, 23, 0.95);
+      0 0 50px rgba(214, 93, 14, 0.22),
+      0 0 16px rgba(214, 93, 14, 0.15),
+      0 28px 85px rgba(2, 12, 18, 0.95);
     z-index: 4;
   }
   .card-wizard img {
@@ -250,12 +250,12 @@
     display: flex; align-items: center; justify-content: center;
     width: 42px; height: 42px;
     border-radius: 50%;
-    background: rgba(15, 23, 42, 0.85);
-    border: 1px solid rgba(249, 115, 22, 0.4);
+    background: rgba(20, 26, 30, 0.90);
+    border: 1px solid rgba(214, 93, 14, 0.45);
     box-shadow: 0 4px 16px rgba(0,0,0,0.5);
   }
   .flow-indicator svg {
-    color: #f97316;
+    color: #d65d0e;
   }
 
 </style>
@@ -275,7 +275,7 @@
     </div>
     <div class="head-row">
       <div class="tile">
-        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
           <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
           <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
@@ -291,7 +291,7 @@
     <div class="cards">
       <div class="card">
         <div class="cicon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
             <polyline points="7 10 12 15 17 10"></polyline>
             <line x1="12" y1="15" x2="12" y2="3"></line>
@@ -304,7 +304,7 @@
       </div>
       <div class="card">
         <div class="cicon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
           </svg>
         </div>
@@ -315,7 +315,7 @@
       </div>
       <div class="card">
         <div class="cicon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
             <circle cx="12" cy="12" r="3"></circle>
           </svg>
@@ -327,7 +327,7 @@
       </div>
       <div class="card">
         <div class="cicon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2"></rect>
             <line x1="9" y1="3" x2="9" y2="21"></line>
             <line x1="15" y1="3" x2="15" y2="21"></line>
@@ -340,7 +340,7 @@
       </div>
       <div class="card">
         <div class="cicon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
           </svg>
         </div>
@@ -351,7 +351,7 @@
       </div>
       <div class="card">
         <div class="cicon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10"></circle>
             <polygon points="12 8 8 12 12 16 12 13 16 13 16 11 12 11 12 8"></polygon>
           </svg>
@@ -381,7 +381,7 @@
     </div>
 
     <!-- Step 2 Tag -->
-    <div class="step-tag tag-emerald" style="left: 975px; top: 546px; z-index: 6;">
+    <div class="step-tag tag-emerald" style="left: 995px; top: 457px; z-index: 6;">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
       2 &middot; Native Desktop Confirmation Wizard
     </div>

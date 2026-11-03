@@ -63,7 +63,7 @@ cmd_check() {
   fi
   rows=""
   for id in $(jq -r '(if type == "array" then . else [] end)[] | select(type == "object" and ((.firstParty // false) | not)) | .id // empty' <<<"$list" 2>/dev/null); do
-    case "$id" in *[!a-z0-9.-]*|.*|*..*) continue ;; esac
+    case "$id" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*) continue ;; esac
     d="$PLUG_DIR/$id"
     [[ -L $d ]] && continue
     [[ -d $d/.git ]] || continue
@@ -109,7 +109,7 @@ cmd_apply() {
   # Same id contract as the bar worker's specs and omaplug's valid_plugin_id
   # (lowercase, dotted, no dots-as-components); anything else is rejected
   # rather than interpolated anywhere.
-  case "$id" in ''|*[!a-z0-9.-]*|.*|*..*|*:*)
+  case "$id" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|.*|*..*|*:*)
     printf 'invalid-id\n'
     return 2
   ;; esac

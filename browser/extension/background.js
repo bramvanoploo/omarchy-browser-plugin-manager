@@ -146,7 +146,13 @@ function sanitizeMessage(message) {
 function isTrustedSender(sender) {
   if (!sender || sender.id !== api.runtime.id) return false;
   const url = sender.url || (sender.tab && sender.tab.url) || "";
-  return typeof url === "string" && url.startsWith("https://plugins.omarchy.org/");
+  if (typeof url !== "string" || !url) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.origin === "https://plugins.omarchy.org";
+  } catch (_e) {
+    return false;
+  }
 }
 
 function talkToHost(payload) {

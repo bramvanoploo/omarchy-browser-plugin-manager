@@ -677,7 +677,6 @@
   // under an active tab; the pause is recoverable, the next focus sends a
   // live "watch" and the icon lights again.
   const BEACON_REFRESH_MS = 5000;
-  const BEACON_STALE_MS = 12000;
   let beaconTimer = null;
   let beaconActive = false;
   let beaconHandlers = null;

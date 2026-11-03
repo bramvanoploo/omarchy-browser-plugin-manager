@@ -41,7 +41,12 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-br
 MARK_DIR="$STATE_DIR/in-progress"
 mkdir -p "$MARK_DIR" 2>/dev/null || true
 MARK="$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json"
-trap 'rm -f "$MARK"' EXIT
+bin_dir=""
+cleanup() {
+  rm -f "$MARK" 2>/dev/null || true
+  [ -n "${bin_dir:-}" ] && rm -rf "$bin_dir" 2>/dev/null || true
+}
+trap cleanup EXIT
 jq -cn --arg mode "update" --arg name "$LABEL" '{mode:$mode,id:"",name:$name,started:(now|floor)}' > "$MARK" 2>/dev/null || true
 PAYLOAD=$(jq -cn --arg name "$LABEL" '{source:"worker",mode:"running",id:"",name:$name,action:"update"}' 2>/dev/null)
 [ -n "$PAYLOAD" ] && "$real_shell" -q shell summon bramvanoploo.omarchy-browser-plugin-manager "$PAYLOAD" >/dev/null 2>&1 || true
@@ -68,7 +73,7 @@ ok=0; fail=0; failed=""
 while [ $# -gt 0 ]; do
   spec="$1"
   id="${spec%%:*}"; expected="${spec#*:}"
-  case "$id" in *[!a-z0-9.-]*|.*|*..*|*:*) id="" ;; esac
+  case "$id" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*|*:*) id="" ;; esac
 # A spec carrying a pin must pin to a full 40 hex sha; an unpinned spec
 # carries an empty sha. A present-but-invalid sha is a violation and
 # never falls through to the unverified CLI path (fail closed).

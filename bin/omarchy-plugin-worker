@@ -23,6 +23,13 @@ ID="$2"
 NAME="$3"
 REPO="$4"
 SECTION="$5"
+
+case "$ID" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*)
+  notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
+  command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)"
+  "$notify_cmd" --app-name omarchy-browser-plugin-manager --expire-time 8000 "Plugin action failed" "Invalid plugin id: $ID"
+  exit 2
+;; esac
 notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
 command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)"
 notify() {
@@ -167,18 +174,23 @@ install)
     notify "Plugin install incomplete" "$NAME was installed but failed to enable. Retry: omarchy plugin enable $ID"
   fi
   ;;
-*)
-  # Unregister the native messaging host while the plugin directory
-  # still exists: the setup script lives inside it, and after removal
-  # nothing can find it.
-  PLUG="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager"
-  if [ -x "$PLUG/bin/plugin-installer-setup" ]; then
-    "$PLUG/bin/plugin-installer-setup" --uninstall >/dev/null 2>&1 || true
+uninstall)
+  # Unregister the native messaging host only when removing the manager itself,
+  # while the plugin directory still exists (setup script lives inside it).
+  if [ "$ID" = "bramvanoploo.omarchy-browser-plugin-manager" ]; then
+    PLUG="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager"
+    if [ -x "$PLUG/bin/plugin-installer-setup" ]; then
+      "$PLUG/bin/plugin-installer-setup" --uninstall >/dev/null 2>&1 || true
+    fi
   fi
   if ! OUT="$(omarchy plugin remove "$ID" --yes 2>&1)"; then
     notify "Plugin uninstall failed" "$NAME: $OUT"
     exit 1
   fi
   notify "Plugin uninstalled" "$NAME has been removed."
+  ;;
+*)
+  notify "Plugin action failed" "$NAME: unknown worker action $KIND."
+  exit 2
   ;;
 esac

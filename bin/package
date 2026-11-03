@@ -28,6 +28,19 @@ REPO_DIR="$(dirname -- "$BIN_DIR")"
 EXT_DIR="$REPO_DIR/browser/extension"
 DIST_DIR="$REPO_DIR/dist"
 
+# Ensure extension manifest version is in sync with root manifest.json
+ROOT_MANIFEST="$REPO_DIR/manifest.json"
+if [[ -f "$ROOT_MANIFEST" ]]; then
+  ROOT_VERSION="$(jq -r '.version // empty' "$ROOT_MANIFEST" 2>/dev/null || true)"
+  if [[ -n "$ROOT_VERSION" ]]; then
+    CUR_EXT_VER="$(jq -r '.version // empty' "$EXT_DIR/manifest.json" 2>/dev/null || true)"
+    if [[ "$CUR_EXT_VER" != "$ROOT_VERSION" ]]; then
+      tmp="$(mktemp)"
+      jq --arg v "$ROOT_VERSION" '.version = $v' "$EXT_DIR/manifest.json" > "$tmp" && mv "$tmp" "$EXT_DIR/manifest.json"
+    fi
+  fi
+fi
+
 VERSION="$(jq -r .version "$EXT_DIR/manifest.json")"
 NAME="$(jq -r .name "$EXT_DIR/manifest.json" | tr '[:upper:]' '[:lower:]' \
   | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-\{1,\}//; s/-\{1,\}$//')"
@@ -99,7 +112,7 @@ jq 'del(.background.scripts)' "$STAGE/chrome/manifest.json" > "$STAGE/chrome/man
 STAMP="$(date -u +%Y%m%d)"
 STAGE_SRC="$STAGE/src/$NAME"
 mkdir -p "$STAGE_SRC"
-git -C "$REPO_DIR" ls-files -z | xargs -0 -I{} cp -a --parents {} "$STAGE_SRC"/ 2>/dev/null \
+( cd "$REPO_DIR" && git ls-files -z | xargs -0 -I{} cp -a --parents {} "$STAGE_SRC"/ ) 2>/dev/null \
   || cp -a "$REPO_DIR"/. "$STAGE_SRC"/
 rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist" "$STAGE_SRC/chrome-key.pem" "$STAGE_SRC"/chrome-key-*.pem.bak "$STAGE_SRC/.env"
 rm -f "$STAGE_SRC/browser/extension/.amo-upload-uuid"

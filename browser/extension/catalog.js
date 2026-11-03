@@ -215,12 +215,20 @@
       button.disabled = true;
       if (type === "install") registerSiteCopy(button);
       try {
-        await talkToHost({
+        const response = await talkToHost({
           type,
           id: plugin.id,
           repo: plugin.repo,
           name: plugin.name,
         }, HOST_ACTION_TIMEOUT_MS);
+        if (response && !response.ok) {
+          const tip = button.querySelector(".control-tooltip");
+          if (tip) {
+            const orig = tip.textContent;
+            tip.textContent = response.reason || "Action failed";
+            setTimeout(() => { if (tip.isConnected) tip.textContent = orig; }, 5000);
+          }
+        }
       } finally {
         button.disabled = false;
         busy = false;

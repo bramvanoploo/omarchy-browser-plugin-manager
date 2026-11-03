@@ -202,7 +202,7 @@ main() {
   # watcher that runs this copy with --uninstall. Manifest removal is
   # self-contained; the copy must never be run for registration from here
   # (its host path would point into the state dir, not the plugin folder).
-  mkdir -p "$state_dir" && cp -f "$SCRIPT_PATH" "$state_dir/plugin-installer-setup"
+  mkdir -p "$state_dir" && cp -f "$SCRIPT_PATH" "$state_dir/plugin-installer-setup" && chmod 700 "$state_dir/plugin-installer-setup" 2>/dev/null || true
 
   cat <<EOF
 Native messaging host registered:

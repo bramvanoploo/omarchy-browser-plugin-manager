@@ -1,0 +1,81 @@
+<!-- Chrome Web Store marquee image (1400x560). Rendered by
+     generate-chrome-promo.sh, which inlines logo.svg into the .logo slot. -->
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1400px; height: 560px; overflow: hidden; }
+  body {
+    display: flex;
+    align-items: center;
+    gap: 72px;
+    padding: 0 88px;
+    background: linear-gradient(135deg, #1d242a 0%, #141a1e 50%, #0d1215 100%);
+    font-family: "Liberation Sans", "Segoe UI", Roboto, sans-serif;
+    color: #f1f5f9;
+    position: relative;
+  }
+  /* Subtle diagonal weave, same idea as the preview banner. */
+  body::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 40px),
+      repeating-linear-gradient(-45deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 40px);
+  }
+  /* Lime emblem glow behind the icon tile. */
+  .glow {
+    position: absolute;
+    left: -120px;
+    top: 50%;
+    width: 760px;
+    height: 760px;
+    transform: translateY(-50%);
+    background: radial-gradient(circle, rgba(183,239,81,0.20) 0%, rgba(183,239,81,0) 62%);
+  }
+  .logo { position: relative; width: 336px; height: 336px; flex: 0 0 auto; }
+  .logo svg { width: 100%; height: 100%; display: block; }
+  .copy { position: relative; }
+  h1 {
+    font-size: 84px;
+    font-weight: 700;
+    line-height: 1.12;
+    letter-spacing: -1.5px;
+    color: #f8fafc;
+  }
+  h1 .lime { color: #b7ef51; }
+  p {
+    margin-top: 22px;
+    font-size: 32px;
+    line-height: 1.4;
+    color: #9fb0bd;
+    max-width: 800px;
+  }
+  p .site { color: #d5ff73; }
+  .chip {
+    display: inline-block;
+    margin-top: 26px;
+    padding: 8px 20px;
+    border: 1px solid #37444f;
+    border-radius: 999px;
+    background: rgba(30,41,59,0.35);
+    font-size: 21px;
+    color: #94a3b8;
+  }
+  .chip b { color: #b7ef51; font-weight: 700; }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="logo">{{LOGO}}</div>
+  <div class="copy">
+    <h1><span class="lime">Omarchy</span> Browser<br>Plugin Manager</h1>
+    <p>Install, update, and remove plugins straight from
+       <span class="site">plugins.omarchy.org</span>.</p>
+    <span class="chip">One click &middot; <b>No terminal needed</b></span>
+  </div>
+</body>
+</html>

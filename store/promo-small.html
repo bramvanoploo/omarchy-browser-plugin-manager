@@ -1,0 +1,71 @@
+<!-- Chrome Web Store small promo tile (440x280). Rendered by
+     generate-chrome-promo.sh, which inlines logo.svg into the .logo slot. -->
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 440px; height: 280px; overflow: hidden; }
+  body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 18px;
+    padding: 0 36px;
+    background: linear-gradient(135deg, #1d242a 0%, #141a1e 50%, #0d1215 100%);
+    font-family: "Liberation Sans", "Segoe UI", Roboto, sans-serif;
+    color: #f1f5f9;
+    position: relative;
+  }
+  body::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 40px),
+      repeating-linear-gradient(-45deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 40px);
+  }
+  .glow {
+    position: absolute;
+    left: -160px;
+    top: 50%;
+    width: 420px;
+    height: 420px;
+    transform: translateY(-50%);
+    background: radial-gradient(circle, rgba(183,239,81,0.20) 0%, rgba(183,239,81,0) 62%);
+  }
+  .row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+  .logo { width: 132px; height: 132px; flex: 0 0 auto; }
+  .logo svg { width: 100%; height: 100%; display: block; }
+  h1 {
+    font-size: 40px;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.8px;
+    color: #f8fafc;
+  }
+  h1 .lime { color: #b7ef51; }
+  p {
+    position: relative;
+    font-size: 21px;
+    line-height: 1.35;
+    color: #9fb0bd;
+  }
+  p .site { color: #d5ff73; }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="row">
+    <div class="logo">{{LOGO}}</div>
+    <h1><span class="lime">Omarchy</span><br>Plugin Manager</h1>
+  </div>
+  <p>One-click installs from <span class="site">plugins.omarchy.org</span></p>
+</body>
+</html>

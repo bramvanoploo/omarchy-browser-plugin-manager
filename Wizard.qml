@@ -49,10 +49,44 @@ Item {
     return u.startsWith("file://") ? decodeURIComponent(u.slice(7)) : u
   }
 
+  property var ownManifest: null
+  readonly property string managerVersion: {
+    if (root.ownManifest && root.ownManifest.version)
+      return String(root.ownManifest.version)
+    if (root.settingsSnap && root.settingsSnap.managerVersion)
+      return String(root.settingsSnap.managerVersion)
+    if (root.manifest && root.manifest.version)
+      return String(root.manifest.version)
+    return ""
+  }
+  readonly property string managerName: {
+    if (root.ownManifest && root.ownManifest.name)
+      return String(root.ownManifest.name)
+    if (root.manifest && root.manifest.name)
+      return String(root.manifest.name)
+    return "Browser Plugin Manager"
+  }
+
+  FileView {
+    id: ownManifestFile
+    path: root.pluginDir + "/manifest.json"
+    printErrors: false
+    onLoaded: {
+      try {
+        var m = JSON.parse(text())
+        root.ownManifest = m
+      } catch (e) {
+        root.ownManifest = null
+      }
+    }
+    onLoadFailed: root.ownManifest = null
+  }
+
   // This manager plugin's own id: the browser-extension prompt targets its
   // own extension, never the plugin passed in the payload.
-  readonly property string managerId: (root.manifest && root.manifest.id)
-    ? String(root.manifest.id) : "bramvanoploo.omarchy-browser-plugin-manager"
+  readonly property string managerId: (root.ownManifest && root.ownManifest.id)
+    ? String(root.ownManifest.id)
+    : ((root.manifest && root.manifest.id) ? String(root.manifest.id) : "bramvanoploo.omarchy-browser-plugin-manager")
 
   // Browser extension pages: Firefox-based browsers install the add-on from
   // AMO; Chromium-based browsers that support Chrome Web Store extensions
@@ -206,19 +240,21 @@ Item {
   readonly property bool canAct: reviewBlocked.length === 0
   readonly property bool canInstall: canAct && stage === "review"
 
+  readonly property bool isManagerStage: root.stage === "settings"
+    || root.stage === "settings-confirm"
+    || root.stage === "browser-prompt"
+    || root.stage === "browser-defer"
+
   // Header version: the version pill shown in the panel header next to the title.
   readonly property string headerVersion: {
-    if (root.stage === "settings") {
-      return (root.manifest && root.manifest.version) ? String(root.manifest.version) : ""
+    if (root.isManagerStage || root.pluginId === root.managerId) {
+      return root.managerVersion
     }
     if (root.catalogEntry && root.catalogEntry.version) {
       return String(root.catalogEntry.version)
     }
     if (root.pluginManifest && root.pluginManifest.version) {
       return String(root.pluginManifest.version)
-    }
-    if (root.manifest && root.manifest.version) {
-      return String(root.manifest.version)
     }
     return ""
   }
@@ -288,8 +324,6 @@ Item {
   readonly property string primaryStoreName:
     root.extensionFamily === "chromium" ? "Chrome Web Store" : "Firefox Add-ons"
   // The extension for the other browser family, offered as a link.
-  readonly property string otherStoreName:
-    root.extensionFamily === "chromium" ? "Firefox add-on" : "Chrome Web Store extension"
   readonly property string otherFamilyName:
     root.extensionFamily === "chromium" ? "Firefox browsers" : "Chromium browsers"
   readonly property string otherExtensionUrl:
@@ -298,7 +332,9 @@ Item {
     root.extensionFamily === "chromium" ? "Firefox Add-ons page" : "Chrome Web Store page"
 
   function openUrl(url) {
-    Quickshell.execDetached(["xdg-open", String(url || "")])
+    var u = String(url || "")
+    if (/^https:\/\//.test(u))
+      Quickshell.execDetached(["xdg-open", u])
   }
 
   // RichText ignores Text.linkColor (StyledText only), so links carry an
@@ -355,7 +391,7 @@ Item {
     pluginRepo = String(payload.repo || "")
     pluginName = String(payload.name || pluginId)
     if (mode === "browser-prompt" || mode === "browser-defer") pluginId = managerId
-    if (!pluginName) pluginName = String((root.manifest && root.manifest.name) || pluginId)
+    if (!pluginName) pluginName = root.managerName
 
     catalogLoaded = false
     manifestLoaded = false
@@ -374,9 +410,10 @@ Item {
     opened = true
 
     runningT0 = Date.now()
-    // Fresh read of the shared settings (allowUnverified) and theme colors on every summon.
+    // Fresh read of the shared settings (allowUnverified), theme colors, and own manifest on every summon.
     settingsFile.reload()
     themeColorsFile.reload()
+    ownManifestFile.reload()
 
     if (mode === "running") {
       // In-progress system panel summoned by a detached worker. No
@@ -408,7 +445,7 @@ Item {
       catalogLoaded = true
       manifestLoaded = true
       pluginId = managerId
-      pluginName = String((root.manifest && root.manifest.name) || managerId)
+      pluginName = root.managerName
       settingsCmdQueue = []
       settingsPending = ({})
       // Drop any log a previous session left on disk: this panel is the
@@ -772,7 +809,10 @@ Item {
     running: root.opened && (root.mode === "settings" || root.mode === "settings-confirm")
     repeat: true
     triggeredOnStart: true
-    onTriggered: settingsPayloadFile.reload()
+    onTriggered: {
+      settingsPayloadFile.reload()
+      ownManifestFile.reload()
+    }
   }
 
   FileView {
@@ -797,7 +837,7 @@ Item {
   Process {
     id: settingsCmdWriteProc
     command: ["sh", "-c",
-      'mkdir -p "${1%/*}" && printf %s "$3" | head -c "$2" > "$1"',
+      'umask 077 && mkdir -p "${1%/*}" && printf %s "$3" | head -c "$2" > "$1"',
       "sh", root.settingsCmdPath,
       // Byte bound: 3x the JS string length (each UTF-16 unit is at most
       // 3 UTF-8 bytes) plus one, so the bound is always above the real
@@ -2002,8 +2042,7 @@ Item {
 
               Text {
                 textFormat: Text.PlainText
-                text: (root.manifest && root.manifest.name)
-                  ? String(root.manifest.name) : root.pluginName
+                text: root.isManagerStage ? root.managerName : root.pluginName
                 font.family: Style.font.family
                 font.pixelSize: Style.font.title
                 font.bold: true
