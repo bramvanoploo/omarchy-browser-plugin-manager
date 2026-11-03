@@ -2240,17 +2240,70 @@ Item {
           width: cardColumn.width
           spacing: Style.spacing.md
 
-          Text {
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            textFormat: Text.PlainText
-            text: (root.runningAction === "uninstall" ? "Uninstalling "
-                : root.runningAction === "update" ? "Updating " : "Installing ")
-              + root.runningName
-            font.family: Style.font.family
-            font.pixelSize: Style.font.body
-            font.bold: true
-            color: Color.foreground
+          Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(2)
+
+            Text {
+              id: runningActionLabel
+              width: Math.min(implicitWidth, cardColumn.width - Style.space(40))
+              elide: Text.ElideRight
+              maximumLineCount: 1
+              textFormat: Text.PlainText
+              text: (root.runningAction === "uninstall" ? "Uninstalling "
+                  : root.runningAction === "update" ? "Updating " : "Installing ")
+                + root.runningName
+              font.family: Style.font.family
+              font.pixelSize: Style.font.title
+              font.bold: true
+              color: Util.alpha(Color.foreground, 0.75)
+
+              SequentialAnimation on color {
+                running: root.opened && root.stage === "running" && !Style.reduceMotion
+                loops: Animation.Infinite
+                ColorAnimation {
+                  from: Util.alpha(Color.foreground, 0.75)
+                  to: Color.accent
+                  duration: 900
+                  easing.type: Easing.InOutSine
+                }
+                ColorAnimation {
+                  from: Color.accent
+                  to: Util.alpha(Color.foreground, 0.75)
+                  duration: 900
+                  easing.type: Easing.InOutSine
+                }
+              }
+            }
+
+            Repeater {
+              model: 3
+              delegate: Text {
+                text: "."
+                font.family: Style.font.family
+                font.pixelSize: Style.font.title
+                font.bold: true
+                color: Color.accent
+                property real lift: 0
+                y: lift
+                SequentialAnimation on lift {
+                  running: root.opened && root.stage === "running" && !Style.reduceMotion
+                  loops: Animation.Infinite
+                  PauseAnimation { duration: index * 160 }
+                  NumberAnimation { from: 0; to: -4; duration: 220; easing.type: Easing.OutQuad }
+                  NumberAnimation { from: -4; to: 0; duration: 220; easing.type: Easing.InQuad }
+                  PauseAnimation { duration: 600 - (index * 160) }
+                }
+                SequentialAnimation on opacity {
+                  running: root.opened && root.stage === "running" && !Style.reduceMotion
+                  loops: Animation.Infinite
+                  PauseAnimation { duration: index * 160 }
+                  NumberAnimation { from: 0.35; to: 1.0; duration: 220; easing.type: Easing.OutQuad }
+                  NumberAnimation { from: 1.0; to: 0.35; duration: 220; easing.type: Easing.InQuad }
+                  PauseAnimation { duration: 600 - (index * 160) }
+                }
+              }
+            }
           }
 
           Text {
