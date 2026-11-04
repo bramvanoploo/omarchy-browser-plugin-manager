@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # Regenerates the Chrome Web Store promo tiles from the store logo.
 #
-#   ./store/generate-chrome-promo.sh
+#   ./browser/store/bin/generate-chrome-promo.sh
 #
 # Outputs (exact CWS submission sizes):
-#   chrome-web-store-marquee-1400x560.png   (marquee image)
-#   chrome-web-store-promo-440x280.png      (small promo tile)
+#   images/chrome-web-store-marquee-1400x560.png   (marquee image)
+#   images/chrome-web-store-promo-440x280.png      (small promo tile)
 #
 # The logo is inlined from logo.svg into the promo templates, so the tiles
 # always carry the current brand mark; re-run this after any logo change.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOGO_FILE="$SCRIPT_DIR/logo.svg"
+STORE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+LOGO_FILE="$STORE_DIR/images/logo.svg"
 
-for f in "$LOGO_FILE" "$SCRIPT_DIR/promo-marquee.html" "$SCRIPT_DIR/promo-small.html"; do
+for f in "$LOGO_FILE" "$STORE_DIR/promo-marquee.html" "$STORE_DIR/promo-small.html"; do
   if [[ ! -f "$f" ]]; then
     echo "Error: required input $f missing" >&2
     exit 1
@@ -54,12 +55,12 @@ PY
 }
 
 echo "==> Rendering store promo tiles via $CHROMIUM_BIN"
-render "$SCRIPT_DIR/promo-marquee.html" "1400,560" "$SCRIPT_DIR/chrome-web-store-marquee-1400x560.png"
-render "$SCRIPT_DIR/promo-small.html"  "440,280"   "$SCRIPT_DIR/chrome-web-store-promo-440x280.png"
+render "$STORE_DIR/promo-marquee.html" "1400,560" "$STORE_DIR/images/chrome-web-store-marquee-1400x560.png"
+render "$STORE_DIR/promo-small.html"  "440,280"   "$STORE_DIR/images/chrome-web-store-promo-440x280.png"
 
 if command -v identify >/dev/null 2>&1; then
   identify -format "%f %wx%h\n" \
-    "$SCRIPT_DIR/chrome-web-store-marquee-1400x560.png" \
-    "$SCRIPT_DIR/chrome-web-store-promo-440x280.png"
+    "$STORE_DIR/images/chrome-web-store-marquee-1400x560.png" \
+    "$STORE_DIR/images/chrome-web-store-promo-440x280.png"
 fi
 echo "Done: upload the marquee as the store marquee image and the 440x280 tile as the small promo tile."

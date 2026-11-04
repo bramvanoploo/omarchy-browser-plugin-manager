@@ -11,11 +11,11 @@
 #      -- web-ext@<pinned>, see below)
 #
 # Usage:
-#   AMO_API_KEY=... AMO_API_SECRET=... bin/sign
+#   AMO_API_KEY=... AMO_API_SECRET=... browser/store/bin/sign
 #
 # Output:
 #   dist/signed/<slug>-<version>-signed.xpi  ("slug" = manifest name, as in
-#   bin/package; AMO's own file is kept next to it)
+#   browser/store/bin/package; AMO's own file is kept next to it)
 # Its add-on ID stays bramvanoploo.omarchy-browser-plugin-manager@bram.dev (from manifest.json
 # browser_specific_settings), which the native messaging host allowlists.
 
@@ -24,7 +24,7 @@ export LC_ALL=C
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
-REPO_DIR="$(dirname -- "$BIN_DIR")"
+REPO_DIR="$(dirname -- "$(dirname -- "$(dirname -- "$BIN_DIR")")")"
 EXT_DIR="$REPO_DIR/browser/extension"
 OUT_DIR="$REPO_DIR/dist/signed"
 
@@ -55,7 +55,7 @@ AMO_API_KEY= AMO_API_SECRET=
 # Firefox AMO lint requires "background.scripts" and warns that
 # "service_worker" is unsupported; the shared source manifest keeps only
 # "service_worker" for Chrome, so the staged copy REPLACES the background
-# block with "scripts" (same transform as bin/package for the .xpi).
+# block with "scripts" (same transform as browser/store/bin/package for the .xpi).
 STAGE="$(mktemp -d)"
 cleanup() {
   if [[ -f "$STAGE/extension/.amo-upload-uuid" ]]; then
@@ -82,7 +82,7 @@ shopt -u nullglob
 signed="${xpi_files[0]}"
 
 # Normalize the AMO filename to the canonical "<slug>-<version>-signed.xpi"
-# (same slug derivation as bin/package).
+# (same slug derivation as browser/store/bin/package).
 VERSION="$(jq -r .version "$STAGE/extension/manifest.json")"
 NAME="$(jq -r .name "$STAGE/extension/manifest.json" | tr '[:upper:]' '[:lower:]' \
   | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-\{1,\}//; s/-\{1,\}$//')"

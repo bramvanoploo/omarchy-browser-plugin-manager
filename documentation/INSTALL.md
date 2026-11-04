@@ -39,12 +39,13 @@ every shell start and this step is redundant.
 3. **Load unpacked** -> select `browser/extension/`
 
 "Load unpacked" gets the path-derived ID. The store artifact
-`omarchy-browser-plugin-manager-<version>-chrome.zip` (built by `bin/package`)
+`omarchy-plugbrug-<version>-chrome.zip` (built by `browser/store/bin/package`)
 is the CWS upload format: CWS rejects `"key"` manifests, so the store
 assigns its own ID `nalcgjmbglkcmohokidcmogcbpmhkdjf`; zipped packed
 installs get the key-pinned ID `nbngempephjmagmlfbfdodboeimfoibp` (from
-`chrome-key.pem`). The setup script registers all three IDs. Keep
-`chrome-key.pem` safe: the packed-install ID cannot be reproduced without it.
+`browser/store/chrome-key.pem`). The setup script registers all three IDs.
+Keep `browser/store/chrome-key.pem` safe: the packed-install ID cannot be
+reproduced without it.
 
 **Firefox (release builds, >= 121): signed `.xpi` required**
 
@@ -57,8 +58,8 @@ Without the listing, release Firefox only permanently installs AMO-signed
 add-ons, and the native-messaging allowlist matches the stable add-on ID
 `bramvanoploo.omarchy-browser-plugin-manager@bram.dev`, which only a
 permanent install gives: install
-`omarchy-browser-plugin-manager-<version>-signed.xpi` (the maintainer signs
-it with AMO *unlisted* signing via `bin/sign` — a free AMO developer
+`omarchy-plugbrug-<version>-signed.xpi` (the maintainer signs
+it with AMO *unlisted* signing via `browser/store/bin/sign` — a free AMO developer
 account, no store listing — or sign it yourself the same way) via
 `about:addons` -> gear icon -> **Install Add-on From File...**. Installing
 an *unsigned* `*.xpi` fails with *"the file appears to be corrupt"* —

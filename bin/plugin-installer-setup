@@ -86,14 +86,14 @@ chrome_extension_id() {
 
 # Stable Chrome extension ID derived from the manifest's "key" (public key):
 # used by packed/zip installs. The source manifest carries no key (Firefox
-# warns about it), so fall back to the repo's chrome-key.pem (when present)
+# warns about it), so fall back to the repo's browser/store/chrome-key.pem (when present)
 # or the legacy pinned ID. The Chrome Web Store item ID is separate
 # (CHROME_STORE_ID): the store derives it from its own keypair.
 chrome_key_id() {
   local key=""
   key=$(jq -r '.key // ""' "$1" 2>/dev/null) || true
-  if [[ -z $key && -f "$REPO_DIR/chrome-key.pem" ]]; then
-    key=$(openssl pkey -in "$REPO_DIR/chrome-key.pem" -pubout -outform DER 2>/dev/null | base64 -w0) || true
+  if [[ -z $key && -f "$REPO_DIR/browser/store/chrome-key.pem" ]]; then
+    key=$(openssl pkey -in "$REPO_DIR/browser/store/chrome-key.pem" -pubout -outform DER 2>/dev/null | base64 -w0) || true
   fi
   if [[ -z $key ]]; then
     printf '%s\n' "$CHROME_STORE_ID"

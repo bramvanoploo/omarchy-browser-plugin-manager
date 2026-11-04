@@ -24,7 +24,7 @@ export LC_ALL=C
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
-REPO_DIR="$(dirname -- "$BIN_DIR")"
+REPO_DIR="$(dirname -- "$(dirname -- "$(dirname -- "$BIN_DIR")")")"
 EXT_DIR="$REPO_DIR/browser/extension"
 DIST_DIR="$REPO_DIR/dist"
 
@@ -114,7 +114,7 @@ STAGE_SRC="$STAGE/src/$NAME"
 mkdir -p "$STAGE_SRC"
 ( cd "$REPO_DIR" && git ls-files -z | xargs -0 -I{} cp -a --parents {} "$STAGE_SRC"/ ) 2>/dev/null \
   || cp -a "$REPO_DIR"/. "$STAGE_SRC"/
-rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist" "$STAGE_SRC/chrome-key.pem" "$STAGE_SRC"/chrome-key-*.pem.bak "$STAGE_SRC/.env"
+rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist" "$STAGE_SRC/browser/store/chrome-key.pem" "$STAGE_SRC"/browser/store/chrome-key-*.pem.bak "$STAGE_SRC/.env"
 rm -f "$STAGE_SRC/browser/extension/.amo-upload-uuid"
 ( cd "$STAGE/src" && zip -qr "$DIST_DIR/$NAME-$VERSION-$STAMP.zip" . )
 
