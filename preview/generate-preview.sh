@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates preview.png for Browser Plugin Manager from preview/template.html.
+# Regenerates preview.png for PlugBrug from preview/template.html.
 #
 #   ./preview/generate-preview.sh
 #
@@ -26,7 +26,7 @@ if [[ -z "$VERSION" ]]; then
   echo "Error: could not read a version from $MANIFEST_FILE" >&2
   exit 1
 fi
-echo "==> Browser Plugin Manager v$VERSION preview banner"
+echo "==> PlugBrug v$VERSION preview banner"
 
 for asset in catalog_card.png settings_panel.png wizard_confirm.png; do
   if [[ ! -f "$SCRIPT_DIR/$asset" ]]; then

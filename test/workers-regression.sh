@@ -104,7 +104,7 @@ check "wizard worker other plugin: removed" "acme.weather" "$(cat "$REMOVELOG")"
 
 # Manager plugin uninstall via wizard worker:
 : > "$SETUPLOG"; : > "$NOTIFLOG"; : > "$REMOVELOG"
-bash "$WIZW" uninstall "$MANAGER_ID" "Browser Plugin Manager" "" "" >/dev/null 2>&1
+bash "$WIZW" uninstall "$MANAGER_ID" "PlugBrug" "" "" >/dev/null 2>&1
 check "wizard worker manager: host unregister called" "--uninstall" "$(cat "$SETUPLOG")"
 check "wizard worker manager: removed" "$MANAGER_ID" "$(cat "$REMOVELOG")"
 

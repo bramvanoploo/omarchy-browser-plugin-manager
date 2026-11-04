@@ -1,4 +1,4 @@
-# Omarchy Browser Plugin Manager
+# Omarchy PlugBrug
 
 One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org).
 
@@ -10,7 +10,7 @@ One-click plugin installs from [plugins.omarchy.org](https://plugins.omarchy.org
 >   2. In Firefox, open `about:addons`, click the gear icon (⚙️), and choose **Install Add-on From File...**.
 >   3. **Permissions requirement:** You must manually allow all requested permissions for the extension during installation or under the add-on's Permissions tab (access to `plugins.omarchy.org`, exchange messages with programs outside Firefox, and access browser tabs). Without these permissions enabled, the extension cannot communicate with the native messaging host and will not work. For additional details, see [documentation/INSTALL.md](documentation/INSTALL.md).
 
-![Omarchy Browser Plugin Manager](preview.png)
+![Omarchy PlugBrug](preview.png)
 
 **Bar-icon watcher**: the Omarchy bar icon lights up while a plugin page is
 the active tab. Left click opens a dropdown to **Install**, **Update**,

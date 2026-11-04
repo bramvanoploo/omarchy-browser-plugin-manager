@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Omarchy Browser Plugin Manager",
+  "name": "Omarchy PlugBrug",
   "version": "0.9.2",
   "description": "Adds Install/Uninstall buttons to installable plugins on plugins.omarchy.org. Requires the Omarchy shell plugin and native host.",
   "permissions": [

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Registers the Omarchy Browser Plugin Manager's native messaging host with
+# Registers the Omarchy PlugBrug's native messaging host with
 # the browsers, and prints the (manual) browser-extension loading steps.
 #
 # Browsers covered: Google Chrome, Chromium, Brave, Firefox.
@@ -171,7 +171,7 @@ main() {
     --arg name "$HOST_NAME" \
     --arg path "$HOST_PATH" \
     '{name:$name, path:$path, type:"stdio",
-      description:"Native messaging host for the Omarchy Browser Plugin Manager browser extension.",
+      description:"Native messaging host for the Omarchy PlugBrug browser extension.",
       allowed_origins:($ARGS.positional)}' \
     --args "${origins[@]}")
 
@@ -184,7 +184,7 @@ main() {
     --arg name "$HOST_NAME" \
     --arg path "$HOST_PATH" \
     '{name:$name, path:$path, type:"stdio",
-      description:"Native messaging host for the Omarchy Browser Plugin Manager browser extension.",
+      description:"Native messaging host for the Omarchy PlugBrug browser extension.",
       allowed_extensions:($ARGS.positional)}' \
     --args "${firefox_addons[@]}")
 

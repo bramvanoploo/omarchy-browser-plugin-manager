@@ -1,4 +1,4 @@
-// Omarchy Browser Plugin Manager - catalog page (index.html) content script.
+// Omarchy PlugBrug - catalog page (index.html) content script.
 // Places ONE icon-only action button directly left of each card's
 // "Copy install command" button (which keeps its own node and click
 // behavior, exactly like on the plugin pages), driven entirely by live

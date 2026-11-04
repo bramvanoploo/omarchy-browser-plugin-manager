@@ -5,7 +5,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// Omarchy Browser Plugin Manager wizard overlay.
+// Omarchy PlugBrug wizard overlay.
 // Summoned by the native messaging host (browser button click) or by the
 // bar widget's dropdown with payload {mode, id, repo, name}; the modes are
 // install / uninstall / enable / disable (host) and update (bar widget).
@@ -64,7 +64,7 @@ Item {
       return String(root.ownManifest.name)
     if (root.manifest && root.manifest.name)
       return String(root.manifest.name)
-    return "Browser Plugin Manager"
+    return "PlugBrug"
   }
 
   FileView {

@@ -5,7 +5,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// Omarchy Browser Plugin Manager bar widget (watcher mode).
+// Omarchy PlugBrug bar widget (watcher mode).
 //
 // The icon lights up while a focused browser window has an installable
 // plugin page on its active tab: the extension renews a beacon record with
@@ -1016,6 +1016,7 @@ Panel {
 
   function openMarketplace() {
     Quickshell.execDetached(["xdg-open", root.marketplaceUrl])
+    root.close()
   }
 
   // Install / Uninstall / Update go through the wizard (the project's
@@ -1517,7 +1518,7 @@ Panel {
     activeColor: Color.accent
     tooltipText: (root.beaconLive
       ? root.watchedName() + " \u00b7 open in browser"
-      : "Browser Plugin Manager")
+      : "PlugBrug")
       + (root.eligibleCount > 0
         ? " \u00b7 " + root.eligibleCount + " plugin" + (root.eligibleCount === 1 ? " has" : "s have")
           + " updates (right-click)"
@@ -1770,7 +1771,7 @@ Panel {
 
             Text {
               textFormat: Text.PlainText
-              text: root.popupLive ? root.watchedName() : "Browser Plugin Manager"
+              text: root.popupLive ? root.watchedName() : "PlugBrug"
               font.family: Style.font.family
               font.pixelSize: Style.font.title
               font.bold: true

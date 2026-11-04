@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "id": "bramvanoploo.omarchy-browser-plugin-manager",
-  "name": "Browser Plugin Manager",
+  "name": "PlugBrug",
   "version": "0.9.2",
   "author": "Bram van Oploo",
-  "description": "I prefer browsing Omarchy plugins through the official marketplace. It feels a bit primitive to not have the option to manage plugins from that marketplace. This plugin, combined with browser extensions for Firefox and Chromium-based browsers, solves that (hopefully). Early development, so expect bugs and evolution!",
+  "description": "The missing bridge between the official plugin Marketplace and your system. Manage your plugins directly from the browser Marketplace. Install, remove, update and place plugins. Install the accompanying extension for your Firefox- or CHromium-based browser and off you go!",
   "kinds": [
     "overlay",
     "bar-widget"

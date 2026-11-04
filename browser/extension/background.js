@@ -1,4 +1,4 @@
-// Omarchy Browser Plugin Manager - background service worker (MV3).
+// Omarchy PlugBrug - background service worker (MV3).
 // Content scripts cannot open native messaging ports, so the extension
 // relays ping/status/action requests to the registered native host here.
 // Reuses a single native port with a FIFO queue while active and closes

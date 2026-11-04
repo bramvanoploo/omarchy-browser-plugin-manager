@@ -1,5 +1,5 @@
 #!/bin/bash
-# Native messaging host for the Omarchy Browser Plugin Manager browser extension.
+# Native messaging host for the Omarchy PlugBrug browser extension.
 # Speaks Chrome/Firefox native messaging: 4-byte little-endian length + JSON.
 #
 # Messages from the extension:

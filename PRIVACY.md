@@ -1,10 +1,10 @@
-# Privacy Policy — Omarchy Browser Plugin Manager
+# Privacy Policy — Omarchy PlugBrug
 
 Last updated: 2026-10-28
 
 ## Data collection
 
-The Omarchy Browser Plugin Manager browser extension collects, stores, and
+The Omarchy PlugBrug browser extension collects, stores, and
 transmits **no user data**. It contains no analytics, no telemetry, no
 tracking code, and no remote server of its own.
 
