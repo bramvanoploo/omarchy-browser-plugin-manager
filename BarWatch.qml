@@ -1940,6 +1940,7 @@ Panel {
 
       Row {
         visible: !root.popupLive
+        anchors.right: parent.right
         spacing: Style.spacing.controlGap
 
         BWButton {
@@ -2012,11 +2013,11 @@ Panel {
       BWLine {
         visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled && (root.isBarWidget || root.iconSection !== "")
         text: "Move this plugin's bar icon:"
-        horizontalAlignment: Text.AlignHCenter
+        horizontalAlignment: Text.AlignRight
       }
       Row {
         visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled && (root.isBarWidget || root.iconSection !== "")
-        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.right: parent.right
         spacing: Style.space(6)
         Repeater {
           model: root.barMoveSections
