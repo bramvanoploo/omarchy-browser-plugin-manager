@@ -67,7 +67,7 @@ HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
 HOST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOST_VERSION="$(jq -r '.version // empty' "$HOST_DIR/../manifest.json" 2>/dev/null || true)"
 if [[ -z "$HOST_VERSION" ]]; then
-  HOST_VERSION="0.9.2"
+  HOST_VERSION="0.9.3"
 fi
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
