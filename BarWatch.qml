@@ -1948,7 +1948,10 @@ Panel {
           onClickedBw: root.openMarketplace()
         }
         BWButton {
-          label: "Settings"
+          // Cog prefix: FontAwesome "cog" (U+F013), same icon set and code
+          // range as the sectionIcon glyphs, so it falls back to the same
+          // fonts; 4 hex digits keeps the \u escape safe.
+          label: "\uF013 Settings"
           // Same route as the bar icon's right click: it closes this
           // left-click popup (root.close inside) and summons the settings
           // wizard overlay.
