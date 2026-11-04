@@ -1950,8 +1950,10 @@ Panel {
         BWButton {
           // Cog prefix: FontAwesome "cog" (U+F013), same icon set and code
           // range as the sectionIcon glyphs, so it falls back to the same
-          // fonts; 4 hex digits keeps the \u escape safe.
-          label: "\uF013 Settings"
+          // fonts; 4 hex digits keeps the \u escape safe. The two nbsp
+          // characters (U+00A0) are the gap between glyph and word: wider
+          // than one space and never collapsed by text layout.
+          label: "\uF013\u00A0\u00A0Settings"
           // Same route as the bar icon's right click: it closes this
           // left-click popup (root.close inside) and summons the settings
           // wizard overlay.
