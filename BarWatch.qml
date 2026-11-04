@@ -264,7 +264,7 @@ Panel {
   // Every installed user (non-first-party) plugin whose git HEAD is behind
   // origin (omaplug's fetch/merge-base model, so both widgets count the same
   // set). updateList holds the outdated ones ({id, name, installed, latest,
-  // remote, verified}); the bar badge and tooltip show the eligibleCount
+  // remote, verified}); the bar badge shows the eligibleCount
   // size (hidden at 0) — the subset the verification setting allows to
   // update (all when unverified is on, verified-only otherwise).
   property var updateList: []
@@ -1516,16 +1516,10 @@ Panel {
     // "lit up" state is an accent highlight, matching the accent update pill
     // and the panel's accent styling, so follow the theme accent.
     activeColor: Color.accent
-    tooltipText: (root.beaconLive
-      ? root.watchedName() + " \u00b7 open in browser"
-      : "PlugBrug")
-      + (root.eligibleCount > 0
-        ? " \u00b7 " + root.eligibleCount + " plugin" + (root.eligibleCount === 1 ? " has" : "s have")
-          + " updates (right-click)"
-        : root.updateCount > 0
-          ? " \u00b7 " + root.updateCount + " plugin" + (root.updateCount === 1 ? " has" : "s have")
-            + " updates, all unverified (right-click)"
-          : "")
+    // Static hint pointing at the settings entry points (right click on the
+    // icon, or the Settings button in the left-click popup). Update counts
+    // stay visible through the accent badge above.
+    tooltipText: "PlugBrug (right click for settings)"
 
     onPressed: function (code) {
       // Left: with a live marketplace tab, jump the browser to it (focus
@@ -1951,6 +1945,13 @@ Panel {
         BWButton {
           label: "Open plugins.omarchy.org"
           onClickedBw: root.openMarketplace()
+        }
+        BWButton {
+          label: "Settings"
+          // Same route as the bar icon's right click: it closes this
+          // left-click popup (root.close inside) and summons the settings
+          // wizard overlay.
+          onClickedBw: root.toggleSettings()
         }
       }
 
