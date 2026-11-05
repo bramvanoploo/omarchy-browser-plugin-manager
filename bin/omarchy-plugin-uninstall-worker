@@ -8,6 +8,9 @@
 # update worker, so removing this manager itself still finishes and
 # notifies after the shell reload destroys the widget.
 set -u
+# Marker files record in-progress batches (mode, timestamps); owner-only
+# from creation, whatever the caller's umask.
+umask 077
 export PATH="${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH"
 notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
 command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)"

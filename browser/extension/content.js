@@ -397,7 +397,11 @@
 
   function wireAction(button, plugin, type) {
     let busy = false;
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", async (event) => {
+      // Only real user clicks reach the host: the page's own scripts can
+      // call button.click(), and a synthetic event must never trigger an
+      // install/update on the user's behalf.
+      if (!event.isTrusted) return;
       if (busy) return;
       busy = true;
       button.disabled = true;

@@ -176,6 +176,21 @@ check "apply cli failed: exit 1" "1" "$rc"
 check "apply cli failed: status + raw output" "cli-failed
 plugin not found" "$out"
 
+# ---- apply: symlinked plugin dirs are never followed ----------------------
+# A dev clone linked into the plugins folder must not be updated through
+# the link (pinned path nor the unverified CLI path), matching cmd_check's
+# symlink skip.
+git clone -q "$TESTHOME/origin-pinned.plugin.git" "$TESTHOME/devlink-target" 2>/dev/null
+ln -s "$TESTHOME/devlink-target" "$PLUG/link.plugin"
+out=$(bash "$UPD" apply link.plugin "$B1" 2>&1); rc=$?
+check "apply symlink pinned: exit 1" "1" "$rc"
+check "apply symlink pinned: status word" "not-git" "$out"
+: > "$TESTHOME/shell.log"
+out=$(FIX_UPDATE_OUT="Updated link.plugin" bash "$UPD" apply link.plugin "" 2>&1); rc=$?
+check "apply symlink unverified: exit 1 (CLI never reached)" "1" "$rc"
+check "apply symlink unverified: status word" "not-git" "$out"
+rm -f "$PLUG/link.plugin"; rm -rf "$TESTHOME/devlink-target"
+
 # ---- update worker: mixed batch, one rescan, marker cleanup --------------
 read -r A4 B4 < <(mk_clone batchok.plugin)
 : > "$SHELLLOG"; : > "$NOTIFLOG"
@@ -241,9 +256,30 @@ check "wizard unverified up-to-date: title" "Plugin up to date" "$(head -1 "$NOT
 : > "$NOTIFLOG"
 export FIX_LIST="$TESTHOME/wizlist.json"
 jq -n '[{id:"from-repo.plugin",name:"From Repo",version:"0.1.0",enabled:true}]' > "$FIX_LIST"
-FIX_ADD_ID=from-repo.plugin bash "$WIZW" install from-repo.plugin "From Repo" "https://example.invalid/repo" "" >/dev/null 2>&1
+FIX_ADD_ID=from-repo.plugin bash "$WIZW" install from-repo.plugin "From Repo" "https://github.com/acme/from-repo.git" "" >/dev/null 2>&1
 check "wizard install: enabled notification" \
   "From Repo is installed and enabled." "$(head -1 "$NOTIFLOG" | cut -f2-)"
+
+# ---- wizard worker: install mode rejects non-GitHub repos ------------------
+# The repo URL reaches the worker as a bare argv string; it is re-validated
+# before omarchy plugin add sees it (fail closed, no clone attempted).
+: > "$NOTIFLOG"
+out=$(bash "$WIZW" install sneaky.plugin "Sneaky" "https://evil.invalid/x/../y" "" 2>&1); rc=$?
+check "wizard install rejects non-github repo: exit 2" "2" "$rc"
+check "wizard install rejects non-github repo: notif" \
+  "Sneaky: invalid plugin repository URL." "$(head -1 "$NOTIFLOG" | cut -f2-)"
+check "wizard install rejects non-github repo: no clone" "0" "$(ls -d "$PLUG/sneaky.plugin" 2>/dev/null | wc -l)"
+: > "$NOTIFLOG"
+bash "$WIZW" install sneaky2.plugin "Sneaky2" "https://github.com/../escape" "" >/dev/null 2>&1; rc=$?
+check "wizard install rejects dot-component repo: exit 2" "2" "$rc"
+
+# ---- wizard worker: notification bodies are sanitized ----------------------
+# A display name carrying a newline could spoof a second notification line.
+: > "$NOTIFLOG"
+FIX_REMOVE_RC=0 bash "$WIZW" uninstall wiz.plugin "$(printf 'Ev\nil')" "" "" >/dev/null 2>&1
+check "wizard uninstall: name control chars stripped" \
+  "Evil has been removed." "$(tail -1 "$NOTIFLOG" | cut -f2-)"
+check "wizard uninstall: one notification line per run" "1" "$(wc -l < "$NOTIFLOG")"
 
 # ---- wizard worker: uninstall mode ----------------------------------------
 : > "$NOTIFLOG"

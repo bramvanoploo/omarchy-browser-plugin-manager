@@ -17,6 +17,9 @@
 # the bar widget), so confirming a verified update in either surface loads
 # exactly the reviewed commit or nothing at all.
 set -u
+# Marker files record in-progress actions (plugin name, mode, timestamps);
+# owner-only from creation, whatever the caller's umask.
+umask 077
 export PATH="${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH"
 KIND="$1"
 ID="$2"
@@ -27,7 +30,11 @@ SECTION="$5"
 case "$ID" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*)
   notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
   command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)"
-  "$notify_cmd" --app-name omarchy-browser-plugin-manager --expire-time 8000 "Plugin action failed" "Invalid plugin id: $ID"
+  # Echo a sanitized, length-capped rendering only: $ID failed the id
+  # whitelist, so its raw text may carry control characters or newline
+  # escapes that would spoof lines in the notification body.
+  id_display=$(printf '%s' "$ID" | tr -dc 'a-zA-Z0-9._-' | cut -c1-40)
+  "$notify_cmd" --app-name omarchy-browser-plugin-manager --expire-time 8000 "Plugin action failed" "Invalid plugin id: ${id_display:-(empty)}"
   exit 2
 ;; esac
 notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
@@ -35,6 +42,15 @@ command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-not
 notify() {
   "$notify_cmd" --app-name omarchy-browser-plugin-manager --expire-time 8000 "$1" "$2"
 }
+# Notification bodies must not carry control characters (a newline from a
+# CLI error could spoof extra notification lines) and must stay bounded.
+# \011 (tab) and \012 (LF) survive deliberately; high bytes (UTF-8) survive
+# so plugin display names are not mangled.
+clean() { printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-400; }
+# $NAME is display-only (notifications, marker, summon payload) and arrives
+# unvalidated from the summoner: strip control characters up front, cap the
+# length; the payload itself is built by jq, which quotes it anyway.
+NAME="$(printf '%s' "$NAME" | tr -d '\000-\037\177' | cut -c1-80)"
 list() { omarchy plugin list --json 2>/dev/null; }
 enabled() { list | jq -e --arg id "$ID" 'any(.[]; .id == $id and .enabled == true)' >/dev/null 2>&1; }
 # The bar layout entry is the real placement record; a missing
@@ -100,20 +116,32 @@ update)
     validate-failed*)
       notify "Plugin update failed" "$NAME: the verified commit failed validation and was rolled back." ;;
     cli-failed*)
-      notify "Plugin update failed" "$NAME: $DETAIL" ;;
+      notify "Plugin update failed" "$NAME: $(clean "$DETAIL")" ;;
     *)
-      notify "Plugin update failed" "$NAME: $OUT" ;;
+      notify "Plugin update failed" "$NAME: $(clean "$OUT")" ;;
   esac
   exit 1
   ;;
 install)
+  # Defense in depth: the wizard re-fetches the catalog and validates the
+  # repo before ever summoning this worker, but the URL reaches us as a
+  # bare argv string, so re-check it here (same grammar as the host's
+  # normalize_target) before handing it to `omarchy plugin add`.
+  if [[ ! $REPO =~ ^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)(\.git)?/?$ ]] \
+     || [[ ${BASH_REMATCH[1]} == "." || ${BASH_REMATCH[1]} == ".." \
+        || ${BASH_REMATCH[2]%.git} == "." || ${BASH_REMATCH[2]%.git} == ".." \
+        || -z ${BASH_REMATCH[2]%.git} ]]; then
+    notify "Plugin install failed" "$NAME: invalid plugin repository URL."
+    exit 2
+  fi
+  REPO="https://github.com/${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}"
   # The chosen bar section cannot ride on add's --enable, so clone
   # first and let the enable loop below apply --section.
   if ! OUT="$(omarchy plugin add "$REPO" --yes 2>&1)"; then
     # The clone can land while add fails on its own enable attempt;
     # only re-add when the plugin directory did not arrive.
     if [ ! -d "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$ID" ]; then
-      notify "Plugin install failed" "$NAME: $OUT"
+      notify "Plugin install failed" "$NAME: $(clean "$OUT")"
       exit 1
     fi
   fi
@@ -184,7 +212,7 @@ uninstall)
     fi
   fi
   if ! OUT="$(omarchy plugin remove "$ID" --yes 2>&1)"; then
-    notify "Plugin uninstall failed" "$NAME: $OUT"
+    notify "Plugin uninstall failed" "$NAME: $(clean "$OUT")"
     exit 1
   fi
   notify "Plugin uninstalled" "$NAME has been removed."

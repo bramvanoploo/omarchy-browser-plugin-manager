@@ -503,7 +503,7 @@ Item {
 
     catalogProc.running = true
     if (needsManifest) {
-      manifestProc.command = ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--", mUrl]
+      manifestProc.command = ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--max-filesize", "16777216", "--", mUrl]
       manifestProc.running = true
     } else {
       manifestLoaded = true
@@ -663,7 +663,7 @@ Item {
 
   Process {
     id: catalogProc
-    command: ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--", "https://plugins.omarchy.org/catalog.json"]
+    command: ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--max-filesize", "16777216", "--", "https://plugins.omarchy.org/catalog.json"]
     stdout: StdioCollector {
       id: catalogProcOut
       waitForEnd: true
@@ -1275,8 +1275,12 @@ Item {
   // verified, which is also the moment the bar icon appears.
   Process {
     id: bootScanProc
+    // Cross-check every marker's self-reported started against the file's
+    // real mtime (and the clock) before trusting it: the content is written
+    // once by the worker, so a marker whose timestamp disagrees with its
+    // mtime was not written by a worker and is deleted on the spot.
     command: ["bash", "-c",
-      "for f in \"$1\"/*.json; do [ -e \"$f\" ] || exit 0; jq -c . \"$f\" 2>/dev/null; done",
+      "for f in \"$1\"/*.json; do [ -e \"$f\" ] || exit 0; m=$(stat -c %Y \"$f\" 2>/dev/null) || continue; now=$(date +%s); out=$(jq -c --argjson m \"$m\" --argjson now \"$now\" 'select(type==\"object\" and (((.started // null)|type)==\"number\") and .started >= $m-120 and .started <= $m+120 and .started <= $now+60)' \"$f\" 2>/dev/null); if [ -n \"$out\" ]; then echo \"$out\"; else rm -f \"$f\"; fi; done",
       "bpm-boot", root.markerDir]
     stdout: StdioCollector {
       id: bootScanProcOut
@@ -1296,8 +1300,11 @@ Item {
 
   Process {
     id: markerProc
+    // Same mtime cross-check as the boot scan: a marker whose started
+    // timestamp disagrees with the file's real mtime is not from a worker
+    // and is deleted instead of keeping the running panel open.
     command: ["bash", "-c",
-      "for f in \"$1\"/*.json; do [ -e \"$f\" ] || exit 0; jq -c . \"$f\" 2>/dev/null; done",
+      "for f in \"$1\"/*.json; do [ -e \"$f\" ] || exit 0; m=$(stat -c %Y \"$f\" 2>/dev/null) || continue; now=$(date +%s); out=$(jq -c --argjson m \"$m\" --argjson now \"$now\" 'select(type==\"object\" and (((.started // null)|type)==\"number\") and .started >= $m-120 and .started <= $m+120 and .started <= $now+60)' \"$f\" 2>/dev/null); if [ -n \"$out\" ]; then echo \"$out\"; else rm -f \"$f\"; fi; done",
       "bpm-marker", root.markerDir]
     stdout: StdioCollector {
       id: markerProcOut

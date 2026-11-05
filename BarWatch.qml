@@ -433,13 +433,35 @@ Panel {
   readonly property string chromeLaunchLabel: firstInstalledLabel(chromeBrowsers, chromeInstalledBins)
   readonly property string firefoxLaunchLabel: firstInstalledLabel(firefoxBrowsers, firefoxInstalledBins)
 
+  // Launcher names this widget may ever exec: every bin from the browser
+  // family tables above. A settings command can only pick from this list,
+  // never an arbitrary argv[0].
+  function allowedBrowserBins() {
+    var bins = []
+    var groups = root.chromeBrowsers.concat(root.firefoxBrowsers)
+    for (var i = 0; i < groups.length; i++)
+      bins = bins.concat(groups[i].bins)
+    return bins
+  }
+
+  // Same id grammar the native host and the workers enforce: an id can
+  // never traverse a path or masquerade as a CLI flag.
+  function validPluginId(s) {
+    return /^[a-z0-9][a-z0-9.-]{0,127}$/.test(String(s))
+  }
+
   function openStore(url, bin) {
+    // Commands arrive through the settings-cmd file, so re-validate before
+    // launching anything: only https store pages, and only launcher names
+    // from the browser tables (xdg-open when the family has no bin).
+    var u = String(url || "")
+    var b = String(bin || "")
+    if (!/^https:\/\//.test(u)) return
+    if (b !== "" && allowedBrowserBins().indexOf(b) === -1) return
     // The store page must open in its own family, so the browser found by
     // the probe is launched directly; xdg-open is only the fallback when
     // the family is not installed at all.
-    var target = String(bin || "") !== ""
-      ? [String(bin), String(url)]
-      : ["xdg-open", String(url)]
+    var target = b !== "" ? [b, u] : ["xdg-open", u]
     Quickshell.execDetached(target)
   }
 
@@ -674,7 +696,13 @@ Panel {
       })
       root.startUpdate(root.updateSpecs(list))
     } else if (action === "run_uninstall") {
-      root.startUninstall((cmd.ids || []).map(String))
+      // Re-check the id grammar before handing argv to the worker (the
+      // worker validates again, and omarchy plugin remove only ever acts
+      // on installed plugins, so a forged id can at most name a missing
+      // one).
+      root.startUninstall((cmd.ids || []).map(String).filter(function (s) {
+        return root.validPluginId(s)
+      }))
     }
   }
 
@@ -1327,7 +1355,9 @@ Panel {
   Component.onCompleted: {
     // The beacon host creates the state dir lazily; the settings file needs
     // it at widget start (its write goes through a shell, mkdir first).
-    Quickshell.execDetached(["mkdir", "-p", root.stateDir])
+    // umask 077: the dir holds presence/updates state, owner-only from the
+    // moment it exists, whatever the shell's umask is.
+    Quickshell.execDetached(["sh", "-c", 'umask 077 && mkdir -p "$1"', "sh", root.stateDir])
     managerManifestFile.reload()
     settingsFile.reload()
     browserCheckProc.running = true
@@ -1417,7 +1447,7 @@ Panel {
   // for display only (preview thumbnail, description, author, version).
   Process {
     id: catalogProc
-    command: ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--", "https://plugins.omarchy.org/catalog.json"]
+    command: ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--max-filesize", "16777216", "--", "https://plugins.omarchy.org/catalog.json"]
     stdout: StdioCollector {
       id: catalogProcOut
       waitForEnd: true
