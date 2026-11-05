@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Omarchy PlugBrug",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "description": "Adds Install/Uninstall buttons to installable plugins on plugins.omarchy.org. Requires the Omarchy shell plugin and native host.",
   "permissions": [
     "nativeMessaging",
