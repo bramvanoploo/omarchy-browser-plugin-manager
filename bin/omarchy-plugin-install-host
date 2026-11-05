@@ -67,8 +67,12 @@ HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
 HOST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOST_VERSION="$(jq -r '.version // empty' "$HOST_DIR/../manifest.json" 2>/dev/null || true)"
 if [[ -z "$HOST_VERSION" ]]; then
-  HOST_VERSION="0.9.3"
+  HOST_VERSION="0.9.5"
 fi
+# The extension's transport can touch the manifest, so a tampered version
+# string must never travel into a reply frame as raw bytes: keep only a
+# conservative version-shaped token, and fall back to the built-in default.
+[[ "$HOST_VERSION" =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || HOST_VERSION="0.9.5"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
 MAX_FRAME_BYTES=65536
@@ -393,7 +397,9 @@ validate_action() {
       ;;
   esac
 
-  catalog=$(curl -fsSL --proto '=https' --max-time 10 "$CATALOG_URL" 2>/dev/null) || {
+  # --max-filesize mirrors the shared detector (omarchy-plugin-update check):
+  # a hostile or broken CDN cannot feed an unbounded body into jq.
+  catalog=$(curl -fsSL --proto '=https' --max-time 10 --max-filesize 16777216 "$CATALOG_URL" 2>/dev/null) || {
     echo "catalog-unreachable"
     return 1
   }
@@ -678,7 +684,14 @@ main() {
         # stdin, never in argv) so the update-info merge can match the
         # cache entry.
         local_status=$(merge_updates_into "$local_status" "$(allow_unverified_setting)" "$(cached_update_plugins)")
-        send_frame "${local_status%\}},\"ok\":true}"
+        # Merge ok with jq instead of string surgery: a malformed
+        # upstream payload can only ever produce an explicit failure
+        # frame, never a malformed one. Consumers all gate on .ok.
+        if jq -e 'type == "object"' <<<"$local_status" >/dev/null 2>&1; then
+          send_frame "$(jq -c '. + {ok: true}' <<<"$local_status")"
+        else
+          send_frame '{"ok":false,"error":"status-malformed"}'
+        fi
         ;;
       status_all)
         # Batch report for the catalog page: every installed user (non
@@ -691,7 +704,14 @@ main() {
         [[ ${all_status:-} == "["* ]] || all_status="[]"
         maybe_refresh_updates
         all_status=$(merge_updates_into "$all_status" "$(allow_unverified_setting)" "$(cached_update_plugins)")
-        send_frame "{\"ok\":true,\"plugins\":$all_status}"
+        # Same jq merge as the status handler above: a merge that fell back
+        # to raw text can only ever produce an explicit failure frame here,
+        # never a malformed one built by string surgery.
+        if jq -e 'type == "array"' <<<"$all_status" >/dev/null 2>&1; then
+          send_frame "$(jq -c '{ok: true, plugins: .}' <<<"$all_status")"
+        else
+          send_frame '{"ok":false,"error":"status-malformed"}'
+        fi
         ;;
       updates)
         # The behind-set for the extension's update UI: the cached

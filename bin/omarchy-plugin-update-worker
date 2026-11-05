@@ -18,6 +18,9 @@
 # shadows omarchy-shell on PATH to swallow those per-plugin rescans and
 # fires one real rescan after the whole batch, so the bar reloads once.
 set -u
+# Marker files record in-progress batches (mode, timestamps); owner-only
+# from creation, whatever the caller's umask.
+umask 077
 export PATH="${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH"
 notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
 command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)"
@@ -64,9 +67,14 @@ reason() {
     *) echo "$1" ;;
   esac
 }
+# Failure entries ride into one summary notification: keep them to the
+# single status word (apply's cli-failed status carries raw CLI output on
+# following lines), strip control characters, and cap the length so a
+# malformed spec or a chatty CLI cannot spoof lines or bloat the body.
+entry() { printf '%s' "$1" | head -n1 | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-120; }
 
 bin_dir=$(mktemp -d)
-printf '%s\n' '#!/bin/bash' '[ "${1:-}" = shell ] && [ "${2:-}" = rescanPlugins ] && exit 0' 'exec '"$real_shell"' "$@"' > "$bin_dir/omarchy-shell"
+printf '%s\n' '#!/bin/bash' '[ "${1:-}" = shell ] && [ "${2:-}" = rescanPlugins ] && exit 0' "exec $(printf '%q' "$real_shell") \"\$@\"" > "$bin_dir/omarchy-shell"
 chmod +x "$bin_dir/omarchy-shell"
 export PATH="$bin_dir:$PATH"
 ok=0; fail=0; failed=""
@@ -74,9 +82,9 @@ while [ $# -gt 0 ]; do
   spec="$1"
   id="${spec%%:*}"; expected="${spec#*:}"
   case "$id" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*|*:*) id="" ;; esac
-# A spec carrying a pin must pin to a full 40 hex sha; an unpinned spec
-# carries an empty sha. A present-but-invalid sha is a violation and
-# never falls through to the unverified CLI path (fail closed).
+  # A spec carrying a pin must pin to a full 40 hex sha; an unpinned spec
+  # carries an empty sha. A present-but-invalid sha is a violation and
+  # never falls through to the unverified CLI path (fail closed).
   bad_sha=0
   if [ -n "$expected" ]; then
     if [ ${#expected} -ne 40 ]; then
@@ -91,12 +99,12 @@ while [ $# -gt 0 ]; do
     if OUT=$("$updater" apply "$id" "$expected" 2>&1); then
       ok=$((ok+1))
     else
-      fail=$((fail+1)); failed="$failed $id ($(reason "$OUT"))"
+      fail=$((fail+1)); failed="$failed $id ($(reason "$(entry "$OUT")"))"
     fi
   elif [ -n "$id" ] && [ "$bad_sha" -eq 0 ] && "$updater" apply "$id" "" >/dev/null 2>&1; then
     ok=$((ok+1))
   else
-    fail=$((fail+1)); failed="$failed ${id:-$spec}"
+    fail=$((fail+1)); failed="$failed ${id:-$(entry "$spec")}"
   fi
   shift
 done

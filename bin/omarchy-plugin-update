@@ -62,7 +62,7 @@ cmd_check() {
     return 0
   fi
   rows=""
-  for id in $(jq -r '(if type == "array" then . else [] end)[] | select(type == "object" and ((.firstParty // false) | not)) | .id // empty' <<<"$list" 2>/dev/null); do
+  while IFS= read -r id; do
     case "$id" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*) continue ;; esac
     d="$PLUG_DIR/$id"
     [[ -L $d ]] && continue
@@ -78,7 +78,7 @@ cmd_check() {
       name=$(jq -r '.name // ""' "$d/manifest.json" 2>/dev/null | tr -d '\t\r\n') || name=""
       rows+=$(printf '%s\t%s\t%s\t%s' "$id" "$ver" "$name" "$remote")$'\n'
     fi
-  done
+  done < <(jq -r '(if type == "array" then . else [] end)[] | select(type == "object" and ((.firstParty // false) | not)) | .id // empty' <<<"$list" 2>/dev/null)
   plugins=$(printf '%s' "$catalog" | jq -c --arg rows "$rows" '
     (.plugins // []) as $pl
     | [ $rows | split("\n")[] | select(length > 0) | split("\t")
@@ -114,6 +114,13 @@ cmd_apply() {
     return 2
   ;; esac
   d="$PLUG_DIR/$id"
+  # Same guard as cmd_check: a symlinked plugin dir (a dev clone linked into
+  # the plugins folder) is never updated through the link — neither the
+  # pinned path nor the unverified CLI path may follow it.
+  if [[ -L $d ]]; then
+    printf 'not-git\n'
+    return 1
+  fi
   if [[ -z $expected ]]; then
     # Explicit unverified opt-in: the plain CLI update. It ends with its own
     # "omarchy-shell shell rescanPlugins"; the batch worker shadows that on
