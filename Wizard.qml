@@ -1696,14 +1696,21 @@ Item {
     }
   }
 
-  // Settings update-list row: plugin name + installed -> latest, with
-  // per-row Update (primary) and Uninstall (danger) buttons. Every field
-  // is catalog-sourced, so plain-text Text keeps remote strings inert.
+  // Settings update-list row: plugin name + installed -> latest, a primary
+  // Update text button, and an Uninstall icon button (trash glyph from the
+  // Nerd Font Style.font.family resolves to, labelled by its tooltip). The
+  // icon button is deliberately not tone-highlighted: the confirm stage is
+  // what makes an uninstall loud. Every field is catalog-sourced, so
+  // plain-text Text keeps remote strings inert.
   component PiUpdateRow: Row {
+    id: piRow
     width: parent ? parent.width : 0
     spacing: Style.spacing.controlGap
+    readonly property real updateWidth: Style.space(78)
+    readonly property real iconSize: Style.space(30)
     Column {
-      width: parent.width - 2 * Style.space(78) - 2 * Style.spacing.controlGap
+      width: parent.width - piRow.updateWidth - piRow.iconSize
+        - 2 * Style.spacing.controlGap
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(2)
       Text {
@@ -1727,18 +1734,19 @@ Item {
     }
     PiButton {
       anchors.verticalCenter: parent.verticalCenter
-      width: Style.space(78)
-      height: Style.space(30)
+      width: piRow.updateWidth
+      height: piRow.iconSize
       label: "Update"
       primary: true
       onClickedPi: root.beginUpdateConfirm([modelData])
     }
     PiButton {
       anchors.verticalCenter: parent.verticalCenter
-      width: Style.space(78)
-      height: Style.space(30)
-      label: "Uninstall"
-      danger: true
+      width: piRow.iconSize
+      height: piRow.iconSize
+      label: "\uF1F8"
+      labelPixelSize: Math.round(piRow.iconSize / 2)
+      tooltipText: "Uninstall"
       onClickedPi: root.beginUninstallConfirm(modelData)
     }
   }
@@ -1808,10 +1816,24 @@ Item {
     spacing: Style.space(8)
     visible: items.length > 0
     readonly property int capRows: 3
-    readonly property real rowHeight: Style.space(30)
-    readonly property real boxHeight: items.length > capRows
+    // Rows are all the same height, so one row's height falls out of the
+    // column total: (implicitHeight - the (n-1) row gaps) / n. The column's
+    // implicitHeight is a real property, so the box keeps tracking the rows
+    // when they arrive after the pane was built; sizing off
+    // piSecRepeater.itemAt(0) would not re-evaluate and would leave the box
+    // at the fallback while the rows are taller. Style.space(30) only covers
+    // the moment before the first row exists.
+    readonly property real rowHeight: piSecRepeater.count > 0
+      ? (piSecColumn.implicitHeight
+        - Style.space(6) * (piSecRepeater.count - 1)) / piSecRepeater.count
+      : Style.space(30)
+    // Up to the cap the box is exactly the rows it holds; past it the box
+    // holds capRows rows and the rest scrolls. Either way the Flickable's
+    // Style.space(8) margins are added at both ends, otherwise every row is
+    // clipped by 16px.
+    readonly property real boxHeight: (items.length > capRows
       ? rowHeight * capRows + Style.space(6) * (capRows - 1)
-      : rowHeight * items.length + Style.space(6) * Math.max(0, items.length - 1)
+      : piSecColumn.implicitHeight) + Style.space(16)
 
     Row {
       spacing: Style.space(8)
@@ -1858,8 +1880,12 @@ Item {
           width: parent.width
           spacing: Style.space(6)
           Repeater {
+            id: piSecRepeater
             model: piSec.items
-            delegate: PiUpdateRow
+            // Braces matter: `delegate: PiUpdateRow` (the bare type) is not a
+            // delegate definition, so the Repeater instantiates no rows and
+            // the box paints empty at the height items.length asked for.
+            delegate: PiUpdateRow { }
           }
         }
       }
