@@ -210,6 +210,29 @@ Item {
     return /^[a-f0-9]{40}$/.test(sha) ? sha : ""
   }
 
+  // Update confirmation's "from -> to" line: the local clone's manifest
+  // version (the same spelling the shared detector reads) to the catalog
+  // entry's version, in the same "from  →  to" format as the settings
+  // update rows. Empty when either side is unknown — the commit-sha
+  // explainer lines then still describe exactly what is checked out.
+  // (The pluginsDir join mirrors BarWatch.qml's installedManifestPath.)
+  readonly property string updateVersionLine: {
+    var e = root.catalogEntry
+    var to = e && e.version ? String(e.version) : ""
+    if (root.installedVersion.length === 0 || to.length === 0) return ""
+    return "v" + root.installedVersion + "  \u2192  v" + to
+  }
+  property string installedVersion: ""
+  readonly property string pluginsDir: {
+    var base = Quickshell.env("XDG_CONFIG_HOME")
+      || ((Quickshell.env("HOME") || "/tmp") + "/.config")
+    return base + "/omarchy/plugins"
+  }
+  // validPluginId is the path-safety gate (shape-checked, no traversal).
+  readonly property string installedManifestPath:
+    root.validPluginId(root.pluginId)
+      ? root.pluginsDir + "/" + root.pluginId + "/manifest.json" : ""
+
   // Unverified update under the default verified-only policy: block the
   // action with an explanation until the user opts in via the bar widget's
   // settings toggle.
@@ -406,6 +429,7 @@ Item {
     enableTries = 0
     finalCheck = false
     settingsConfirm = null
+    installedVersion = ""
 
     opened = true
 
@@ -509,6 +533,7 @@ Item {
       manifestLoaded = true
     }
     if (mode === "uninstall" || mode === "enable" || mode === "disable" || mode === "update") listProc.running = true
+    if (mode === "update" && installedManifestPath !== "") installedManifestFile.reload()
   }
 
   function close() {
@@ -743,6 +768,23 @@ Item {
       }
       root.manifestLoaded = true
     }
+  }
+
+  // The installed clone's own manifest.json: its version field is the
+  // "from" side of the update confirmation's version line. Loaded on
+  // demand at summon (file watches don't fire on external writes in this
+  // environment, so a path that did not change still needs an explicit
+  // reload); a missing or unreadable manifest just means no version line.
+  FileView {
+    id: installedManifestFile
+    path: root.installedManifestPath
+    printErrors: false
+    onLoaded: {
+      var v = ""
+      try { v = String(JSON.parse(text()).version || "") } catch (e) { v = "" }
+      root.installedVersion = v
+    }
+    onLoadFailed: root.installedVersion = ""
   }
 
   // Local state check for uninstall/enable/disable: validates and, when the
@@ -1904,7 +1946,8 @@ Item {
   }
 
   // Marketplace preview thumbnail with loading placeholder / shimmer:
-  // shown in install review and uninstall confirmation panels.
+  // shown in install review, uninstall confirmation, and update
+  // confirmation panels.
   // Proportional height up to 16:5 max proportions. While loading,
   // reserves the 16:5 ratio placeholder box and animates a soft shimmer
   // band until the image lands, so the card height never jumps.
@@ -2725,20 +2768,90 @@ Item {
           text: "Installed and enabled. Disabling unloads it from the shell; "
             + "the plugin files stay installed."
         }
-        PiLine {
-          visible: root.stage === "update-confirm"
-            && root.updateVerifiedSha.length > 0
-          text: "Installed. Updating fast-forwards the plugin to the verified "
-            + "commit " + root.shortSha(root.updateVerifiedSha) + ". If upstream "
-            + "advanced past it, the update is refused and the plugin stays untouched."
-        }
-        PiLine {
-          visible: root.stage === "update-confirm"
-            && root.updateVerifiedSha.length === 0
-          color: Color.accent
-          text: "Installed. No marketplace-verified commit matches upstream, and "
-            + "you allowed unverified updates: this update pulls commits no "
-            + "maintainer reviewed. The shell reloads the plugin afterwards."
+        // ---- stage: update-confirm (single-plugin update confirmation) ----
+        // Same plugin identity block as the install review: preview image
+        // with loading placeholder, name, id, meta line, source link, and
+        // marketplace status — plus the "from -> to" version line and the
+        // commit-pinning explainer.
+        Column {
+          visible: root.stage === "update-confirm" && root.mode === "update"
+          width: cardColumn.width
+          spacing: Style.spacing.lg
+
+          // Preview image: 100% width, proportional up to 16:5 max proportions,
+          // with loading placeholder shimmer while catalog or image is loading.
+          PiPreviewImage {}
+
+          PiLine {
+            visible: root.pluginName.length > 0
+            color: Color.foreground
+            font.bold: true
+            text: root.pluginName
+          }
+          PiLine {
+            visible: root.pluginId.length > 0 && root.pluginId !== root.pluginName
+            color: Color.muted
+            font.pixelSize: Style.font.caption
+            text: root.pluginId
+          }
+          // Installed -> available versions (both version-shaped; when the
+          // manifest or catalog carries no version the commit explainer below
+          // is the only, still exact, description of the change).
+          PiLine {
+            visible: root.updateVersionLine.length > 0
+            color: Color.foreground
+            text: root.updateVersionLine
+          }
+          PiLine {
+            visible: root.catalogEntry !== null
+              || (root.pluginManifest !== null && root.manifestLoaded)
+            text: {
+              var e = root.catalogEntry || root.pluginManifest || {}
+              var bits = []
+              if (e.author) bits.push("by " + e.author)
+              if (e.version) bits.push("v" + e.version)
+              if (e.license) bits.push(e.license)
+              var kinds = root.manifestKinds
+              if (kinds.length) bits.push(kinds.join(", "))
+              return bits.join("  \u00b7  ")
+            }
+          }
+          PiTextLink {
+            visible: root.pluginRepo.length > 0
+            closeOnActivate: true
+            text: "Source: " + root.linkTag(root.pluginRepo, root.pluginRepo)
+          }
+          PiLine {
+            visible: root.catalogEntry !== null
+            textFormat: Text.RichText
+            text: {
+              var e = root.catalogEntry
+              if (!e) return ""
+              var isVer = e.verificationStatus === "verified"
+              var verification = isVer
+                ? "<span style='color: " + root.themeSuccessColor + ";'>verified</span>"
+                : "<span style='color: " + root.themeWarningColor + ";'>unverified</span>"
+              var isSnapVer = e.verificationSnapshotStatus === "verified"
+              var snapshot = isSnapVer
+                ? "snapshot <span style='color: " + root.themeSuccessColor + ";'>verified</span>"
+                : "snapshot <span style='color: " + root.themeWarningColor + ";'>unverified</span>"
+              return "Marketplace status: " + verification + " \u00b7 " + snapshot
+                + " at " + root.shortSha(e.listingValidatedCommit)
+            }
+          }
+          PiLine {
+            visible: root.updateVerifiedSha.length > 0
+            text: "Installed. Updating fast-forwards the plugin to the verified "
+              + "commit " + root.shortSha(root.updateVerifiedSha) + ". If upstream "
+              + "advanced past it, the update is refused and the plugin stays untouched."
+          }
+          PiLine {
+            visible: root.updateVerifiedSha.length === 0
+            color: Color.accent
+            text: "Installed. No marketplace-verified commit matches upstream, and "
+              + "you allowed unverified updates: this update pulls commits no "
+              + "maintainer reviewed. The shell reloads the plugin afterwards."
+          }
         }
 
         // ---- stage: browser-prompt (manager install finished) ----
