@@ -1,6 +1,7 @@
 #!/bin/bash
 # Registers the Omarchy PlugBrug's native messaging host with
-# the browsers, and prints the (manual) browser-extension loading steps.
+# the browsers, and prints the browser-extension installation steps
+# (Chrome Web Store / Firefox Add-ons listings, or manual loading).
 #
 # Browsers covered: Google Chrome, Chromium, Brave, Firefox.
 # The host manifest is written per browser family:
@@ -211,19 +212,23 @@ Native messaging host registered:
   chrome/chromium/brave origins: ${origins[*]}
   firefox add-on:               $FIREFOX_ADDON_ID
 
-Next steps (browser extensions must be loaded manually):
+Next steps (install the browser extensions):
 
   Chrome / Chromium / Brave
-    1. Open chrome://extensions (brave://extensions)
-    2. Enable Developer mode
-    3. Load unpacked -> select: $ext_abs
-    (Load from exactly that path; the native host origin above is derived from it.)
+    Install from the Chrome Web Store:
+      https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf
+    (Or, for development, chrome://extensions -> Developer mode ->
+     Load unpacked -> select: $ext_abs
+     Load from exactly that path; the native host origin above is derived from it.)
 
-  Firefox (>= 121, until the add-on is signed via AMO)
-    1. Open about:debugging#/runtime/this-firefox
-    2. Load Temporary Add-on -> select: $ext_dir/manifest.json
-    (Temporary add-ons reset at every Firefox restart; reload them after restarts
-     or ship a signed build via https://addons.mozilla.org.)
+  Firefox / Firefox-based (Firefox, Waterfox, LibreWolf, Zen, ...)
+    Install from the Firefox Add-ons listing:
+      https://addons.mozilla.org/firefox/addon/omarchy-browser-plugin-manager/
+    (Or install the signed .xpi from the GitHub releases page:
+     about:addons -> gear icon -> Install Add-on From File...)
+
+Grant all permissions the extension asks for; without them it cannot
+reach the native messaging host above.
 
 Verify the host answers the browser:
   printf '\\x0f\\x00\\x00\\x00{"type":"ping"}' | $HOST_PATH | tail -c +5 ; echo

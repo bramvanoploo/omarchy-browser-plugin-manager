@@ -50,7 +50,7 @@ reproduced without it.
 **Firefox (release builds, >= 121): signed `.xpi` required**
 
 Easiest: install from the AMO listing
-([addons.mozilla.org](https://addons.mozilla.org/nl/firefox/addon/omarchy-browser-plugin-manager/));
+([addons.mozilla.org](https://addons.mozilla.org/en-US/firefox/addon/omarchy-browser-plugin-manager/));
 its listed ID `omarchy-browser-plugin-manager@sudo-systems.com` is
 registered by the setup script alongside the self-distribution ID.
 
