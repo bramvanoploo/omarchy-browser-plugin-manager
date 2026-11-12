@@ -22,12 +22,14 @@ import qs.Ui
 // Without a marketplace tab, left click opens a dropdown with the watched
 // plugin's header title (the same identity line the wizard panels show)
 // and buttons to manage it:
-// Install, Uninstall, Update, and moving its bar icon (a grid over every
-// shell bar section, the active one marked).
+// Install, Update, Enable/Disable, Uninstall, and a Position button that
+// opens the settings panel's placement step for the watched plugin (the
+// bar-section grid lives there now, not inline in this popup).
 // Install, Uninstall, and Update summon the wizard overlay: the beacon
 // record is a display hint only, and every action is re-validated and
-// confirmed there, exactly like the browser buttons. Moving the icon is a
-// plain layout change, so it runs the official `omarchy bar move` directly.
+// confirmed there, exactly like the browser buttons. Placement is a
+// plain layout change: the wizard's placement step writes the move
+// command and the widget runs the official `omarchy bar move` directly.
 //
 // Right click opens the settings panel (same header pattern): two per-plugin
 // update lists capped to three visible rows that fade at the edge when more
@@ -142,6 +144,13 @@ Panel {
   property bool settingsOpen: false
 
   function toggleSettings() {
+    root.openSettingsChannel()
+    root.summonSettingsWizard()
+  }
+
+  // The settings-channel half of toggleSettings (session mint, truncate,
+  // snapshot publish), shared with the popup's placement shortcut.
+  function openSettingsChannel() {
     root.close()
     managerManifestFile.reload()
     // Fresh command session: drop the seen-seq bookkeeping, truncate
@@ -156,7 +165,6 @@ Panel {
     root.settingsOpen = true
     root.refreshInstalledPlugins()
     root.publishSettingsSnapshot()
-    root.summonSettingsWizard()
   }
 
   function toggleLeft() {
@@ -786,16 +794,40 @@ Panel {
     root.flushSettingsPayload()
   }
 
-  function summonSettingsWizard() {
-    var payload = JSON.stringify({
+  function summonSettingsWizard(extra) {
+    var payload = {
       source: "bar", mode: "settings", snapshot: root.settingsSnapshot(),
       session: root.settingsSession
-    })
+    }
+    // Optional extras (the popup's placement shortcut): the wizard walks
+    // straight from settings into that plugin's placement step.
+    if (extra && typeof extra === "object") {
+      for (var k in extra) payload[k] = extra[k]
+    }
+    var json = JSON.stringify(payload)
     var summoned = false
     if (root.bar && root.bar.shell && typeof root.bar.shell.summon === "function")
-      summoned = root.bar.shell.summon(root.moduleName, payload) === true
+      summoned = root.bar.shell.summon(root.moduleName, json) === true
     if (!summoned)
-      Quickshell.execDetached(["omarchy-shell", "-q", "shell", "summon", root.moduleName, payload])
+      Quickshell.execDetached(["omarchy-shell", "-q", "shell", "summon", root.moduleName, json])
+  }
+
+  // Placement shortcut from the watch popup: same settings channel as a
+  // right click (so returning from placement lands on the live settings
+  // panel), but the summon payload tells the wizard to open the
+  // placement step for the watched plugin immediately - the same
+  // in-panel Position button the Manage tab's rows offer.
+  function summonPlacementForWatch() {
+    root.openSettingsChannel()
+    var w = root.watchState
+    root.summonSettingsWizard({
+      stage: "placement",
+      id: String(w ? (w.id || "") : ""),
+      repo: String(w ? (w.repo || "") : ""),
+      name: String(w ? (w.name || w.id || "") : ""),
+      version: root.installedVersion,
+      section: root.iconSection
+    })
   }
 
   // Commands from the settings overlay: the file is an append log (one
@@ -1297,9 +1329,9 @@ Panel {
 
   // Bar-section placement is layout config, not an install: no wizard gate,
   // the official CLI command runs directly.
-  // Bar sections offered by the "move this plugin's bar icon" row: the
-  // shell's own section list (Util.barSections), the same source the
-  // wizard's placement stage uses. omarchy bar move accepts each.
+  // Bar sections accepted by the move chain (the settings panel's Manage
+  // tab placement step and the move_icon command): the shell's own section
+  // list (Util.barSections). omarchy bar move accepts each.
   readonly property var barMoveSections: {
     return (typeof Util !== "undefined" && Array.isArray(Util.barSections))
       ? Util.barSections
@@ -1313,16 +1345,6 @@ Panel {
     if (section === "right") return "Right"
     if (section === "tray") return "Tray"
     return String(section)
-  }
-
-  function sectionIcon(section) {
-    if (section === "left") return "\uF036"
-    if (section === "centerBegin") return "\uF104"
-    if (section === "center") return "\uF037"
-    if (section === "centerEnd") return "\uF105"
-    if (section === "right") return "\uF038"
-    if (section === "tray") return "\uF01C"
-    return "\uF037"
   }
 
   // Moves one plugin's bar icon: the watch popup passes the beacon's id,
@@ -1356,12 +1378,6 @@ Panel {
       String(section)
     ]
     moveProc.running = true
-  }
-
-  function moveIcon(section) {
-    if (!root.watchState) return
-    root.movePluginIcon(String(root.watchState.id), section)
-    root.close()
   }
 
   // Enable / Disable is plugin state, not an install: the browser page's own
@@ -2021,56 +2037,6 @@ Panel {
     color: Util.alpha(Color.foreground, 0.15)
   }
 
-  // Icon-only square variant of BWButton, used by positioning rows and update-list rows.
-  component BWIconButton: BorderSurface {
-    id: bwIcon
-    property string label: ""
-    property string tooltipText: ""
-    property bool primary: false
-    property bool danger: false
-    property bool active: false
-    property int size: Style.space(30)
-    signal clickedBw
-    width: size
-    height: size
-    radius: Style.cornerRadius
-    readonly property color tone: root.bar ? root.bar.urgent : Color.urgent
-    color: active
-      ? Util.alpha(Color.accent, 0.25)
-      : (!enabled ? "transparent"
-        : primary
-          ? (bwIconMouse.containsMouse ? Util.alpha(Color.accent, 0.2) : Util.alpha(Color.accent, 0.12))
-          : danger
-            ? (bwIconMouse.containsMouse ? Util.alpha(tone, 0.2) : Util.alpha(tone, 0.12))
-            : (bwIconMouse.containsMouse ? Util.alpha(Color.foreground, 0.12) : Util.alpha(Color.foreground, 0.05)))
-    borderSpec: Border.flat(active ? Color.accent
-      : (enabled
-        ? (primary ? Color.accent : danger ? tone : Util.alpha(Color.foreground, 0.3))
-        : Util.alpha(Color.foreground, 0.2)), 1)
-    Text {
-      anchors.centerIn: parent
-      text: bwIcon.label
-      font.family: root.bar ? root.bar.fontFamily : Style.font.family
-      font.pixelSize: Math.round(size * 0.5)
-      color: bwIcon.active ? Color.accent
-        : (bwIcon.enabled
-          ? (bwIcon.primary ? Color.accent : bwIcon.danger ? bwIcon.tone : Color.foreground)
-          : Util.alpha(Color.foreground, 0.35))
-    }
-    MouseArea {
-      id: bwIconMouse
-      anchors.fill: parent
-      hoverEnabled: true
-      enabled: bwIcon.enabled && !bwIcon.active
-      cursorShape: (bwIcon.enabled && !bwIcon.active) ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onClicked: bwIcon.clickedBw()
-    }
-    PanelToolTip {
-      visible: bwIconMouse.containsMouse && bwIcon.tooltipText !== ""
-      text: bwIcon.tooltipText
-    }
-  }
-
   PopupCard {
     id: popup
     anchorItem: button
@@ -2323,11 +2289,22 @@ Panel {
 
       // Manage buttons: from live local state only, enabled once the list
       // read landed, so the dropdown can never offer a stale action set.
-      // Two visible buttons (the common case) each take half the panel row.
+      // Every visible button sits on one row: the column count follows the
+      // action set (Install alone; Enable/Disable + Uninstall; Position +
+      // Disable + Uninstall; +1 when an update is offered). Uninstall is an
+      // icon-only trash button at its natural width, the text buttons share
+      // the rest of the row.
       GridLayout {
         visible: root.popupLive
         width: popupColumn.width
-        columns: 2
+        columns: {
+          if (!root.statusChecked) return 1
+          if (!root.pluginInstalled) return 1
+          var n = 2
+          if (root.hasUpdate) n += 1
+          if (root.pluginEnabled && (root.isBarWidget || root.iconSection !== "")) n += 1
+          return n
+        }
         columnSpacing: Style.spacing.controlGap
 
         BWButton {
@@ -2346,6 +2323,21 @@ Panel {
           Layout.fillWidth: true
           Layout.preferredHeight: Style.space(30)
           onClickedBw: root.summonWizard("update")
+        }
+        BWButton {
+          // Placement shortcut, replacing the old inline section-icon row:
+          // sits left of Enable/Disable and opens the settings panel's
+          // placement step for this plugin (same as a Manage row's
+          // Position button). Cog-style glyph prefix as on the Settings
+          // button: FontAwesome "align-center" (U+F037), the position
+          // glyph the settings panel uses; two nbsp as the gap.
+          visible: root.popupLive && root.statusChecked && root.pluginInstalled
+            && root.pluginEnabled && (root.isBarWidget || root.iconSection !== "")
+          enabled: root.statusChecked
+          label: "\uF037\u00A0\u00A0Position"
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(30)
+          onClickedBw: root.summonPlacementForWatch()
         }
         BWButton {
           visible: root.statusChecked && root.pluginInstalled && !root.pluginEnabled
@@ -2368,32 +2360,15 @@ Panel {
           visible: root.statusChecked && root.pluginInstalled
           enabled: root.statusChecked
           danger: true
-          label: "Uninstall"
-          Layout.fillWidth: true
+          // Icon-only trash button (FontAwesome "trash", U+F1F8) with the
+          // word in a hover tooltip: keeps the row to one line even with
+          // Position + Disable beside it.
+          label: "\uF1F8"
+          tooltipText: "Uninstall"
+          Layout.fillWidth: false
+          Layout.preferredWidth: Style.space(42)
           Layout.preferredHeight: Style.space(30)
           onClickedBw: root.summonWizard("uninstall")
-        }
-      }
-
-      BWLine {
-        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled && (root.isBarWidget || root.iconSection !== "")
-        text: "Move this plugin's bar icon:"
-        horizontalAlignment: Text.AlignRight
-      }
-      Row {
-        visible: root.popupLive && root.statusChecked && root.pluginInstalled && root.pluginEnabled && (root.isBarWidget || root.iconSection !== "")
-        anchors.right: parent.right
-        spacing: Style.space(6)
-        Repeater {
-          model: root.barMoveSections
-          delegate: BWIconButton {
-            size: Style.space(48)
-            label: root.sectionIcon(modelData)
-            tooltipText: root.sectionLabel(modelData)
-              + (root.iconSection === modelData ? " (active)" : "")
-            active: root.iconSection === modelData
-            onClickedBw: root.moveIcon(modelData)
-          }
         }
       }
     }

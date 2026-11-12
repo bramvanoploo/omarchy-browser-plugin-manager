@@ -543,6 +543,22 @@ Item {
           stage = "settings"
         }
       }
+      // Placement detour requested by the bar popup's Position button:
+      // the settings panel opens underneath, then walks straight into the
+      // placement step for the plugin named in the payload. This is the
+      // same openPlacementFromSettings the Manage rows' Position button
+      // calls, so placement's Escape/Close land back on the live
+      // settings panel.
+      if (mode === "settings" && payload.stage === "placement"
+          && validPluginId(String(payload.id || ""))) {
+        root.openPlacementFromSettings({
+          id: String(payload.id),
+          name: String(payload.name || payload.id),
+          repo: String(payload.repo || ""),
+          version: String(payload.version || ""),
+          section: String(payload.section || "")
+        })
+      }
       return
     }
 
@@ -3916,7 +3932,13 @@ Item {
                         font.family: Style.font.family
                         font.pixelSize: Style.font.caption
                         font.italic: true
-                        color: Color.muted
+                        font.bold: root.snapStr("lastCheckText") !== "never"
+                          && root.snapStr("lastCheckText") !== ""
+                        // The good-news state ("up to date") is highlighted
+                        // in accent; the neutral "no check yet" stays muted.
+                        color: root.snapStr("lastCheckText") !== "never"
+                          && root.snapStr("lastCheckText") !== ""
+                          ? Color.accent : Color.muted
                       }
                     }
                   }
@@ -4843,7 +4865,9 @@ Item {
           }
           PiButton {
             visible: root.stage === "settings"
-            primary: true
+            // Secondary treatment: closing the panel is not an affirmative
+            // action, so it carries no accent highlight (the store buttons
+            // on the same strip are flat too).
             label: "Close"
             onClickedPi: root.close()
           }
