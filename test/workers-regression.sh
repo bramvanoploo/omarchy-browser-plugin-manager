@@ -282,7 +282,7 @@ fi
 # browser-bin allowlist, and the plugin-id grammar before argv handoff),
 # trusted-click guards in the extension, curl size caps, worker umask.
 check "BarWatch browser-bin allowlist wired" "2" "$(grep -c 'allowedBrowserBins' "$REPO_ROOT/BarWatch.qml")"
-check "BarWatch plugin-id grammar wired" "2" "$(grep -c 'validPluginId' "$REPO_ROOT/BarWatch.qml")"
+check "BarWatch plugin-id grammar wired" "7" "$(grep -c 'validPluginId' "$REPO_ROOT/BarWatch.qml")"
 check "BarWatch store links are https-gated" "1" "$(grep -cF '!/^https:' "$REPO_ROOT/BarWatch.qml")"
 check "content.js guards untrusted clicks" "1" "$(grep -c 'isTrusted' "$REPO_ROOT/browser/extension/content.js")"
 check "catalog.js guards untrusted clicks" "1" "$(grep -c 'isTrusted' "$REPO_ROOT/browser/extension/catalog.js")"

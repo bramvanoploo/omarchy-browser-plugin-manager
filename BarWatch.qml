@@ -154,6 +154,7 @@ Panel {
       + String(Math.floor(Math.random() * 1e6))
     root.consumeSettingsCmd()
     root.settingsOpen = true
+    root.refreshInstalledPlugins()
     root.publishSettingsSnapshot()
     root.summonSettingsWizard()
   }
@@ -301,11 +302,26 @@ Panel {
     updateCheckProc.running = true
   }
 
+  // Catalog details for the Manage rows (id -> {author, description,
+  // repo}): rides every successful check envelope (see the check command)
+  // and keeps surviving failed checks, so offline the rows keep the detail
+  // from the last reachable catalog.
+  property var catalogDetails: ({})
+
   function applyCheckResult(res) {
     root.updateChecking = false
     if (res && res.ok === true && Array.isArray(res.plugins)) {
       root.updateList = res.plugins
       root.updateCheckFailed = false
+      if (res.details && typeof res.details === "object") {
+        root.catalogDetails = res.details
+      }
+      // The rows' updatable/version decoration comes from the updateList
+      // just replaced (and the catalog detail rides the same envelope): a
+      // successful check always rebuilds the installed rows, so the Manage
+      // tab's highlight badges follow the new list instead of the read
+      // that happened to precede the first check.
+      root.refreshInstalledPlugins()
       root.lastCheckText = Qt.formatTime(new Date(), "hh:mm")
       // Offer the update when a check finds a new eligible set: the
       // notification is how this widget "offers" anything (the button lives
@@ -332,6 +348,11 @@ Panel {
       // blank the badge); the panel explains the failed check.
       root.updateCheckFailed = true
     }
+    // Keep the Manage tab's updatable/version decorations in step with the
+    // fresh update set (a worker run lands here through the marker scan,
+    // so an update's effect on a row shows up with this same check).
+    if (root.settingsOpen)
+      root.refreshInstalledPlugins()
     root.publishSettingsSnapshot()
   }
 
@@ -547,6 +568,155 @@ Panel {
     })
   }
 
+  // Full installed-plugin view for the settings panel's Manage tab: one row
+  // per entry of `omarchy plugin list --json` (every installed plugin,
+  // whether or not it is outdated), decorated with what the panel needs:
+  // installed/latest version, updatable (present in the eligible update set
+  // under the current verification setting), verified, bar-widget kind, the
+  // bar section its icon currently sits in, its live enable state, and the
+  // catalog detail (author, description, repository). Sorted by name so the panel
+  // list is alphabetical. A failed or malformed read keeps the last good
+  // list: same rule as the popup status read, a transient error must never
+  // render as an empty plugin set.
+  property var installedPlugins: []
+  property bool pluginsListed: false
+  // A list read requested while one is already running sets this instead of
+  // being dropped: the in-flight read may have started before the request
+  // (stale data), so a second read must follow once it lands.
+  property bool pluginListRerun: false
+  // Read generations: every read launch takes the next number, and the
+  // in-flight read's number is remembered. A toggle CLI's exit records the
+  // generation its truth-read must reach (any later start sees the changed
+  // on-disk state): only a read launched AFTER the exit may retire the
+  // pending-toggle row override. A read that STARTED before the exit but
+  // LANDS after it carries pre-toggle truth, and retiring the override on
+  // such a landing is what made the switch flash back before the truth
+  // re-read landed (intended -> stale -> intended).
+  property int pluginListGen: 0
+  property int runningListGen: 0
+  property int pendingToggleSettleGen: 0
+
+  function refreshInstalledPlugins() {
+    if (pluginListAllProc.running) {
+      root.pluginListRerun = true
+      return
+    }
+    root.startPluginListRead()
+  }
+
+  function startPluginListRead() {
+    root.pluginListGen += 1
+    root.runningListGen = root.pluginListGen
+    pluginListAllProc.running = true
+  }
+
+  Process {
+    id: pluginListAllProc
+    command: ["omarchy", "plugin", "list", "--json"]
+    stdout: StdioCollector {
+      id: pluginListAllOut
+      waitForEnd: true
+    }
+    onExited: function (exitCode) {
+      if (exitCode !== 0) return
+      // The generation this landing read was launched under, for the
+      // pending-toggle retirement test below.
+      var landedGen = root.runningListGen
+      var plugins = null
+      try {
+        var parsed = JSON.parse(String(pluginListAllOut.text || "[]"))
+        if (Array.isArray(parsed)) plugins = parsed
+      } catch (e) { plugins = null }
+      if (plugins === null) return
+      // Update decoration comes from the live poll: eligibleUpdates decides
+      // the Update buttons exactly like run_update re-derives them, and the
+      // raw updateList supplies verified + the installed -> latest versions.
+      var upd = root.updateList
+      var all = ({})
+      for (var u = 0; u < upd.length; u++)
+        all[String(upd[u].id)] = upd[u]
+      var eligible = ({})
+      var el = root.eligibleUpdates()
+      for (var k = 0; k < el.length; k++)
+        eligible[String(el[k].id)] = true
+      var rows = []
+      for (var j = 0; j < plugins.length; j++) {
+        var item = plugins[j]
+        if (!item || !root.validPluginId(item.id)) continue
+        var id = String(item.id)
+        var up = all[id]
+        var det = root.catalogDetails[id]
+        // A toggle whose CLI has not landed yet (or whose truth-read has not
+        // run yet) keeps its requested state in the published rows: the
+        // panel repaints from this list every 400ms, and without the
+        // override the switch would flash back to the pre-toggle truth
+        // while the CLI + list re-read are still in flight.
+        var pending = root.pendingToggle
+        var pendingHit = pending && String(pending.id || "") === id
+        var ver = (det && det.version) ? String(det.version) : (up ? String(up.installed || "") : String(item.version || ""))
+        var stars = (det && det.stars !== undefined && det.stars !== null) ? Number(det.stars) : 0
+        var hearts = (det && det.hearts !== undefined && det.hearts !== null) ? Number(det.hearts) : 0
+        rows.push({
+          id: id,
+          name: String(item.name || id),
+          installed: ver,
+          version: ver,
+          latest: up ? String(up.latest || "") : "",
+          verified: up ? up.verified === true : false,
+          // updatable = actionable under the current verification setting
+          // (what run_update acts on); updateAvailable = an update exists
+          // at all, so the panel can badge/highlight even an unverified
+          // row the opt-in toggle currently refuses to apply.
+          updatable: eligible[id] === true,
+          updateAvailable: up !== undefined,
+          isBarWidget: Array.isArray(item.kinds) && item.kinds.indexOf("bar-widget") !== -1,
+          // The manifest kinds themselves (the CLI list carries them): the
+          // panel decides which rows can be summoned (panel/overlay/menu
+          // kinds get the Manage row's Open button, services never do).
+          kinds: Array.isArray(item.kinds) ? item.kinds.map(String) : [],
+          section: root.pluginSections[id] || "",
+          // Live enable state (the Manage row's toggle reflects and drives
+          // it) plus the catalog detail the row renders: author, one
+          // description, https-or-nothing repository url.
+          enabled: pendingHit ? pending.enable === true : item.enabled !== false,
+          author: det && det.author ? String(det.author) : "",
+          desc: det && det.description ? String(det.description) : "",
+          description: det && det.description ? String(det.description) : "",
+          repo: det && det.repo ? String(det.repo) : "",
+          stars: stars,
+          hearts: hearts,
+          rankLabel: det && det.rankLabel ? String(det.rankLabel) : ""
+        })
+      }
+      rows.sort(function (a, b) {
+        var na = a.name.toLowerCase()
+        var nb = b.name.toLowerCase()
+        if (na !== nb) return na < nb ? -1 : 1
+        return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0)
+      })
+      root.installedPlugins = rows
+      root.pluginsListed = true
+      // A toggle's CLI already exited before this read RAN, so the list
+      // carries the real enable state: the override that kept the switch
+      // from flashing back retires from here on (a failed toggle reverts
+      // to reality through the rows we just built). The generation test
+      // is what makes that safe: a read that started before the CLI exit
+      // can still land after it and carries pre-toggle truth, and
+      // retiring on such a landing is the flash-back this replaces.
+      if (root.pendingToggleSettled && landedGen >= root.pendingToggleSettleGen) {
+        root.pendingToggle = ({})
+        root.pendingToggleSettled = false
+      }
+      if (root.settingsOpen) root.publishSettingsSnapshot()
+      // A re-read requested while this read was in flight (e.g. the toggle
+      // CLI exited mid-read): run one more so post-CLI truth lands.
+      if (root.pluginListRerun) {
+        root.pluginListRerun = false
+        root.startPluginListRead()
+      }
+    }
+  }
+
   function settingsSnapshot() {
     return {
       managerVersion: String(root.managerVersion || ""),
@@ -571,7 +741,10 @@ Panel {
       // family labels (installed ones wrapped in an accent span), so the
       // RichText never carries remote markup.
       chromeSupport: root.chromeSupportHtml,
-      firefoxSupport: root.firefoxSupportHtml
+      firefoxSupport: root.firefoxSupportHtml,
+      // Manage tab data: the installed-plugin rows (see pluginListAllProc).
+      plugins: root.installedPlugins,
+      pluginsListed: root.pluginsListed === true
     }
   }
 
@@ -657,6 +830,7 @@ Panel {
         if (session !== root.settingsSession) {
           root.settingsSession = session
           root.settingsOpen = true
+          root.refreshInstalledPlugins()
           root.publishSettingsSnapshot()
         } else
           root.settingsOpen = true
@@ -694,7 +868,20 @@ Panel {
       var list = root.eligibleUpdates().filter(function (p) {
         return ids.indexOf(String(p.id)) !== -1
       })
-      root.startUpdate(root.updateSpecs(list))
+      // A row the verification opt-in currently refuses (an unverified
+      // update with the setting off) can still reach the panel's lists and
+      // its per-row Update button: say so instead of swallowing the click.
+      if (list.length < ids.length) {
+        var refused = ids.filter(function (pid) {
+          return !list.some(function (p) { return String(p.id) === pid })
+        })
+        if (refused.length > 0 && list.length === 0)
+          root.notify("Update not applied",
+            refused.join(", ") + ": unverified update, and "
+            + "\"Update to unverified versions\" is off. Enable it in the "
+            + "plugBrug settings tab to apply it.")
+      }
+      if (list.length > 0) root.startUpdate(root.updateSpecs(list))
     } else if (action === "run_uninstall") {
       // Re-check the id grammar before handing argv to the worker (the
       // worker validates again, and omarchy plugin remove only ever acts
@@ -703,6 +890,37 @@ Panel {
       root.startUninstall((cmd.ids || []).map(String).filter(function (s) {
         return root.validPluginId(s)
       }))
+    } else if (action === "move_icon") {
+      // Manage-tab move: same validation and CLI chain as the popup's move
+      // row; the panel stays open and the republished snapshot carries the
+      // plugin's new section (shellFile.reload rebuilds pluginSections).
+      root.movePluginIcon(String(cmd.id || ""), String(cmd.section || ""))
+    } else if (action === "run_toggle") {
+      // Manage-tab enable/disable: id grammar re-checked before the CLI
+      // (same guard as the popup's toggle); the panel flipped the switch
+      // optimistically, and the list re-read after the CLI lands the true
+      // state, so a failed toggle reverts to reality.
+      root.toggleInstalledPlugin(String(cmd.id || ""), cmd.enable === true,
+        String(cmd.name || ""))
+    } else if (action === "open_url") {
+      // Manage-row repository and marketplace pages: only https targets
+      // ever reach xdg-open (the repository urls are catalog rows that
+      // passed an https filter, and the marketplace page is built here
+      // from the id, url-encoded).
+      var u = String(cmd.url || "")
+      if (/^https:\/\//.test(u))
+        Quickshell.execDetached(["xdg-open", u])
+    } else if (action === "summon_plugin") {
+      // Manage-row Open button: summon the plugin's own panel/overlay
+      // through the shell CLI (the same argv pattern the shell's own
+      // plugins use, e.g. background's image-picker summon). execDetached
+      // keeps argv literal - no shell interpolation of the plugin id -
+      // and the id is re-validated here before anything is launched. The
+      // CLI inherits OMARCHY_PATH/WAYLAND_DISPLAY from the shell's own
+      // environment.
+      var pid = String(cmd.id || "")
+      if (!root.validPluginId(pid)) return
+      Quickshell.execDetached(["omarchy-shell", "shell", "summon", pid])
     }
   }
 
@@ -890,13 +1108,16 @@ Panel {
     return bits.join("  \u00b7  ")
   }
 
-  // Section of the omarchy bar layout (one of Util.barSections) that holds
-  // the watched plugin's icon, "" when unknown. Bar layout entries carry
-  // the plugin id; omarchy bar move writes the same file we read.
+  // Sections of the omarchy bar layout (one of Util.barSections) that hold
+  // plugin icons: pluginSections maps plugin id -> section for every layout
+  // entry, and iconSection is the watched plugin's entry in it, "" when
+  // unknown. Bar layout entries carry the plugin id; omarchy bar move writes
+  // the same file we read. The full map feeds the settings panel's Manage
+  // tab (every installed plugin's current section, not just the watched one).
   property string iconSection: ""
+  property var pluginSections: ({})
   function parseIconSection(raw) {
-    var sec = ""
-    var id = root.watchState ? String(root.watchState.id) : ""
+    var map = ({})
     // Scan every section the shell knows, not just the classic trio:
     // omarchy bar move can place icons in any of them.
     var order = (typeof Util !== "undefined" && Array.isArray(Util.barSections))
@@ -904,17 +1125,25 @@ Panel {
     try {
       var d = JSON.parse(raw)
       var lay = d && d.bar && d.bar.layout ? d.bar.layout : {}
-      for (var i = 0; i < order.length && !sec; i++) {
+      for (var i = 0; i < order.length; i++) {
         var arr = lay[order[i]]
         if (!Array.isArray(arr)) continue
         for (var j = 0; j < arr.length; j++) {
-          if (arr[j] && String(arr[j].id || "") === id) { sec = order[i]; break }
+          if (!arr[j]) continue
+          // Grammar-checked: built-in layout items carry non-plugin ids, and
+          // a foreign id must never key the map (the panel looks plugins up
+          // by validated ids only). First section wins if an id repeats.
+          var pid = String(arr[j].id || "")
+          if (root.validPluginId(pid) && map[pid] === undefined)
+            map[pid] = order[i]
         }
       }
     } catch (e) {
-      sec = ""
+      map = ({})
     }
-    root.iconSection = id ? sec : ""
+    root.pluginSections = map
+    var id = root.watchState ? String(root.watchState.id) : ""
+    root.iconSection = id ? (map[id] || "") : ""
   }
 
   function applyWatch(raw, fileGone) {
@@ -1096,18 +1325,42 @@ Panel {
     return "\uF037"
   }
 
-  function moveIcon(section) {
-    if (!root.watchState || !/^[a-z0-9][a-z0-9.-]{0,127}$/.test(root.watchState.id || "")) return
+  // Moves one plugin's bar icon: the watch popup passes the beacon's id,
+  // the settings panel's Manage tab passes any installed plugin's id through
+  // the move_icon command. The id grammar is re-validated here (command
+  // input, like every other settings-cmd handler), and the section must be
+  // one the shell's own move CLI accepts.
+  property string moveNotifyName: ""
+  function movePluginIcon(id, section) {
+    if (!root.validPluginId(id)) return
     if (root.barMoveSections.indexOf(section) === -1) return
     root.moveSection = section
+    // Notification name: the installed list's label for the id, falling
+    // back to the watched plugin's beacon name, then the id itself.
+    var name = ""
+    var list = root.installedPlugins
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && String(list[i].id) === String(id)) {
+        name = String(list[i].name || "")
+        break
+      }
+    }
+    if (name === "" && root.watchState && String(root.watchState.id) === String(id))
+      name = root.watchedName()
+    root.moveNotifyName = name !== "" ? name : String(id)
     moveProc.command = [
       "bash", "-c",
       'omarchy bar move "$1" --section "$2" 2>/dev/null || omarchy bar put "$1" --section "$2" 2>/dev/null || omarchy plugin enable "$1" --section "$2"',
       "bpm-move",
-      String(root.watchState.id),
-      section
+      String(id),
+      String(section)
     ]
     moveProc.running = true
+  }
+
+  function moveIcon(section) {
+    if (!root.watchState) return
+    root.movePluginIcon(String(root.watchState.id), section)
     root.close()
   }
 
@@ -1117,9 +1370,79 @@ Panel {
   function setEnabledForWatch(activate) {
     if (!root.watchState || !/^[a-z0-9][a-z0-9.-]{0,127}$/.test(root.watchState.id || "")) return
     enabledProc.command = [
-      "omarchy", "plugin", activate ? "enable" : "disable", "--", String(root.watchState.id)
+      // No "--" terminator: `omarchy plugin enable|disable` takes a plain
+      // positional id (the grammar guard above already pins the argv), and
+      // a literal "--" is taken AS the plugin name - the toggle then
+      // "succeeds" against a plugin called -- and the real plugin keeps
+      // its state, which is what made switches snap back.
+      "omarchy", "plugin", activate ? "enable" : "disable", String(root.watchState.id)
     ]
     enabledProc.running = true
+  }
+
+  // Enable / disable for the settings panel's Manage rows: the identical
+  // official-CLI chain as the popup's toggle (grammar guard, plain
+  // positional id), one at a time. The row's name rides the command for the
+  // wording (watchedName() would name the wrong plugin here). When the CLI
+  // exits, the installed list re-reads and the panel republishes, so the
+  // row's optimistic flip resolves to the real state either way.
+  function toggleInstalledPlugin(id, enable, name) {
+    if (!root.validPluginId(id)) return
+    if (settingsToggleProc.running) return
+    // The panel repaints from published rows every 400ms, long before the
+    // CLI + list re-read land: hold the requested state in the rows until
+    // a post-CLI read reports the truth (see installedPlugins rows).
+    root.pendingToggle = { id: String(id), enable: enable === true }
+    settingsToggleInfo = { id: String(id), enable: enable === true,
+      name: name !== "" ? name : String(id) }
+    settingsToggleProc.command = ["omarchy", "plugin",
+      enable ? "enable" : "disable", String(id)]
+    settingsToggleProc.running = true
+  }
+
+  property var settingsToggleInfo: ({})
+  // In-flight panel enable/disable: {id, enable} while the CLI runs, and
+  // the flag that the CLI exited (the next list read is the truth and
+  // retires the override).
+  property var pendingToggle: ({})
+  property bool pendingToggleSettled: false
+
+  Process {
+    id: settingsToggleProc
+    stdout: StdioCollector {
+      id: settingsToggleOut
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: settingsToggleErr
+      waitForEnd: true
+    }
+    onExited: function (exitCode) {
+      var info = root.settingsToggleInfo
+      var base = info.enable === true ? "enable" : "disable"
+      if (exitCode === 0) {
+        root.notify("Plugin " + base + "d", info.name + " " + base + "d.")
+      } else {
+        var out = (String(settingsToggleOut.text || "")
+          + "\n" + String(settingsToggleErr.text || "")).trim()
+        root.notify("Plugin " + base + " failed",
+          info.name + ": omarchy plugin " + base + " exited with code "
+          + exitCode + (out ? ": " + out : ""))
+      }
+      // The truth for the panel (republished through the list re-read) and
+      // the popup, if this plugin happens to be the watched one. The CLI
+      // has already changed the on-disk state, so the NEXT read to start
+      // lands the real enable flag - and only such a read may retire the
+      // row override (a read that started before this exit may still land
+      // after it with pre-toggle truth: see the list-read generations).
+      root.pendingToggleSettleGen = root.pluginListGen + 1
+      root.pendingToggleSettled = true
+      root.refreshInstalledPlugins()
+      if (root.watchState && String(root.watchState.id) === String(info.id)) {
+        root.statusChecked = false
+        Qt.callLater(root.refreshStatus)
+      }
+    }
   }
 
   function notify(title, body) {
@@ -1490,9 +1813,14 @@ Panel {
       waitForEnd: true
     }
     onExited: function (exitCode) {
-      var name = root.watchedName()
+      var name = root.moveNotifyName !== "" ? root.moveNotifyName : root.watchedName()
       var out = (String(moveProcOut.text || "") + "\n" + String(moveProcErr.text || "")).trim()
       shellFile.reload() // reflect the new section in the move buttons
+      // Rebuild the Manage-tab rows from the reloaded section map (the
+      // wizard's local patch is overwritten by the next snapshot republish,
+      // so the truth must land in installedPlugins; on a failed move this
+      // restores the old section the same way).
+      root.refreshInstalledPlugins()
       if (exitCode === 0) {
         root.notify("Bar icon moved", name + "'s icon now sits in the " + root.sectionLabel(root.moveSection) + " section.")
       } else {
@@ -1750,7 +2078,9 @@ Panel {
     bar: root.bar
     open: root.opened
     padding: Style.space(24)
-    contentWidth: popup.fittedContentWidth(Style.space(380))
+    // 456 = the original 380 widened 20%. The thumbnail box below sizes
+    // itself from popupColumn.width, so it follows the wider panel.
+    contentWidth: popup.fittedContentWidth(Style.space(456))
     contentHeight: popup.fittedContentHeight(popupColumn.implicitHeight - Math.round(Style.space(24) * 0.2), Style.space(560))
 
     Column {

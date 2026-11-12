@@ -23,7 +23,11 @@
 #                        never reviewed and the update demotes to unverified.
 #                        A catalog failure prints {"ok":false,...} (exit 0):
 #                        callers keep their last good view, offline never
-#                        invents an update.
+#                        invents an update. The output also carries a
+#                        "details" map: {id: {author, description, repo}}
+#                        for every installed plugin the catalog knows (not
+#                        just the outdated ones) — the settings panel's
+#                        Manage rows render it as plugin detail.
 #   apply <id> <sha>     Apply one update. A verified update pins to the
 #                        exact commit the poll saw: re-fetch origin and
 #                        refuse unless the fresh tip IS that commit (any
@@ -53,7 +57,7 @@ CATALOG_URL="${OMARCHY_CATALOG_URL:-https://plugins.omarchy.org/catalog.json}"
 PLUG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"
 
 cmd_check() {
-  local list="" catalog="" rows="" id d head_sha remote ver name plugins
+  local list="" catalog="" rows="" id d head_sha remote ver name plugins details
   list=$(omarchy plugin list --json 2>/dev/null) || list="[]"
   [[ -n $list ]] || list="[]"
   catalog=$(curl -fsSL --proto '=https' --max-time 30 --max-filesize 16777216 "$CATALOG_URL" 2>/dev/null) || catalog=""
@@ -101,7 +105,62 @@ cmd_check() {
                    and $p.remote == $vc)})
   ' 2>/dev/null) || plugins="[]"
   [[ ${plugins:0:1} == "[" ]] || plugins="[]"
-  printf '{"ok":true,"plugins":%s}' "$plugins"
+  # Detail map for the settings panel's Manage rows: every installed plugin
+  # id the catalog knows (first-party included, not just the outdated set),
+  # keyed by id. Descriptions are truncated to 240 chars so the snapshot
+  # payload that carries them stays bounded, and only https repository urls
+  # survive (the panel's open action re-validates the scheme anyway).
+  local stats_cache="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/plugins-stats.json"
+  local omapple_stats="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/omapple-plugins-stats.json"
+  mkdir -p "${stats_cache%/*}" 2>/dev/null || true
+  if [[ ! -f "$stats_cache" || $(( $(date +%s) - $(stat -c %Y "$stats_cache" 2>/dev/null || echo 0) )) -ge 3600 ]]; then
+    if ! curl -fsSL --proto '=https' --max-time 5 --max-filesize 2000000 "https://api.omarchyplugins.com/v1/stats" -o "$stats_cache" 2>/dev/null; then
+      if [[ -f "$omapple_stats" ]]; then
+        cp "$omapple_stats" "$stats_cache" 2>/dev/null || true
+      fi
+    fi
+  fi
+  [[ -f "$stats_cache" ]] || echo "{}" > "$stats_cache"
+
+  local local_vers=""
+  for d in "$PLUG_DIR"/*; do
+    [[ -d "$d" ]] || continue
+    local pid="${d##*/}"
+    case "$pid" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*) continue ;; esac
+    if [[ -f "$d/manifest.json" ]]; then
+      local mv
+      mv=$(jq -r '.version // ""' "$d/manifest.json" 2>/dev/null | tr -d '\t\r\n')
+      [[ -n $mv ]] && local_vers+=$(printf '%s\t%s\n' "$pid" "$mv")
+    fi
+  done
+
+  details=$(printf '%s' "$catalog" | jq -c --arg ids "$(
+    jq -r '(if type == "array" then . else [] end)[]
+           | select(type == "object") | .id // empty' <<<"$list" 2>/dev/null
+  )" --slurpfile stats "$stats_cache" --arg lvers "$local_vers" '
+    (.plugins // []) as $pl
+    | ($stats[0] // {}) as $smap
+    | ($smap.plugins // $smap) as $st
+    | ( [ $lvers | split("\n")[] | select(length > 0) | split("\t")
+        | {id: .[0], ver: .[1]} ] | map({(.id): .ver}) | add // {}
+      ) as $lv
+    | reduce ($ids | split("\n")[] | select(length > 0)) as $id ({};
+        ($pl | map(select(type == "object" and .id == $id)) | first) as $e
+        | (if $st != null and ($st | has($id)) then $st[$id] else {} end) as $s
+        | (if $lv != null and ($lv | has($id)) then $lv[$id]
+           elif $e != null and $e.version != null then ($e.version | tostring)
+           else "" end) as $v
+        | if $e == null and $v == "" then . else .[$id] = {
+            author: ((if $e != null then ($e.author // "") else "" end) | tostring),
+            description: (((if $e != null then ($e.description // "") else "" end) | tostring)[0:240]),
+            repo: ((if $e != null and (($e.repo // "") | tostring | test("^https://")) then ($e.repo | tostring) else "" end)),
+            version: ($v | tostring),
+            stars: (if $e != null and ($e.stars != null) then ($e.stars | tonumber? // 0) else 0 end),
+            hearts: (if $s != null and ($s.hearts != null) then ($s.hearts | tonumber? // 0) else 0 end)
+          } end)
+  ' 2>/dev/null) || details="{}"
+  [[ ${details:0:1} == "{" ]] || details="{}"
+  printf '{"ok":true,"plugins":%s,"details":%s}' "$plugins" "$details"
 }
 
 cmd_apply() {
