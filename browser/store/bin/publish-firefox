@@ -1,0 +1,111 @@
+#!/bin/bash
+# Publishes the Firefox add-on to the AMO LISTED channel (the public store
+# listing at addons.mozilla.org/firefox/addon/omarchy-browser-plugin-manager/)
+# without touching the developer portal.
+#
+# This is the automated replacement for downloading the -listed.xpi from
+# dist/ and uploading it by hand: web-ext's "listed" channel calls the same
+# AMO API the portal uses, so the new version enters the review queue on its
+# own. An already-approved extension with unchanged permissions is normally
+# auto-approved within minutes; occasionally AMO asks a human reviewer, which
+# still needs no action here (the old version keeps serving until then).
+#
+# Credentials: the SAME .env the unlisted signer uses (AMO_API_KEY and
+# AMO_API_SECRET from https://addons.mozilla.org/developers/keys/; the key
+# belongs to the account that owns the listing, so it can submit listed
+# versions too).
+#
+# Usage (after bumping the version in the root manifest.json and running
+# browser/store/bin/package):
+#   browser/store/bin/publish-firefox
+# Safety: the script compares the extension manifest version with the
+# version currently served by the listing and skips (exit 0) when they are
+# equal, so it is safe to run on every release build; AMO rejects duplicate
+# version numbers outright. Override with --force to submit anyway.
+
+set -euo pipefail
+export LC_ALL=C
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
+REPO_DIR="$(dirname -- "$(dirname -- "$(dirname -- "$BIN_DIR")")")"
+EXT_DIR="$REPO_DIR/browser/extension"
+ENV_FILE="$REPO_DIR/.env"
+ADDON_SLUG="omarchy-browser-plugin-manager"
+
+FORCE=0
+for arg in "$@"; do
+  case "$arg" in
+    --force) FORCE=1 ;;
+    *) echo "unknown argument: $arg (only --force)" >&2; exit 1 ;;
+  esac
+done
+
+[[ -f "$ENV_FILE" ]] || { echo "Missing .env with AMO_API_KEY and AMO_API_SECRET" >&2; exit 1; }
+set -a; source "$ENV_FILE"; set +a
+[[ -n "${AMO_API_KEY:-}" && -n "${AMO_API_SECRET:-}" ]] || {
+  echo "Set AMO_API_KEY and AMO_API_SECRET (https://addons.mozilla.org/developers/keys/)." >&2
+  exit 1
+}
+
+VERSION="$(jq -r .version "$EXT_DIR/manifest.json")"
+[[ "$VERSION" != "null" && -n "$VERSION" ]] || { echo "extension manifest has no version" >&2; exit 1; }
+
+# Idempotence guard: the public add-on API answers with the version the
+# listing currently serves. Same version -> nothing to do (AMO would reject
+# the submission anyway). A network hiccup here is not fatal: fall through
+# and let AMO's own duplicate-version rejection speak.
+LIVE_VERSION="$(curl -fsS --max-time 20 \
+  "https://addons.mozilla.org/api/v5/addons/addon/$ADDON_SLUG/" \
+  2>/dev/null | jq -r '.current_version.version // empty' 2>/dev/null || true)"
+if [[ "$FORCE" -ne 1 && "$LIVE_VERSION" == "$VERSION" ]]; then
+  echo "Firefox listing already serves $VERSION: nothing to publish."
+  exit 0
+fi
+[[ -n "$LIVE_VERSION" ]] && echo "Listing serves $LIVE_VERSION, publishing $VERSION."
+
+if command -v web-ext >/dev/null; then
+  WEB_EXT=(web-ext)
+elif command -v npm >/dev/null; then
+  # Pinned version: this is the publishing path, so never pull whatever npm
+  # serves today; bump deliberately after checking the changelog (same pin
+  # as browser/store/bin/sign).
+  WEB_EXT=(npm exec --yes -- web-ext@10.8.0)
+else
+  echo "web-ext not found; install it with: npm install --global web-ext" >&2
+  exit 1
+fi
+
+# Credentials by environment, never argv (ps/shell-trace leak, same rule as
+# browser/store/bin/sign): web-ext reads WEB_EXT_API_KEY/WEB_EXT_API_SECRET.
+export WEB_EXT_API_KEY="$AMO_API_KEY" WEB_EXT_API_SECRET="$AMO_API_SECRET"
+AMO_API_KEY= AMO_API_SECRET=
+
+# Stage exactly like the -listed.xpi branch of browser/store/bin/package:
+# Firefox AMO lint wants "background.scripts" (the source manifest keeps the
+# Chrome "service_worker" too), and listed submissions must carry the listed
+# add-on ID (the manifest's self-distribution ID is registered through
+# unlisted signing and AMO rejects it for listed uploads). The native
+# messaging host allowlists both IDs (see bin/plugin-installer-setup).
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+cp -r "$EXT_DIR" "$STAGE/extension"
+rm -f "$STAGE/extension/.amo-upload-uuid"
+jq '.background = {scripts: ["background.js"]}
+   | .browser_specific_settings.gecko.id = "omarchy-browser-plugin-manager@sudo-systems.com"' \
+   "$STAGE/extension/manifest.json" > "$STAGE/extension/manifest.json.tmp" \
+  && mv "$STAGE/extension/manifest.json.tmp" "$STAGE/extension/manifest.json"
+
+mkdir -p "$STAGE/artifacts"
+cd "$STAGE/extension"
+"${WEB_EXT[@]}" sign \
+  --channel=listed \
+  --artifacts-dir "$STAGE/artifacts"
+
+cat <<EOF
+
+Submitted $VERSION to the AMO review queue.
+Status: https://addons.mozilla.org/developers/firefox/addon/$ADDON_SLUG/
+        (or: curl -fsS https://addons.mozilla.org/api/v5/addons/addon/$ADDON_SLUG/ | jq .)
+The public page updates automatically once AMO approves the version.
+EOF
