@@ -45,6 +45,11 @@ while [ $# -gt 0 ]; do
       if [ -x "$plug/bin/plugin-installer-setup" ]; then
         "$plug/bin/plugin-installer-setup" --uninstall >/dev/null 2>&1 || true
       fi
+      # Forget extension presence and any left-click dialog decline: both
+      # gate files describe this plugin's browser relationship, so a
+      # fresh install re-offers the extension (the extension's own
+      # heartbeats rebuild the seen stamps once it is installed again).
+      rm -f "$STATE_DIR/browser-extension-seen.json" "$STATE_DIR/browser-prompt-dismissed.json"
     fi
     if omarchy plugin remove "$id" --yes >/dev/null 2>&1; then
       ok=$((ok+1))

@@ -75,14 +75,21 @@ kind of detached worker as updates (id-validated, one rescan at the end,
 summary notification, survives the shell reload when the manager itself
 is removed).
 
-**One-time extension prompt**: after this plugin is installed in Omarchy
+**Browser extension prompt**: after this plugin is installed in Omarchy
 (install only, not on later enables), the wizard shows a prompt that detects
 the default browser (`xdg-settings get default-web-browser`, falling back to
 the `x-scheme-handler/https` association), opens the matching browser
 extension page (Firefox Add-ons / Chrome Web Store), and links the other
-family's page. Cancelling shows a warning that the plugin is inert without
-its browser extension, with buttons to open the extension page, cancel, or
-uninstall the Omarchy plugin.
+family's page. The bar widget's left click gates the same prompt: when no
+installed browser has the extension ("none"), or the default browser
+specifically lacks it ("missing-default"), the click opens this dialog
+instead of the manage popup. Extension presence comes from per-family
+"seen" stamps the extension writes through the host (`browser-extension-seen.json`;
+the visit heartbeats of older extension builds count too). The dialog
+presents the extension as the plugin's core marketplace feature (it carries
+the Install buttons on plugins.omarchy.org) rather than threatening
+inaction; Cancel writes `browser-prompt-dismissed.json` so left clicks
+resume opening the manage popup. Uninstalling the plugin clears both files.
 
 **Uninstall cleanup**: removing the plugin unloads the wizard, whose
 detached self-cleanup unregisters the native messaging host a few seconds

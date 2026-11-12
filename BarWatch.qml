@@ -168,8 +168,79 @@ Panel {
   }
 
   function toggleLeft() {
+    // Before opening the manage popup: when the accompanying browser
+    // extension is missing from every installed browser, or from the
+    // default browser specifically, this click opens the extension setup
+    // dialog instead of the popup. Declining the dialog silences it for
+    // good (extensionDismissPath).
+    var reason = root.extensionPromptReason()
+    if (reason !== "") {
+      root.summonExtensionPrompt(reason)
+      return
+    }
     root.settingsOpen = false
     root.toggle()
+  }
+
+  // Map a .desktop id onto the extension family its store serves; the
+  // regex is a word match, so "brave-browser.desktop" is chromium and
+  // plain "firefox.desktop" falls through (identical to the wizard's).
+  function browserFamily(desktopId) {
+    var s = String(desktopId || "").toLowerCase()
+    return /(chrome|chromium|brave|vivaldi|opera|edge|iridium|yandex|slimjet|slimbrowser)/.test(s)
+      ? "chromium" : "firefox"
+  }
+
+  function applyExtensionSeen(raw) {
+    var obj = null
+    try { obj = JSON.parse(String(raw || "{}")) } catch (e) { obj = null }
+    if (!obj || typeof obj !== "object") obj = {}
+    root.seenChrome = Number(obj.chrome || 0) > 0
+    root.seenFirefox = Number(obj.firefox || 0) > 0
+  }
+
+  // "" opens the popup as always; "none" means no installed browser has
+  // the extension; "missing-default" means some browser has it but the
+  // default browser does not. No browser family installed at all never
+  // gates (nothing to install into).
+  function extensionPromptReason() {
+    if (root.extensionPromptDismissed) return ""
+    var chromeInstalled = root.chromeLaunchBin !== ""
+    var firefoxInstalled = root.firefoxLaunchBin !== ""
+    if (!chromeInstalled && !firefoxInstalled) return ""
+    if ((chromeInstalled && root.seenChrome) || (firefoxInstalled && root.seenFirefox)) {
+      var fam = root.browserFamily(root.defaultBrowserId)
+      if (root.defaultBrowserId !== ""
+        && (fam === "chromium" ? chromeInstalled : firefoxInstalled)
+        && !(fam === "chromium" ? root.seenChrome : root.seenFirefox))
+        return "missing-default"
+      return ""
+    }
+    return "none"
+  }
+
+  // Summon the browser extension setup overlay (the wizard's
+  // browser-prompt stage) with the gate reason and the families the
+  // extension is seen in, so the dialog can name them; same summon path
+  // as summonWizard. Re-read the default browser so the next click
+  // reflects a change to it.
+  function summonExtensionPrompt(reason) {
+    var seen = []
+    if (root.seenChrome) seen.push("chrome")
+    if (root.seenFirefox) seen.push("firefox")
+    var payload = JSON.stringify({
+      source: "bar",
+      mode: "browser-prompt",
+      id: root.managerId,
+      reason: reason,
+      seenFamilies: seen
+    })
+    if (!(root.bar && root.bar.shell
+      && root.bar.shell.summon(root.moduleName, payload) === true)) {
+      Quickshell.execDetached(["omarchy-shell", "-q", "shell", "summon",
+        root.moduleName, payload])
+    }
+    defaultBrowserProc.running = true
   }
 
   // Settings (persisted to settings.json in the state dir, beside the
@@ -189,6 +260,21 @@ Panel {
   // on disk, read before the truncate-on-open lands) is ignored, so it can
   // never instantly re-close a freshly opened panel.
   property string settingsSession: ""
+
+  // Left-click gating for the browser extension (see extensionPromptReason
+  // below): the extension heartbeats a "seen" stamp per browser family
+  // through the host into extensionSeenPath, and declining the gated dialog
+  // writes extensionDismissPath so it never returns on a click (an
+  // extension update or plugin reinstall clears the gate again).
+  property string extensionSeenPath: stateDir + "/browser-extension-seen.json"
+  property string extensionDismissPath: stateDir + "/browser-prompt-dismissed.json"
+  property bool seenChrome: false
+  property bool seenFirefox: false
+  property bool extensionPromptDismissed: false
+  // .desktop id of the default browser (e.g. "firefox.desktop"): the
+  // "missing default browser" gate compares it against the family the
+  // extension is seen in. Read at startup and refreshed per summon.
+  property string defaultBrowserId: ""
   readonly property var pollIntervalMinutes: [10, 30, 60, 300, 1440]
   readonly property var pollIntervalLabels: ["10m", "30m", "1h", "5h", "Daily"]
   property int pollMinutes: 60
@@ -1528,6 +1614,52 @@ Panel {
     }
   }
 
+  // Extension presence: the host stamps per-family "seen" timestamps as
+  // the extension reports itself (seen frame) or visits a marketplace
+  // page (visit frame, which covers extensions predating the seen
+  // frame); uninstalling the plugin clears the stamps so a reinstall
+  // re-offers the extension. The dismiss marker is one-way: written when
+  // the gated dialog is declined, and it makes toggleLeft stop gating.
+  FileView {
+    id: extensionSeenFile
+    path: root.extensionSeenPath
+    printErrors: false
+    onLoaded: root.applyExtensionSeen(text())
+    onLoadFailed: function (_error) { root.applyExtensionSeen("") }
+  }
+  FileView {
+    id: extensionDismissFile
+    path: root.extensionDismissPath
+    printErrors: false
+    onLoaded: root.extensionPromptDismissed = String(text() || "").trim() !== ""
+    onLoadFailed: function (_error) { root.extensionPromptDismissed = false }
+  }
+
+  // Default browser lookup for extensionPromptReason. xdg-settings can
+  // answer with Omarchy's "omarchy-browser.desktop" launcher wrapper,
+  // which names no browser family, so that value (or an empty one) is
+  // resolved through omarchy-cmd-default-browser - the same reader the
+  // launcher itself uses; xdg-mime stays as last fallback.
+  Process {
+    id: defaultBrowserProc
+    command: ["bash", "-c",
+      "b=$(xdg-settings get default-web-browser 2>/dev/null || true);"
+      + " if [ -z \"$b\" ] || [ \"$b\" = omarchy-browser.desktop ]"
+      + " && [ -x \"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-cmd-default-browser\" ]; then"
+      + " d=$(\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-cmd-default-browser\" 2>/dev/null || true);"
+      + " [ -n \"$d\" ] && b=$d; fi;"
+      + " [ -n \"$b\" ] || b=$(xdg-mime query default x-scheme-handler/https 2>/dev/null || true);"
+      + " printf %s \"$b\""]
+    stdout: StdioCollector {
+      id: defaultBrowserProcOut
+      waitForEnd: true
+    }
+    onExited: function (exitCode) {
+      root.defaultBrowserId = exitCode === 0
+        ? String(defaultBrowserProcOut.text || "").trim() : ""
+    }
+  }
+
   // Local manifest of the watched plugin (installed version shown in the
   // panel header). Path follows statusForId, so it reloads per plugin.
   FileView {
@@ -1700,6 +1832,9 @@ Panel {
     managerManifestFile.reload()
     settingsFile.reload()
     browserCheckProc.running = true
+    defaultBrowserProc.running = true
+    extensionSeenFile.reload()
+    extensionDismissFile.reload()
     Qt.callLater(root.checkForUpdates)
   }
 
@@ -1714,6 +1849,10 @@ Panel {
       watchFile.reload()
       tabFile.reload()
       if (root.focusPending) focusFile.reload()
+      // Extension gating state: picked up within a couple of seconds of
+      // the extension (re)installing or the dialog being declined.
+      extensionSeenFile.reload()
+      extensionDismissFile.reload()
     }
   }
 

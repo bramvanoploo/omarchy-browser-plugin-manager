@@ -24,13 +24,14 @@ import qs.Ui
 // browser-extension prompt (once, via the install worker). The Omarchy plugin
 // is only half the system; the Install buttons in the browser come from the
 // matching browser extension.
-// The prompt detects the default browser, sends the user to the Firefox
-// add-on page (addons.mozilla.org) for Firefox-based browsers, or to the
-// Chrome Web Store page for Chromium-based ones, and explains what happens
-// there and why. Cancelling shows a follow-up stage: the plugin does nothing
-// without its browser extension, with options to open the extension page,
-// cancel, or uninstall the Omarchy plugin (detached worker, since removing
-// this plugin unloads the wizard).
+// The bar widget's left click gates the same prompt: when no installed
+// browser has the extension, or the default browser specifically lacks it,
+// the click opens this dialog instead of the manage popup (the extension is
+// seen through per-family stamps the extension/host write into the state
+// dir). The dialog presents the extension as the plugin's core marketplace
+// feature and links the right store for the default browser, the other
+// family as a second link. Cancelling records a dismissal marker so the
+// bar stops intercepting clicks; the store buttons just open and close.
 // The native messaging host registration is automated: registering on every
 // load is idempotent, the uninstall worker unregisters before removing the
 // plugin, and a destruction-time watcher unregisters after a terminal
@@ -116,7 +117,7 @@ Item {
 
   // review | enable-confirm | disable-confirm | uninstall-confirm
   // | update-confirm | enabling | placement | disabling
-  // | browser-prompt | browser-defer | running
+  // | browser-prompt | running
   property string stage: "review"
 
   property string pluginId: ""
@@ -292,7 +293,6 @@ Item {
   readonly property bool isManagerStage: root.stage === "settings"
     || root.stage === "settings-confirm"
     || root.stage === "browser-prompt"
-    || root.stage === "browser-defer"
 
   // Footer container visibility. Derived from the stage list only: the
   // containers must never read their buttons' `visible`, because Item's
@@ -307,7 +307,7 @@ Item {
   readonly property bool footerVisible: [
     "settings", "settings-confirm", "review", "uninstall-confirm",
     "enable-confirm", "disable-confirm", "update-confirm", "placement",
-    "browser-prompt", "browser-defer"
+    "browser-prompt"
   ].indexOf(root.stage) >= 0
 
   // Header version: the version pill shown in the panel header next to the title.
@@ -330,7 +330,7 @@ Item {
   // Header subtitle: the action this dialog performs, under the plugin
   // identity (name + version pill).
   readonly property string headerSubtitle: {
-    if (root.stage === "browser-prompt" || root.stage === "browser-defer")
+    if (root.stage === "browser-prompt")
       return "Browser extension setup"
     if (root.stage === "placement") {
       if (root.placementFromSettings)
@@ -427,13 +427,36 @@ Item {
     root.close()
   }
 
-  // Self-removal from the defer stage: removing this plugin reloads the
-  // shell and destroys this overlay, so it runs as the same detached
-  // uninstall worker used for normal uninstalls (the notification is its
-  // completion report).
-  function uninstallManager() {
-    if (root.pluginId !== root.managerId) return
-    root.spawnWorker("uninstall", "")
+  // The bar's left-click gate tells the browser extension dialog why it
+  // intercepted the click: "none" (no installed browser has the
+  // extension) or "missing-default" (some browsers have it, the default
+  // browser does not); an empty reason means an external summon (the
+  // install consent gate) where the neutral wording applies. seen is
+  // the browser families the extension already reports into.
+  property string extPromptReason: ""
+  property var extSeenFamilies: []
+
+  // Names the seen families in the missing-default copy.
+  readonly property string extSeenFamiliesPhrase: {
+    var fams = []
+    for (var i = 0; i < root.extSeenFamilies.length; i++) fams.push(String(root.extSeenFamilies[i]))
+    if (fams.indexOf("chrome") >= 0 && fams.indexOf("firefox") >= 0)
+      return "Chromium and Firefox browsers"
+    if (fams.indexOf("chrome") >= 0) return "Chromium browsers"
+    if (fams.indexOf("firefox") >= 0) return "Firefox browsers"
+    return "other browsers"
+  }
+
+  // Declining the left-click extension dialog is durable: a dismiss
+  // marker (which the bar watches) is written, then the overlay closes.
+  // The marketplace flow is unaffected: someone who declined the click
+  // gate can still install the extension from the plugin page later;
+  // that re-stamps extension presence but never clears the dismissal.
+  function dismissExtensionPrompt() {
+    Quickshell.execDetached(["sh", "-c",
+      'umask 077 && mkdir -p "${1%/*}" && printf %s dismissed > "$1"',
+      "sh", stateDir + "/browser-prompt-dismissed.json"])
+    root.close()
   }
 
   function open(payloadJson) {
@@ -445,13 +468,13 @@ Item {
     var newMode = String(payload.mode || "install")
     if (newMode !== "uninstall" && newMode !== "enable" && newMode !== "disable"
         && newMode !== "update" && newMode !== "running"
-        && newMode !== "browser-prompt" && newMode !== "browser-defer"
+        && newMode !== "browser-prompt"
         && newMode !== "settings" && newMode !== "settings-confirm") newMode = "install"
     // Stage before mode: the title binding chooses its source from stage, and
     // assigning a browser-* mode while the old stage is still a confirm stage
     // would index the title map with it (undefined -> "Unable to assign
     // [undefined] to QString").
-    stage = (newMode === "browser-prompt" || newMode === "browser-defer"
+    stage = (newMode === "browser-prompt"
       || newMode === "running" || newMode === "settings"
       || newMode === "settings-confirm")
       ? (newMode === "settings-confirm" ? "settings-confirm" : newMode)
@@ -461,7 +484,7 @@ Item {
     pluginId = String(payload.id || "")
     pluginRepo = String(payload.repo || "")
     pluginName = String(payload.name || pluginId)
-    if (mode === "browser-prompt" || mode === "browser-defer") pluginId = managerId
+    if (mode === "browser-prompt") pluginId = managerId
     if (!pluginName) pluginName = root.managerName
 
     catalogLoaded = false
@@ -577,10 +600,20 @@ Item {
       return
     }
 
-    if (mode === "browser-prompt" || mode === "browser-defer") {
+    if (mode === "browser-prompt") {
       // No marketplace data needed: the prompt shows this manager's own
       // name/version (from the shell-loaded manifest) and the detected
-      // default browser.
+      // default browser. The bar's left-click gate adds why it
+      // intercepted (reason) and which browser families already have
+      // the extension (seenFamilies); anything malformed reads as the
+      // neutral install-consent-gate wording.
+      root.extPromptReason = (payload.reason === "none"
+        || payload.reason === "missing-default") ? payload.reason : ""
+      root.extSeenFamilies = Array.isArray(payload.seenFamilies)
+        ? payload.seenFamilies.filter(function (f) {
+            return f === "chrome" || f === "firefox"
+          })
+        : []
       catalogLoaded = true
       manifestLoaded = true
       defaultBrowserLoaded = false
@@ -1687,9 +1720,17 @@ Item {
   // fallback.
   Process {
     id: browserProc
+    // omarchy-browser.desktop is Omarchy's launcher wrapper and names no
+    // browser family, so that answer (or an empty one) is resolved via
+    // omarchy-cmd-default-browser, the reader the wrapper itself uses.
     command: ["bash", "-c",
-      "xdg-settings get default-web-browser 2>/dev/null"
-      + " || xdg-mime query default x-scheme-handler/https 2>/dev/null || true"]
+      "b=$(xdg-settings get default-web-browser 2>/dev/null || true);"
+      + " if [ -z \"$b\" ] || [ \"$b\" = omarchy-browser.desktop ]"
+      + " && [ -x \"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-cmd-default-browser\" ]; then"
+      + " d=$(\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-cmd-default-browser\" 2>/dev/null || true);"
+      + " [ -n \"$d\" ] && b=$d; fi;"
+      + " [ -n \"$b\" ] || b=$(xdg-mime query default x-scheme-handler/https 2>/dev/null || true);"
+      + " printf %s \"$b\""]
     stdout: StdioCollector {
       id: browserProcOut
       waitForEnd: true
@@ -3222,7 +3263,7 @@ Item {
           Row {
             id: headerActionsRow
             // Not root.isManagerStage: that also covers settings-confirm
-            // and the browser-prompt/defer stages, which reuse this header
+            // and the browser-prompt stage, which reuse this header
             // for their own cards. Only the tabbed settings stage itself.
             visible: root.stage === "settings"
             anchors.right: parent.right
@@ -3291,7 +3332,7 @@ Item {
         }
 
         PiLine {
-          visible: root.stage !== "browser-prompt" && root.stage !== "browser-defer"
+          visible: root.stage !== "browser-prompt"
             && root.stage !== "running"
             // Stage-gated as well as mode-gated: the settings panel's card
             // is fixed-height, so a stray visible row here (e.g. mode left
@@ -4645,41 +4686,38 @@ Item {
           }
         }
 
-        // ---- stage: browser-prompt (manager install finished) ----
-        // Shown exactly once: the install worker summons it directly after a
-        // successful install of the manager. The wizard is this manager's own
-        // UI; it is inert until the matching browser extension is installed.
-        // Send the user to the extension page for their default browser and
-        // explain the other-browser option.
+        // ---- stage: browser-prompt (browser extension setup) ----
+        // Summoned from two places: the install worker, directly after a
+        // manager install whose consent gate found no browser extension,
+        // and the bar's left-click gate when the extension is missing
+        // from every installed browser ("none") or from the default
+        // browser specifically ("missing-default"). The copy explains
+        // that the extension carries the plugin's core marketplace
+        // feature; declining it (Cancel) records a dismissal so the bar
+        // stops intercepting clicks.
         Column {
           visible: root.stage === "browser-prompt"
           width: cardColumn.width
           spacing: Style.spacing.lg
           PiLine {
-            text: "The Omarchy plugin is installed. Its browser extension is "
-              + "what shows the Install buttons on plugins.omarchy.org, so "
-              + "without it the plugin does nothing."
+            text: "The browser extension carries this plugin's core feature: "
+              + "it shows the Install buttons on the official Omarchy "
+              + "Marketplace at plugins.omarchy.org, so you can manage "
+              + "plugins straight from the website. Installing it is "
+              + "highly recommended."
           }
           PiLine {
+            visible: root.extPromptReason === "missing-default"
+            text: "The extension is already installed in "
+              + root.extSeenFamiliesPhrase + ", but not in your default "
+              + "browser: the button below adds it there too, so the "
+              + "marketplace works wherever you browse."
+          }
+          PiLine {
+            visible: root.extPromptReason !== "missing-default"
             text: "The button below opens the extension in the "
               + root.primaryStoreName + " for your default browser; the "
               + "browser asks before installing anything."
-          }
-          PiTextLink {
-            text: "For " + root.otherFamilyName + ": "
-              + root.linkTag(root.otherExtensionUrl, root.otherLinkText)
-          }
-        }
-
-        // ---- stage: browser-defer (user cancelled the prompt) ----
-        Column {
-          visible: root.stage === "browser-defer"
-          width: cardColumn.width
-          spacing: Style.spacing.lg
-          PiLine {
-            color: Color.urgent
-            text: "Without the browser extension this plugin does nothing: "
-              + "no Install buttons will appear on plugins.omarchy.org."
           }
           PiTextLink {
             text: "For " + root.otherFamilyName + ": "
@@ -4912,25 +4950,10 @@ Item {
           }
           PiButton {
             visible: root.stage === "browser-prompt"
+            // Declining writes the dismissal marker first (the bar
+            // watches it), so left-clicks open the manage popup again.
             label: "Cancel"
-            onClickedPi: root.stage = "browser-defer"
-          }
-          PiButton {
-            visible: root.stage === "browser-defer"
-            primary: true
-            label: root.primaryExtensionLabel
-            onClickedPi: root.openExtensionPage()
-          }
-          PiButton {
-            visible: root.stage === "browser-defer"
-            danger: true
-            label: "Uninstall Omarchy plugin"
-            onClickedPi: root.uninstallManager()
-          }
-          PiButton {
-            visible: root.stage === "browser-defer"
-            label: "Cancel"
-            onClickedPi: root.close()
+            onClickedPi: root.dismissExtensionPrompt()
           }
           }
         }

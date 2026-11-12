@@ -308,6 +308,20 @@ api.tabs.onUpdated.addListener((tabId, changeInfo) => {
   schedulePresenceSync();
 });
 
-if (api.runtime.onStartup) api.runtime.onStartup.addListener(() => schedulePresenceSync());
-if (api.runtime.onInstalled) api.runtime.onInstalled.addListener(() => schedulePresenceSync());
+// Install evidence for the bar widget: report ourselves to the host
+// whenever this worker boots (browser start, install, update). The host
+// stamps browser-extension-seen.json for this browser family; a bar-icon
+// left click then opens the browser-extension install prompt only when an
+// installed browser family has no evidence (see BarWatch.qml). No open
+// marketplace tab is needed: the native messaging connection itself is
+// the proof, and the host relaunches per worker boot.
+function reportExtensionSeen() {
+  detectSource().then((source) => {
+    talkToHost({ type: "seen", source }).catch(() => { /* host down or unregistered: presence heartbeats stamp it anyway */ });
+  });
+}
+
+if (api.runtime.onStartup) api.runtime.onStartup.addListener(() => { schedulePresenceSync(); reportExtensionSeen(); });
+if (api.runtime.onInstalled) api.runtime.onInstalled.addListener(() => { schedulePresenceSync(); reportExtensionSeen(); });
 schedulePresenceSync(); // worker boot (also covers browser start on Firefox)
+reportExtensionSeen();

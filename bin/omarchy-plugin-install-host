@@ -89,6 +89,17 @@ TABS_FILE="$STATE_DIR/browser-tabs.json"
 FOCUS_FILE="$STATE_DIR/browser-focus.json"
 TABS_LOCK_FILE="$STATE_DIR/browser-tabs.lock"
 WATCH_LOCK_FILE="$STATE_DIR/browser-watch.lock"
+# Browser-extension install evidence (browser-extension-seen.json):
+# {chrome: ts, firefox: ts}, stamped whenever the extension talks to this
+# host (its boot ping "seen", refreshed by marketplace presence
+# heartbeats, so extension builds predating the ping also leave evidence).
+# The native messaging connection itself proves the install for that
+# browser family, and entries are never pruned: an old timestamp only
+# means the browser has not run since, not that the extension is gone.
+# The bar widget reads this to decide whether a bar-icon left click
+# should open the browser-extension install prompt (see BarWatch.qml).
+SEEN_FILE="$STATE_DIR/browser-extension-seen.json"
+SEEN_LOCK_FILE="$STATE_DIR/browser-extension-seen.lock"
 # Update-detection cache: {checked, plugins:[{id,name,installedVersion,
 # latestVersion,verified}]} for every plugin whose git HEAD is behind origin
 # (all checks are cheap file reads for the extension; the git work runs in a
@@ -602,6 +613,38 @@ clear_visit() {
   return 0
 }
 
+# Stamp install evidence for one browser family ("chrome" | "firefox"):
+# the fact that this host process was launched and received a message from
+# the extension means that family has the extension installed. Cheap by
+# design: a family stamped within the last hour is not rewritten (the
+# presence heartbeat fires every couple of seconds per open tab), and a
+# corrupt or missing file is simply re-initialized.
+stamp_seen() {
+  local src="$1" ts="" json="" tmp=""
+  [[ $src == "chrome" || $src == "firefox" ]] || return 0
+  ts=${EPOCHSECONDS:-$(date +%s)}
+  json=$(cat "$SEEN_FILE" 2>/dev/null) || json=""
+  [[ ${json:0:1} == "{" ]] || json='{}'
+  if jq -e --arg s "$src" --argjson fresh "$((ts - 3600))" \
+      '(.[$s] // 0) >= $fresh' <<<"$json" >/dev/null 2>&1; then
+    return 0
+  fi
+  ensure_private_state || return 0
+  (
+    exec 8>"$SEEN_LOCK_FILE" 2>/dev/null || exit 0
+    flock -x 8 || exit 0
+    json=$(cat "$SEEN_FILE" 2>/dev/null) || json='{}'
+    [[ ${json:0:1} == "{" ]] || json='{}'
+    json=$(jq -c --arg s "$src" --argjson ts "$ts" \
+      '(. + {($s): $ts}) | with_entries(select(.key == "chrome" or .key == "firefox"))' \
+      <<<"$json" 2>/dev/null)
+    [[ ${json:0:1} == "{" ]] || exit 0
+    tmp="$SEEN_FILE.tmp.$$"
+    printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$SEEN_FILE"
+  )
+  return 0
+}
+
 # Consume a pending focus request from the bar widget: the request is live
 # for a few seconds (the widget suppresses its popup meanwhile) and is
 # answered by exactly one visiting tab. The widget stamps ts in Unix
@@ -759,6 +802,10 @@ main() {
         # The assignment sits in the if so a failing record does not trip
         # set -e.
         if activated=$(record_visit "$payload"); then
+          # A heartbeat also proves the family's install: extension builds
+          # without the boot ping still leave evidence through here.
+          src=$(jq -r 'if type == "object" and (.source | type) == "string" then .source else "" end' <<<"$payload" 2>/dev/null || true)
+          stamp_seen "$src"
           if [[ $activated == "activate" ]]; then
             send_frame '{"ok":true,"activate":true}'
           else
@@ -767,6 +814,14 @@ main() {
         else
           reply_err "invalid-visit"
         fi
+        ;;
+      seen)
+        # Boot ping: the extension announces itself as soon as its service
+        # worker starts (browser start, install, update), independent of any
+        # open marketplace tab. The connection proves the install.
+        src=$(jq -r 'if type == "object" and (.source | type) == "string" then .source else "" end' <<<"$payload" 2>/dev/null || true)
+        stamp_seen "$src"
+        reply_ok
         ;;
       unvisit)
         clear_visit "$payload"
