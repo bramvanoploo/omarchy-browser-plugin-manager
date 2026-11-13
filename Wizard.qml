@@ -165,6 +165,8 @@ Item {
   property var pluginManifest: null
   property string catalogError: ""
   property string manifestError: ""
+  property bool listLoaded: false
+  property string listError: ""
   readonly property bool catalogLoading: !catalogLoaded && catalogError === ""
 
   readonly property string marketplaceUrl: "https://plugins.omarchy.org/"
@@ -278,13 +280,19 @@ Item {
     ? pluginManifest.kinds : []
 
   readonly property bool needsManifest: root.mode === "install" || root.mode === "enable"
+  readonly property bool needsListCheck: root.mode === "uninstall"
+    || root.mode === "enable"
+    || root.mode === "disable"
+    || root.mode === "update"
 
   readonly property string reviewBlocked: {
     if (catalogError.length > 0) return catalogError
+    if (listError.length > 0) return listError
     if (updateVerifyBlocked.length > 0) return updateVerifyBlocked
     if (needsManifest && manifestError.length > 0) return manifestError
     if (!catalogLoaded) return "Loading marketplace data\u2026"
     if (needsManifest && !manifestLoaded) return "Loading marketplace data\u2026"
+    if (needsListCheck && !listLoaded) return "Loading local plugin state\u2026"
     return ""
   }
   readonly property bool canAct: reviewBlocked.length === 0
@@ -483,16 +491,18 @@ Item {
 
     pluginId = String(payload.id || "")
     pluginRepo = String(payload.repo || "")
-    pluginName = String(payload.name || pluginId)
+    pluginName = String(payload.name || pluginId).replace(/[\x00-\x1f\x7f]/g, "")
     if (mode === "browser-prompt") pluginId = managerId
     if (!pluginName) pluginName = root.managerName
 
     catalogLoaded = false
     manifestLoaded = false
+    listLoaded = false
     catalogEntry = null
     pluginManifest = null
     catalogError = ""
     manifestError = ""
+    listError = ""
     enableOutput = ""
     isBarWidget = false
     defaultSection = "centerEnd"
@@ -501,6 +511,13 @@ Item {
     finalCheck = false
     settingsConfirm = null
     installedVersion = ""
+    placementFromSettings = false
+    placementPreviousSection = ""
+    placementPreviousMode = ""
+    placementFromBrowser = false
+    pluginVersion = ""
+    activePluginOpId = ""
+    pluginActionStatus = ""
 
     opened = true
 
@@ -566,12 +583,14 @@ Item {
           stage = "settings"
         }
       }
-      // Placement detour requested by the bar popup's Position button:
-      // the settings panel opens underneath, then walks straight into the
-      // placement step for the plugin named in the payload. This is the
-      // same openPlacementFromSettings the Manage rows' Position button
-      // calls, so placement's Escape/Close land back on the live
-      // settings panel.
+      // Placement detour requested by a Position button: the settings
+      // panel opens underneath, then walks straight into the placement
+      // step for the plugin named in the payload. This is the same
+      // openPlacementFromSettings the Manage rows' Position button calls,
+      // so placement's Escape/Close land back on the live settings panel.
+      // A browser summon (the marketplace page) carries no settings
+      // snapshot to walk back to, so it marks the detour as browser
+      // sourced: every exit closes the panel instead.
       if (mode === "settings" && payload.stage === "placement"
           && validPluginId(String(payload.id || ""))) {
         root.openPlacementFromSettings({
@@ -579,24 +598,10 @@ Item {
           name: String(payload.name || payload.id),
           repo: String(payload.repo || ""),
           version: String(payload.version || ""),
-          section: String(payload.section || "")
+          section: String(payload.section || ""),
+          fromBrowser: String(payload.source || "") === "browser"
         })
       }
-      return
-    }
-
-    if (!validPluginId(pluginId)) {
-      catalogError = "Invalid plugin identifier"
-      catalogLoaded = true
-      manifestLoaded = true
-      return
-    }
-
-    var mUrl = manifestUrl()
-    if (!mUrl) {
-      catalogError = "Invalid plugin repository URL"
-      catalogLoaded = true
-      manifestLoaded = true
       return
     }
 
@@ -616,9 +621,27 @@ Item {
         : []
       catalogLoaded = true
       manifestLoaded = true
+      listLoaded = true
       defaultBrowserLoaded = false
       defaultBrowserId = ""
       browserProc.running = true
+      return
+    }
+
+    if (!validPluginId(pluginId)) {
+      catalogError = "Invalid plugin identifier"
+      catalogLoaded = true
+      manifestLoaded = true
+      listLoaded = true
+      return
+    }
+
+    var mUrl = manifestUrl()
+    if (!mUrl) {
+      catalogError = "Invalid plugin repository URL"
+      catalogLoaded = true
+      manifestLoaded = true
+      listLoaded = true
       return
     }
 
@@ -638,7 +661,8 @@ Item {
     // turn calls close(). Clearing `opened` first makes that re-entry a no-op.
     if (!root.opened) return
     root.opened = false
-    if (root.mode === "settings" || root.mode === "settings-confirm")
+    if (root.mode === "settings" || root.mode === "settings-confirm"
+        || (root.placementFromSettings && root.placementPreviousMode === "settings"))
       root.writeSettingsCmd({ action: "closed", session: root.settingsSession })
     root.stopPending()
     if (root.shell && typeof root.shell.hide === "function")
@@ -743,6 +767,15 @@ Item {
   // it, or settings-stage layout gated on the mode (the identity PiLine)
   // leaks a visible row back into the fixed-height panel.
   property string placementPreviousMode: ""
+  // Who summoned the placement detour. The bar popup and the Manage rows
+  // open it on top of the live settings panel, so Escape/Cancel walk back
+  // down to it. The marketplace page opens the very same dialog with no
+  // settings panel behind it, so there every exit closes the panel.
+  property bool placementFromBrowser: false
+
+  function placementReturnsToSettings() {
+    return root.placementFromSettings && !root.placementFromBrowser
+  }
 
   function returnPlacementToSettings() {
     if (root.placementPreviousMode !== "")
@@ -761,6 +794,7 @@ Item {
     root.pluginRepo = String(item.repo || "")
     root.pluginVersion = String(item.version || item.installed || "")
     root.placementPreviousSection = String(item.section || "")
+    root.placementFromBrowser = (item.fromBrowser === true)
     root.mode = "move"
     root.stage = "placement"
   }
@@ -858,7 +892,7 @@ Item {
           // stale onExited that sets catalogError after open() reset it.
           root.catalogError = ""
           root.catalogEntry = entry
-          if (entry.name) root.pluginName = String(entry.name)
+          if (entry.name) root.pluginName = String(entry.name).replace(/[\x00-\x1f\x7f]/g, "")
           if (String(entry.kind || "").indexOf("Bar widget") !== -1 || entry.category === "Bar widgets" || entry.category === "Widgets") {
             root.isBarWidget = true
           }
@@ -930,8 +964,9 @@ Item {
     }
     onExited: function (exitCode) {
       if (!root.opened) return
+      root.listLoaded = true
       if (exitCode !== 0) {
-        if (root.stage === "review") root.catalogError = "Could not read the local plugin list"
+        if (root.stage === "review") root.listError = "Could not read the local plugin list"
         return
       }
       var entry = null
@@ -944,22 +979,22 @@ Item {
         entry = null
       }
       if (!entry || entry.firstParty) {
-        root.catalogError = "Plugin is not installed as a user plugin; nothing to do"
+        root.listError = "Plugin is not installed as a user plugin; nothing to do"
       } else if (root.mode === "enable" && entry.enabled) {
-        root.catalogError = "Plugin is already enabled"
+        root.listError = "Plugin is already enabled"
       } else if (root.mode === "disable" && !entry.enabled) {
-        root.catalogError = "Plugin is already disabled"
+        root.listError = "Plugin is already disabled"
       } else if (root.mode === "enable") {
-        root.catalogError = ""
+        root.listError = ""
         root.stage = "enable-confirm"
       } else if (root.mode === "disable") {
-        root.catalogError = ""
+        root.listError = ""
         root.stage = "disable-confirm"
       } else if (root.mode === "update") {
-        root.catalogError = ""
+        root.listError = ""
         root.stage = "update-confirm"
       } else {
-        root.catalogError = ""
+        root.listError = ""
         root.stage = "uninstall-confirm"
       }
     }
@@ -1011,14 +1046,8 @@ Item {
   Process {
     id: settingsCmdWriteProc
     command: ["sh", "-c",
-      'umask 077 && mkdir -p "${1%/*}" && printf %s "$3" | head -c "$2" > "$1"',
-      "sh", root.settingsCmdPath,
-      // Byte bound: 3x the JS string length (each UTF-16 unit is at most
-      // 3 UTF-8 bytes) plus one, so the bound is always above the real
-      // byte count and printf's EOF ends the stream. The cap keeps the
-      // argument under the kernel's per-arg limit.
-      String(Math.min(65536, root.settingsCmdWriteText.length * 3 + 1)),
-      root.settingsCmdWriteText]
+      'umask 077 && mkdir -p "${1%/*}" && target="$1" && shift && tmp="${target}.tmp.$$" && { printf %s "$@" > "$tmp" && mv -f "$tmp" "$target"; } || { rm -f "$tmp"; exit 1; }',
+      "sh", root.settingsCmdPath]
     // Quickshell Process exposes its exit notification as the overridable
     // onExited handler (onFinished: is not a signal here: assigning it
     // fails the component load); the flush chain continues queued sends
@@ -1034,6 +1063,20 @@ Item {
     if (settingsCmdWriteProc.running) return
     if (root.settingsCmdWriteText === root.settingsCmdStarted) return
     root.settingsCmdStarted = root.settingsCmdWriteText
+    var text = root.settingsCmdWriteText
+    var cmd = [
+      "sh", "-c",
+      'umask 077 && mkdir -p "${1%/*}" && target="$1" && shift && tmp="${target}.tmp.$$" && { printf %s "$@" > "$tmp" && mv -f "$tmp" "$target"; } || { rm -f "$tmp"; exit 1; }',
+      "sh", root.settingsCmdPath
+    ]
+    var chunkSize = 32768
+    if (text.length === 0) {
+      cmd.push("")
+    } else {
+      for (var i = 0; i < text.length; i += chunkSize)
+        cmd.push(text.slice(i, i + chunkSize))
+    }
+    settingsCmdWriteProc.command = cmd
     settingsCmdWriteProc.running = true
   }
 
@@ -1119,18 +1162,33 @@ Item {
   property string settingsSession: ""
   function writeSettingsCmd(obj) {
     var o = obj || {}
-    o.seq = String(Date.now()) + "-"
+    var nowMs = Date.now()
+    o.seq = String(nowMs) + "-"
       + String(Math.floor(Math.random() * 1e6))
     // Session stamp: the widget ignores commands from any other session,
     // so lines a previous panel left on disk can never replay.
     o.session = root.settingsSession
-    settingsCmdQueue = settingsCmdQueue.concat([o])
+    var isHeartbeat = (o.action === "panel_open")
+    // Heartbeats are superseded by the next one (they only keep the panel
+    // snapshot alive); real commands are NEVER age-dropped: an action the
+    // widget has not consumed yet must replay on the next write. The
+    // session stamp above (not the queue's age) is what keeps a dead
+    // session's leftovers from ever being honored.
+    var kept = []
+    for (var i = 0; i < settingsCmdQueue.length; i++) {
+      var item = settingsCmdQueue[i]
+      if (!item) continue
+      if (isHeartbeat && item.heartbeat) continue
+      kept.push(item)
+    }
+    kept.push({ raw: JSON.stringify(o), heartbeat: isHeartbeat })
     // Bound the in-memory log: the widget consumes (removes) the file
     // after dispatch, and consumed lines only inflate the rewrite.
-    if (settingsCmdQueue.length > 60)
-      settingsCmdQueue = settingsCmdQueue.slice(settingsCmdQueue.length - 60)
+    if (kept.length > 60)
+      kept = kept.slice(kept.length - 60)
+    settingsCmdQueue = kept
     root.settingsCmdWriteText = settingsCmdQueue.map(function (c) {
-      return JSON.stringify(c)
+      return c.raw
     }).join("\n") + "\n"
     root.flushSettingsCmd()
   }
@@ -1901,6 +1959,7 @@ Item {
   // (uninstall) the satellites spiral inward and fade. All colors come from
   // the live shell palette, so the panel follows the Omarchy theme.
   function paintGlobe(ctx, W, H, t, escape, gridCol, dotCol, starCol, sats) {
+    if (!(W > 0 && H > 0)) return
     // Scene scale relative to the reference 120px-tall canvas: the globe
     // radius, stroke widths, and satellite dots all follow it, so callers
     // get a proportionally identical scene at any canvas size.
@@ -2032,6 +2091,7 @@ Item {
   // fades in from zero alpha and back to zero before its cycle restarts).
   // Colors come from the live palette like paintGlobe's.
   function paintEmptyBox(ctx, W, H, t, gridCol, dotCol, starCol) {
+    if (!(W > 0 && H > 0)) return
     // Same reference-unit scaling as the globe: identical scene feel at
     // any canvas size.
     var sc = H / 120
@@ -2526,28 +2586,29 @@ Item {
                       // card (a rebuild collapses the list's
                       // contentHeight and jumps the scroll position).
                       property var row: modelData
+                      readonly property var safeRow: (row && typeof row === "object") ? row : ({})
                       width: parent.width
                       implicitHeight: pluginCardCol.implicitHeight + Style.space(28)
                       height: implicitHeight
                       color: Util.alpha(root.foreground, 0.03)
-                      borderSpec: (row.updateAvailable || row.updatable)
+                      borderSpec: (safeRow.updateAvailable || safeRow.updatable)
                         ? Border.flat(Color.accent, 1)
-                        : (Boolean(row.installed || row.version) ? Border.flat(Util.alpha(root.foreground, 0.16), 1) : Border.none())
+                        : (Boolean(safeRow.installed || safeRow.version) ? Border.flat(Util.alpha(root.foreground, 0.16), 1) : Border.none())
                       radius: Style.cornerRadius
 
-                      readonly property bool isBusy: root.activePluginOpId === row.id
-                      readonly property string authorText: String(row.author || "")
-                      readonly property string descText: String(row.description || row.desc || "")
-                      readonly property string repoText: String(row.repo || "")
+                      readonly property bool isBusy: root.activePluginOpId === String(safeRow.id || "")
+                      readonly property string authorText: String(safeRow.author || "")
+                      readonly property string descText: String(safeRow.description || safeRow.desc || "")
+                      readonly property string repoText: String(safeRow.repo || "")
                       // Version pill pair: the update-list rows carry both
                       // sides (from/to); an installed row only has its own
                       // version, and latest when the row is updatable.
                       readonly property string fromText: String(
-                        row.from || row.installed
-                        || row.version || "")
+                        safeRow.from || safeRow.installed
+                        || safeRow.version || "")
                       readonly property string toText: String(
-                        row.to || row.latest || "")
-                      readonly property bool isUpdatable: Boolean(row.updateAvailable || row.updatable)
+                        safeRow.to || safeRow.latest || "")
+                      readonly property bool isUpdatable: Boolean(safeRow.updateAvailable || safeRow.updatable)
 
                       Column {
                         id: pluginCardCol
@@ -2568,14 +2629,14 @@ Item {
                             radius: Style.cornerRadius
                             color: pluginCard.isUpdatable
                               ? Util.alpha(Color.accent, 0.2)
-                              : (Boolean(row.installed || row.version) ? Util.alpha(root.foreground, 0.08) : Util.alpha(root.foreground, 0.04))
+                              : (Boolean(pluginCard.safeRow.installed || pluginCard.safeRow.version) ? Util.alpha(root.foreground, 0.08) : Util.alpha(root.foreground, 0.04))
                             anchors.verticalCenter: parent.verticalCenter
 
                             Text {
                               anchors.centerIn: parent
-                              text: row.name && row.name.length > 0 ? row.name.substring(0, 1).toUpperCase() : "󰏖"
+                              text: pluginCard.safeRow.name && String(pluginCard.safeRow.name).length > 0 ? String(pluginCard.safeRow.name).substring(0, 1).toUpperCase() : "󰏖"
                               textFormat: Text.PlainText
-                              color: pluginCard.isUpdatable ? Color.accent : (Boolean(row.installed || row.version) ? root.foreground : root.dim)
+                              color: pluginCard.isUpdatable ? Color.accent : (Boolean(pluginCard.safeRow.installed || pluginCard.safeRow.version) ? root.foreground : root.dim)
                               font.family: root.fontFamily
                               font.pixelSize: Style.font.body
                               font.bold: true
@@ -2588,19 +2649,26 @@ Item {
                             spacing: 2
 
                             Row {
+                              width: parent.width
                               spacing: Style.space(6)
 
                               Text {
-                                text: String(row.name || row.id || "")
+                                text: String(pluginCard.safeRow.name || pluginCard.safeRow.id || "")
                                 textFormat: Text.PlainText
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.body
                                 font.bold: true
                                 elide: Text.ElideRight
+                                width: Math.min(implicitWidth, Math.max(Style.space(40), parent.width
+                                  - (cardVerText.visible ? cardVerText.width + Style.space(6) : 0)
+                                  - (cardRankText.visible ? cardRankText.width + Style.space(6) : 0)
+                                  - (cardStarsText.visible ? cardStarsText.width + Style.space(6) : 0)
+                                  - (cardHeartsText.visible ? cardHeartsText.width + Style.space(6) : 0)))
                               }
 
                               Text {
+                                id: cardVerText
                                 // A row that carries both versions spells the
                                 // pair out ("v{from} -> v{to}") even when the
                                 // two strings are equal (an unverified update
@@ -2622,8 +2690,9 @@ Item {
                               }
 
                               Text {
-                                visible: Boolean(row.rankLabel)
-                                text: String(row.rankLabel || "")
+                                id: cardRankText
+                                visible: Boolean(pluginCard.safeRow.rankLabel)
+                                text: String(pluginCard.safeRow.rankLabel || "")
                                 textFormat: Text.PlainText
                                 color: Color.accent
                                 font.family: root.fontFamily
@@ -2632,16 +2701,18 @@ Item {
                               }
 
                               Text {
-                                visible: Boolean(row.stars && row.stars > 0)
-                                text: "★ " + row.stars
+                                id: cardStarsText
+                                visible: Boolean(pluginCard.safeRow.stars && pluginCard.safeRow.stars > 0)
+                                text: "★ " + (pluginCard.safeRow.stars || 0)
                                 color: root.dim
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.caption
                               }
 
                               Text {
-                                visible: Boolean(row.hearts && row.hearts > 0)
-                                text: "♥ " + row.hearts
+                                id: cardHeartsText
+                                visible: Boolean(pluginCard.safeRow.hearts && pluginCard.safeRow.hearts > 0)
+                                text: "♥ " + (pluginCard.safeRow.hearts || 0)
                                 color: root.dim
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.caption
@@ -2649,7 +2720,8 @@ Item {
                             }
 
                             Text {
-                              text: (pluginCard.authorText !== "" ? ("by " + pluginCard.authorText + " · ") : "") + row.id
+                              width: parent.width
+                              text: (pluginCard.authorText !== "" ? ("by " + pluginCard.authorText + " · ") : "") + String(pluginCard.safeRow.id || "")
                               textFormat: Text.PlainText
                               color: root.dim
                               font.family: root.fontFamily
@@ -2666,7 +2738,7 @@ Item {
 
                             // T2 Specific Badge
                             Rectangle {
-                              visible: Boolean(row.isT2 || row.isExactT2)
+                              visible: Boolean(pluginCard.safeRow.isT2 || pluginCard.safeRow.isExactT2)
                               height: Style.space(22)
                               width: t2BadgeRow.implicitWidth + Style.space(12)
                               radius: Style.cornerRadius
@@ -2720,16 +2792,16 @@ Item {
                               id: cardToggleSwitch
                               visible: true
                               anchors.verticalCenter: parent.verticalCenter
-                              checked: Boolean(row && row.enabled !== false)
+                              checked: pluginCard.safeRow.enabled !== false
                               accent: root.accent
                               foreground: checked ? root.accent : root.foreground
                               busy: pluginCard.isBusy
                               enabled: !pluginCard.isBusy && root.activePluginOpId === ""
-                              onToggled: root.manageToggle(String(row.id), !checked)
+                              onToggled: root.manageToggle(String(pluginCard.safeRow.id || ""), !checked)
 
                               PanelToolTip {
                                 visible: cardToggleSwitch.containsMouse
-                                text: (row && row.enabled !== false) ? "Enabled" : "Disabled"
+                                text: (pluginCard.safeRow.enabled !== false) ? "Enabled" : "Disabled"
                               }
                             }
                           }
@@ -2774,10 +2846,7 @@ Item {
                               tooltipText: "Plugins page ↗"
                               iconText: "󰖟"
                               bordered: true
-                              onClicked: {
-                                var pageUrl = row.webUrl || ("https://plugins.omarchy.org/plugin.html?id=" + encodeURIComponent(row.id))
-                                root.openPluginPageAndClose(row.id)
-                              }
+                              onClicked: root.openPluginPageAndClose(String(pluginCard.safeRow.id || ""))
                             }
 
                             // External link to repository
@@ -2830,30 +2899,30 @@ Item {
                                 foreground: root.accent
                                 tooltipText: pluginCard.isBusy
                                   ? "Updating..."
-                                  : (row.updatable === false
+                                  : (pluginCard.safeRow.updatable === false
                                     ? "Unverified update: enable \"Update to unverified versions\" in the Settings tab first"
-                                    : ("Update to v" + (row.latest || row.version || row.installed)))
+                                    : ("Update to v" + (pluginCard.safeRow.latest || pluginCard.safeRow.version || pluginCard.safeRow.installed || "")))
                                 iconText: pluginCard.isBusy ? "󰑐" : "󰚰"
                                 iconSpinning: pluginCard.isBusy
                                 enabled: !pluginCard.isBusy && root.activePluginOpId === ""
                                 onClicked: root.beginUpdateConfirm([{
-                                  id: String(row.id),
-                                  name: String(row.name || row.id),
-                                  from: String(row.installed || row.version || ""),
-                                  to: String(row.latest || row.version || ""),
-                                  verified: row.verified === true
+                                  id: String(pluginCard.safeRow.id || ""),
+                                  name: String(pluginCard.safeRow.name || pluginCard.safeRow.id || ""),
+                                  from: String(pluginCard.safeRow.installed || pluginCard.safeRow.version || ""),
+                                  to: String(pluginCard.safeRow.latest || pluginCard.safeRow.version || ""),
+                                  verified: pluginCard.safeRow.verified === true
                                 }])
                               }
                             }
 
                             // Bar positioning button (for bar widgets)
                             Button {
-                              visible: Boolean(row && (row.isBarWidget || row.section))
+                              visible: Boolean(pluginCard.safeRow.isBarWidget || pluginCard.safeRow.section)
                               tooltipText: "Position bar icon"
                               iconText: "\uF037"
                               bordered: true
                               enabled: !pluginCard.isBusy && root.activePluginOpId === ""
-                              onClicked: root.openPlacementFromSettings(row)
+                              onClicked: root.openPlacementFromSettings(pluginCard.safeRow)
                             }
 
                             // Open button (non-bar plugins that the shell
@@ -2868,12 +2937,12 @@ Item {
                             // (it opens the plugin's own window in the shell).
                             Button {
 
-                              visible: root.rowIsSummonable(row)
+                              visible: root.rowIsSummonable(pluginCard.safeRow)
                               tooltipText: "Open plugin"
                               iconText: "\uF144"
                               bordered: true
                               enabled: !pluginCard.isBusy && root.activePluginOpId === ""
-                              onClicked: root.manageSummonPlugin(row)
+                              onClicked: root.manageSummonPlugin(pluginCard.safeRow)
                             }
 
                             // Remove button
@@ -2885,8 +2954,8 @@ Item {
                               bordered: true
                               enabled: !pluginCard.isBusy && root.activePluginOpId === ""
                               onClicked: root.beginUninstallConfirm({
-                                id: String(row.id),
-                                name: String(row.name || row.id)
+                                id: String(pluginCard.safeRow.id || ""),
+                                name: String(pluginCard.safeRow.name || pluginCard.safeRow.id || "")
                               })
                             }
                           }
@@ -3104,7 +3173,7 @@ Item {
     MouseArea {
       anchors.fill: parent
       onClicked: {
-        if (root.stage === "placement" && root.placementFromSettings) {
+        if (root.stage === "placement" && root.placementReturnsToSettings()) {
           root.returnPlacementToSettings()
         } else {
           root.close()
@@ -3118,7 +3187,7 @@ Item {
       anchors.fill: parent
       focus: true
       Keys.onEscapePressed: {
-        if (root.stage === "placement" && root.placementFromSettings) {
+        if (root.stage === "placement" && root.placementReturnsToSettings()) {
           root.returnPlacementToSettings()
         } else {
           root.close()
@@ -4767,12 +4836,19 @@ Item {
                 labelPixelSize: Style.space(24)
                 label: root.sectionIcon(modelData)
                 tooltipText: root.sectionLabel(modelData)
-                  + (root.currentPlacementSection() === modelData ? " (current)" : (root.defaultSection === modelData ? " (default)" : ""))
+                  + (root.placementFromSettings && root.placementPreviousSection === modelData
+                    ? " (current)"
+                    : (root.defaultSection === modelData ? " (default)" : ""))
                 primary: root.currentPlacementSection() === modelData
                 onClickedPi: {
                   if (root.placementFromSettings) {
                     root.manageMove(root.pluginId, modelData)
-                    root.returnPlacementToSettings()
+                    // A browser-sourced detour has no settings panel to
+                    // return to: the move closes the panel outright.
+                    if (root.placementReturnsToSettings())
+                      root.returnPlacementToSettings()
+                    else
+                      root.close()
                   } else if (root.mode === "install") {
                     root.installWithSection(modelData)
                   } else {
@@ -4935,7 +5011,7 @@ Item {
             visible: root.stage === "placement"
             label: "Cancel"
             onClickedPi: {
-              if (root.placementFromSettings) {
+              if (root.placementReturnsToSettings()) {
                 root.returnPlacementToSettings()
               } else {
                 root.close()

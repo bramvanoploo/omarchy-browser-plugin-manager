@@ -174,6 +174,10 @@
       statuses = new Map(response.plugins.map((p) => [p.id, p]));
       return true;
     }
+    // Any failed refresh drops the batch snapshot: an old host without
+    // status_all AND a transient host timeout both fall back to live
+    // per-plugin status queries, so a hiccup never leaves cards decorated
+    // from stale last-known state until the next poll lands.
     statuses = null;
     return false;
   }
@@ -222,7 +226,7 @@
           type,
           id: plugin.id,
           repo: plugin.repo,
-          name: plugin.name,
+          name: plugin.name || plugin.id,
         }, HOST_ACTION_TIMEOUT_MS);
         if (response && !response.ok) {
           const tip = button.querySelector(".control-tooltip");
@@ -337,7 +341,7 @@
       + (update ? "pi-card-update" : installed ? "pi-card-uninstall" : "pi-card-install");
     button.dataset.piState = update ? "update" : installed ? "uninstall" : "install";
     button.dataset.pluginId = plugin.id;
-    button.setAttribute("aria-label", `${verb} ${plugin.name}`);
+    button.setAttribute("aria-label", `${verb} ${plugin.name || plugin.id}`);
     const icon = document.createElement("span");
     icon.className = "pi-icon "
       + (update ? "pi-icon-update" : installed ? "pi-icon-uninstall" : "pi-icon-install");
@@ -386,8 +390,9 @@
     try {
       if (!pluginsById) {
         const catalog = await loadCatalog();
+        const pluginList = Array.isArray(catalog) ? catalog : (catalog && catalog.plugins) || [];
         pluginsById = new Map(
-          (catalog.plugins || []).filter(Boolean).map((plugin) => [plugin.id, plugin])
+          pluginList.filter((p) => p && p.id).map((plugin) => [plugin.id, plugin])
         );
       }
       // Cards the extension cannot install (no copy button: "Manual", "Preview
@@ -423,11 +428,12 @@
         const update = updateStatusFor(plugin.id);
         const installed = update ? true : await isInstalled(plugin.id);
         if (!copy.parentElement) continue;
+        const card = cardFor(copy);
         copy.parentElement.insertBefore(makeCardButton(plugin, installed, update), copy);
         // Installed: the labelled Uninstall/Update button replaces the
-        // page's copy-install-command button.
+        // page's copy-install-command button. Resolve card before removing copy.
         if (installed) copy.remove();
-        setRibbon(cardFor(copy), update ? "update" : installed ? "installed" : null);
+        setRibbon(card, update ? "update" : installed ? "installed" : null);
       }
     } catch (_e) {
       pluginsById = null;

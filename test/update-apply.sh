@@ -191,6 +191,13 @@ check "apply symlink unverified: exit 1 (CLI never reached)" "1" "$rc"
 check "apply symlink unverified: status word" "not-git" "$out"
 rm -f "$PLUG/link.plugin"; rm -rf "$TESTHOME/devlink-target"
 
+# ---- apply: git fetch stderr never hides fetch-failed ----------------------
+read -r ABAD BBAD < <(mk_clone badremote.plugin)
+git -C "$PLUG/badremote.plugin" remote set-url origin "file://$TESTHOME/no-such-remote.git"
+out=$(bash "$UPD" apply badremote.plugin "$BBAD" 2>&1); rc=$?
+check "apply unreachable remote: exit 1" "1" "$rc"
+check "apply unreachable remote: clean fetch-failed status" "fetch-failed" "$out"
+
 # ---- update worker: mixed batch, one rescan, marker cleanup --------------
 read -r A4 B4 < <(mk_clone batchok.plugin)
 : > "$SHELLLOG"; : > "$NOTIFLOG"
@@ -216,6 +223,12 @@ check "worker unverified: CLI rescan swallowed to one" "1" "$(grep -c 'shell res
 bash "$UPDW" "x" "batchok.plugin:deadbeef" >/dev/null 2>&1
 check "worker malformed pin: counted as failed" "0 updated, 1 failed: batchok.plugin" "$(head -1 "$NOTIFLOG" | cut -f2-)"
 check "worker malformed pin: no CLI update call" "0" "$(grep -c 'shell rescanPlugins' "$SHELLLOG")"
+
+# ---- update worker: pinned non-git dir fails closed (never falls back to CLI) ----
+: > "$SHELLLOG"; : > "$NOTIFLOG"
+bash "$UPDW" "x" "missing.plugin:$B4" >/dev/null 2>&1
+check "worker pinned missing clone: fails closed with no git clone" "0 updated, 1 failed: missing.plugin (no git clone to fast-forward)" "$(head -1 "$NOTIFLOG" | cut -f2-)"
+check "worker pinned missing clone: no CLI update call" "0" "$(grep -c 'shell rescanPlugins' "$SHELLLOG")"
 
 # ---- uninstall worker -----------------------------------------------------
 : > "$SHELLLOG"; : > "$NOTIFLOG"; : > "$TESTHOME/remove.log"

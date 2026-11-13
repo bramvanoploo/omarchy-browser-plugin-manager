@@ -14,6 +14,7 @@
 #   {"type":"watch","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather","paused":true}
 #   {"type":"unwatch","id":"acme.weather"}
 #   {"type":"update","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
+#   {"type":"placement","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}
 #   {"type":"visit","source":"firefox","key":"a1b2c3","url":"https://plugins.omarchy.org/plugin.html?id=x"}
 #   {"type":"unvisit","key":"a1b2c3"}
 #   {"type":"updates"}
@@ -67,12 +68,12 @@ HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
 HOST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOST_VERSION="$(jq -r '.version // empty' "$HOST_DIR/../manifest.json" 2>/dev/null || true)"
 if [[ -z "$HOST_VERSION" ]]; then
-  HOST_VERSION="0.9.5"
+  HOST_VERSION="1.0.0"
 fi
 # The extension's transport can touch the manifest, so a tampered version
 # string must never travel into a reply frame as raw bytes: keep only a
 # conservative version-shaped token, and fall back to the built-in default.
-[[ "$HOST_VERSION" =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || HOST_VERSION="0.9.5"
+[[ "$HOST_VERSION" =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || HOST_VERSION="1.0.0"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
 MAX_FRAME_BYTES=65536
@@ -123,7 +124,9 @@ UPDATE_FAST_WINDOW_SECONDS=120
 ensure_private_state() {
   mkdir -p "$STATE_DIR" || return 1
   chmod 700 "$STATE_DIR" 2>/dev/null || true
-  rm -f "$STATE_DIR"/*.tmp.* "$STATE_DIR"/.*.tmp 2>/dev/null || true
+  # Only prune orphaned temp files older than 2 minutes so a concurrent
+  # writer's active atomic staging file is never deleted out from under it.
+  find "$STATE_DIR" -maxdepth 1 \( -name '*.tmp.*' -o -name '.*.tmp' \) -mmin +2 -delete 2>/dev/null || true
   local entry
   shopt -s nullglob
   for entry in "$STATE_DIR"/* "$STATE_DIR"/.[!.]* "$STATE_DIR"/..?*; do
@@ -167,12 +170,12 @@ reply_err() {
 plugin_status() {
   local id="$1" raw out default=""
   if [[ ! $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ || $id == *..* ]]; then
-    printf '%s\n' '{"id":"","installed":false,"enabled":false,"firstParty":false}'
+    printf '%s\n' '{"id":"","installed":false,"enabled":false,"firstParty":false,"barWidget":false}'
     return 0
   fi
   # The id passed the charset regex above (no quotes, backslashes, or
   # control characters), so embedding it in JSON is safe.
-  default="{\"id\":\"$id\",\"installed\":false,\"enabled\":false,\"firstParty\":false}"
+  default="{\"id\":\"$id\",\"installed\":false,\"enabled\":false,\"firstParty\":false,\"barWidget\":false}"
   raw=$(omarchy plugin list --json 2>/dev/null) || raw="[]"
   [[ -n $raw ]] || raw="[]"
   # The viewed marketplace page polls this every second, so the requested
@@ -188,7 +191,8 @@ plugin_status() {
       | {id: $in.want,
          installed: ((.firstParty // false) | not),
          enabled: (.enabled == true),
-         firstParty: (.firstParty == true)}
+         firstParty: (.firstParty == true),
+         barWidget: (((.kinds // []) | index("bar-widget")) != null)}
       else $in.fallback
       end
   ' <<<"{\"want\":\"$id\",\"plugins\":$raw,\"fallback\":$default}" 2>/dev/null) || out=""
@@ -201,7 +205,9 @@ plugin_status() {
 # missing or corrupt file means the default: verified-only.
 allow_unverified_setting() {
   local content=""
-  [[ -f "$SETTINGS_FILE" ]] && content=$(<"$SETTINGS_FILE")
+  if [[ -r "$SETTINGS_FILE" ]]; then
+    content=$(<"$SETTINGS_FILE") || content=""
+  fi
   if [[ $content =~ \"allowUnverified\"[[:space:]]*:[[:space:]]*true ]]; then
     printf 'true'
   else
@@ -212,9 +218,11 @@ allow_unverified_setting() {
 # Age of the update cache in seconds (huge when absent/corrupt → refresh).
 update_cache_age() {
   local content="" ts=0 now=0
-  [[ -f "$UPDATE_CACHE_FILE" ]] && content=$(<"$UPDATE_CACHE_FILE")
-  if [[ $content =~ \"checked\"[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
-    ts="${BASH_REMATCH[1]}"
+  if [[ -r "$UPDATE_CACHE_FILE" ]]; then
+    content=$(<"$UPDATE_CACHE_FILE") || content=""
+  fi
+  if [[ $content =~ \"checked\"[[:space:]]*:[[:space:]]*([0-9]{1,12}) ]]; then
+    ts="10#${BASH_REMATCH[1]}"
   fi
   now=${EPOCHSECONDS:-$(date +%s)}
   printf '%s' "$(( now - ts ))"
@@ -234,9 +242,8 @@ update_cache_age() {
 # (catalog unreachable, offline) keeps the last-good cache: an offline
 # host never invents an update.
 run_update_check() {
-  local bin_dir="" res="" plugins="" ts="" tmp=""
-  bin_dir=$(cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || return 0
-  res=$(bash "$bin_dir/omarchy-plugin-update" check 2>/dev/null) || res=""
+  local res="" plugins="" ts="" tmp=""
+  res=$(bash "$HOST_DIR/omarchy-plugin-update" check 2>/dev/null) || res=""
   jq -e 'type == "object" and .ok == true and (.plugins | type == "array")' <<<"$res" >/dev/null 2>&1 || return 0
   plugins=$(jq -c '[.plugins[] | select(type == "object") | .
       + {installedVersion: (.installed // ""), latestVersion: (.latest // "")}]' <<<"$res" 2>/dev/null) || plugins="[]"
@@ -244,8 +251,12 @@ run_update_check() {
   ts=$(date +%s)
   ensure_private_state || return 0
   tmp="$UPDATE_CACHE_FILE.tmp.$$"
-  jq -cn --argjson ts "$ts" --argjson plugins "$plugins" \
-    '{checked:$ts, plugins:$plugins}' >"$tmp" 2>/dev/null && mv -f "$tmp" "$UPDATE_CACHE_FILE"
+  if jq -cn --argjson ts "$ts" --argjson plugins "$plugins" \
+    '{checked:$ts, plugins:$plugins}' >"$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$UPDATE_CACHE_FILE" || rm -f "$tmp"
+  else
+    rm -f "$tmp"
+  fi
   return 0
 }
 
@@ -363,6 +374,22 @@ validate_action() {
 
   # Check local plugin status first before making a network request.
   status=$(plugin_status "$id")
+
+  # Bar-section placement is layout config, not an install: it validates
+  # against local state only (no catalog round-trip), so the marketplace
+  # Position button keeps working when the catalog is unreachable.
+  if [[ $mode == "placement" ]]; then
+    jq -e '.installed == true' >/dev/null <<<"$status" || {
+      echo "not-installed"
+      return 1
+    }
+    jq -e '.barWidget == true' >/dev/null <<<"$status" || {
+      echo "not-a-bar-widget"
+      return 1
+    }
+    return 0
+  fi
+
   case "$mode" in
     install)
       jq -e '.installed == false and .firstParty == false' >/dev/null <<<"$status" || {
@@ -416,7 +443,7 @@ validate_action() {
   }
 
   catalog_check=$(jq -r --arg id "$id" --arg repo "$repo" --arg mode "$mode" '
-    ((.plugins // []) | map(select(type == "object" and .id == $id)) | first) as $entry
+    ((if type == "array" then . else (.plugins // []) end) | map(select(type == "object" and .id == $id)) | first) as $entry
     | if $entry == null then
         "unknown-plugin-id"
       elif (($entry.repo // "" | sub("/+$"; "") | sub("\\.git$"; "")) != $repo) then
@@ -451,7 +478,51 @@ summon_wizard() {
     mode: $mode,
     id: (if (.id | type) == "string" then .id else "" end),
     repo: (if (.repo | type) == "string" then .repo else "" end),
-    name: (if (.name | type) == "string" then .name[0:128] else "" end)
+    name: (if (.name | type) == "string" then (.name | gsub("[\\u0000-\\u001f\\u007f]"; "") | .[0:128]) else "" end)
+  }' <<<"$payload" 2>/dev/null) || return 1
+  omarchy-shell shell summon "$WIZARD_ID" "$json" >/dev/null 2>&1
+}
+
+# The bar layout file's section that currently holds a plugin's icon
+# ("" when unknown): the same $XDG_CONFIG_HOME/omarchy/shell.json the bar
+# widget reads for its placement UI, so the placement dialog opens with
+# the plugin's real section marked "(current)". The id is re-extracted
+# from the extension payload here, so it is grammar-checked before it
+# ever keys anything.
+current_bar_section() {
+  local id="$1" file="" out=""
+  [[ $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ && $id != *..* ]] || return 0
+  file="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
+  [[ -f $file ]] || return 0
+  out=$(head -c 262144 "$file" 2>/dev/null | jq -r --arg id "$id" '
+    (.bar.layout // {}) as $lay
+    | ["left","centerBegin","center","centerEnd","right","tray"][] as $s
+    | select((($lay[$s] // []) | if type == "array" then . else [] end)
+             | any(.[]?; type == "object" and ((.id // "") == $id)))
+    | $s
+  ' 2>/dev/null | head -n1)
+  # Whitelist the answer: only a known section name ever reaches the
+  # summon payload.
+  [[ $out =~ ^(left|centerBegin|center|centerEnd|right|tray)$ ]] || out=""
+  printf '%s\n' "$out"
+}
+
+# Placement shortcut from the marketplace page: same settings channel the
+# bar popup's Position button uses (mode "settings" plus the placement
+# stage), so the already-open placement dialog lands on top of the live
+# settings panel and Escape/Close return to it.
+summon_placement() {
+  local payload="$1" json id="" section=""
+  id=$(jq -r 'if type == "object" and (.id | type) == "string" then .id else "" end' <<<"$payload" 2>/dev/null || true)
+  section=$(current_bar_section "${id:-}")
+  json=$(jq -c --arg stage "placement" --arg section "$section" '{
+    source: "browser",
+    mode: "settings",
+    stage: $stage,
+    section: $section,
+    id: (if (.id | type) == "string" then .id else "" end),
+    repo: (if (.repo | type) == "string" then .repo else "" end),
+    name: (if (.name | type) == "string" then (.name | gsub("[\\u0000-\\u001f\\u007f]"; "") | .[0:128]) else "" end)
   }' <<<"$payload" 2>/dev/null) || return 1
   omarchy-shell shell summon "$WIZARD_ID" "$json" >/dev/null 2>&1
 }
@@ -501,12 +572,13 @@ record_watch() {
             and $m.repo_name != "." and $m.repo_name != "..")
         | {id: $id,
            repo: ("https://github.com/" + $m.owner + "/" + ($m.repo_name | sub("\\.git$"; ""))),
-           name: (if (.name | type) == "string" then .name[0:128] else "" end),
+           name: (if (.name | type) == "string" then (.name | gsub("[\\u0000-\\u001f\\u007f]"; "") | .[0:128]) else "" end),
            pid: $pid, ts: $ts}
       ' <<<"$payload" 2>/dev/null) || exit 1
       [[ -n $json ]] || exit 1
     fi
     tmp="$WATCH_FILE.tmp.$$"
+    trap 'rm -f "$tmp"' EXIT
     printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$WATCH_FILE"
   )
 }
@@ -568,11 +640,11 @@ record_visit() {
   key=$(jq -r '.key // ""' <<<"$entry" 2>/dev/null) || key=""
   [[ -n $key ]] || return 1
   ensure_private_state || return 1
-  state=$(cat "$TABS_FILE" 2>/dev/null) || state=""
-  [[ ${state:0:1} == "{" ]] || state='{}'
   (
     exec 8>"$TABS_LOCK_FILE" 2>/dev/null || exit 1
     flock -x 8 || exit 1
+    state=$(cat "$TABS_FILE" 2>/dev/null) || state=""
+    [[ ${state:0:1} == "{" ]] || state='{}'
     # Neither input travels through argv (no printf/process-substitution of
     # the content: that would show the URL in /proc): the previous state
     # arrives on stdin (here-string), the new record through a mode-0600
@@ -580,17 +652,18 @@ record_visit() {
     # The merge de-duplicates by source+key and prunes to the freshness
     # window.
     en_in="$STATE_DIR/.tabs-entry.$$.tmp"
-    trap 'rm -f "$en_in"' EXIT
+    tmp="$TABS_FILE.tmp.$$"
+    trap 'rm -f "$en_in" "$tmp"' EXIT
     cat >"$en_in" <<<"$entry" || exit 1
     merged=$(jq -cs --argjson fresh "$((ts - 30))" --slurpfile e "$en_in" '
-      (.[0] // {}) as $state
+      (.[0] // {} | if type == "object" then . else {} end) as $state
       | ($e[0] // {}) as $entry
-      | {tabs: ([$entry] + ($state.tabs // [])
-          | unique_by(.source + "|" + .key)
-          | map(select((.ts // 0) >= $fresh)))}
+      | {tabs: ([$entry] + ($state.tabs // [] | if type == "array" then . else [] end)
+          | map(select(type == "object"))
+          | unique_by((.source // "") + "|" + (.key // ""))
+          | map(select((.ts | if type == "number" then . else 0 end) >= $fresh)))}
     ' <<<"$state" 2>/dev/null)
     [[ ${merged:0:1} == "{" ]] || exit 1
-    tmp="$TABS_FILE.tmp.$$"
     printf '%s\n' "$merged" >"$tmp" && mv -f "$tmp" "$TABS_FILE"
   ) || return 1
   drain_focus_request "$key"
@@ -608,6 +681,7 @@ clear_visit() {
     [[ -f $TABS_FILE ]] || exit 0
     json=$(jq -c --arg key "$key" '{tabs: ((.tabs // []) | map(select(.key != $key)))}' "$TABS_FILE" 2>/dev/null) || exit 0
     tmp="$TABS_FILE.tmp.$$"
+    trap 'rm -f "$tmp"' EXIT
     printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$TABS_FILE"
   )
   return 0
@@ -643,6 +717,7 @@ stamp_seen() {
       <<<"$json" 2>/dev/null)
     [[ ${json:0:1} == "{" ]] || exit 0
     tmp="$SEEN_FILE.tmp.$$"
+    trap 'rm -f "$tmp"' EXIT
     printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$SEEN_FILE"
   )
   return 0
@@ -660,7 +735,8 @@ drain_focus_request() {
     exec 9>"$FOCUS_FILE.lock" 2>/dev/null || exit 0
     flock -x 9 || exit 0
     [[ -f $FOCUS_FILE ]] || exit 0
-    ts=$(jq -r '.ts // 0' "$FOCUS_FILE" 2>/dev/null) || ts=0
+    ts=$(jq -r 'if type == "object" and (.ts | type) == "number" and .ts >= 0 then (.ts | floor) else 0 end' "$FOCUS_FILE" 2>/dev/null) || ts=0
+    [[ $ts =~ ^[0-9]{1,16}$ ]] || ts=0
     now=$(( ${EPOCHSECONDS:-$(date +%s)} * 1000 ))
     if (( now - ts > 8000 )); then
       # Nobody answered in time (no live tab): drop it, the widget cleans up
@@ -672,6 +748,7 @@ drain_focus_request() {
       if (.consumedBy // "") == "" then . + {consumedBy: $by} else error("already-consumed") end
     ' "$FOCUS_FILE" 2>/dev/null) || exit 0
     tmp="$FOCUS_FILE.tmp.$$"
+    trap 'rm -f "$tmp"' EXIT
     printf '%s\n' "$json" >"$tmp" && mv -f "$tmp" "$FOCUS_FILE" && echo activate
   )
 }
@@ -745,7 +822,7 @@ main() {
         # update info (verification setting applied). Plugins missing
         # from the list are not installed.
         all_status=$(omarchy plugin list --json 2>/dev/null | jq -c \
-          '[ (if type == "array" then . else [] end)[] | select(type == "object" and ((.firstParty // false) | not)) | {id: .id, installed: true, enabled: (.enabled == true)} ]' \
+          '[ (if type == "array" then . else [] end)[] | select(type == "object" and ((.firstParty // false) | not)) | {id: .id, installed: true, enabled: (.enabled == true), barWidget: (((.kinds // []) | index("bar-widget")) != null)} ]' \
           2>/dev/null) || all_status="[]"
         [[ ${all_status:-} == "["* ]] || all_status="[]"
         maybe_refresh_updates
@@ -770,6 +847,19 @@ main() {
           '{ok:true, plugins: ($plugins | map(select($allow or (.verified == true))))}' 2>/dev/null) \
           || local_status='{"ok":true,"plugins":[]}'
         send_frame "$local_status"
+        ;;
+      placement)
+        # Position button on the marketplace page: open the placement
+        # dialog for an installed bar widget (local validation only).
+        if reason=$(validate_action "$payload" "$type"); then
+          if summon_placement "$payload"; then
+            reply_ok
+          else
+            reply_err "wizard-not-available (is bramvanoploo.omarchy-browser-plugin-manager enabled in the shell?)"
+          fi
+        else
+          reply_err "$reason"
+        fi
         ;;
       install|uninstall|enable|disable|update)
         if reason=$(validate_action "$payload" "$type"); then

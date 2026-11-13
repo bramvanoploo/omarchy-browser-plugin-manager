@@ -446,11 +446,6 @@ Panel {
       // blank the badge); the panel explains the failed check.
       root.updateCheckFailed = true
     }
-    // Keep the Manage tab's updatable/version decorations in step with the
-    // fresh update set (a worker run lands here through the marker scan,
-    // so an update's effect on a row shows up with this same check).
-    if (root.settingsOpen)
-      root.refreshInstalledPlugins()
     root.publishSettingsSnapshot()
   }
 
@@ -566,7 +561,9 @@ Panel {
   // Same id grammar the native host and the workers enforce: an id can
   // never traverse a path or masquerade as a CLI flag.
   function validPluginId(s) {
-    return /^[a-z0-9][a-z0-9.-]{0,127}$/.test(String(s))
+    if (typeof s !== "string" && typeof s !== "number") return false
+    var str = String(s)
+    return /^[a-z0-9][a-z0-9.-]{0,127}$/.test(str) && str.indexOf("..") === -1
   }
 
   function openStore(url, bin) {
@@ -716,7 +713,13 @@ Panel {
       waitForEnd: true
     }
     onExited: function (exitCode) {
-      if (exitCode !== 0) return
+      if (exitCode !== 0) {
+        if (root.pluginListRerun) {
+          root.pluginListRerun = false
+          root.startPluginListRead()
+        }
+        return
+      }
       // The generation this landing read was launched under, for the
       // pending-toggle retirement test below.
       var landedGen = root.runningListGen
@@ -725,7 +728,13 @@ Panel {
         var parsed = JSON.parse(String(pluginListAllOut.text || "[]"))
         if (Array.isArray(parsed)) plugins = parsed
       } catch (e) { plugins = null }
-      if (plugins === null) return
+      if (plugins === null) {
+        if (root.pluginListRerun) {
+          root.pluginListRerun = false
+          root.startPluginListRead()
+        }
+        return
+      }
       // Update decoration comes from the live poll: eligibleUpdates decides
       // the Update buttons exactly like run_update re-derives them, and the
       // raw updateList supplies verified + the installed -> latest versions.
@@ -859,12 +868,8 @@ Panel {
   Process {
     id: settingsPayloadWriteProc
     command: ["sh", "-c",
-      'umask 077 && mkdir -p "${1%/*}" && printf %s "$3" | head -c "$2" > "$1"',
-      "sh", root.settingsPayloadPath,
-      // 3x the JS string length (a UTF-16 unit is at most 3 UTF-8 bytes)
-      // plus one, so the bound always exceeds the byte count.
-      String(Math.min(65536, root.settingsPayloadWriteText.length * 3 + 1)),
-      root.settingsPayloadWriteText]
+      'umask 077 && mkdir -p "${1%/*}" && target="$1" && shift && tmp="${target}.tmp.$$" && { printf %s "$@" > "$tmp" && mv -f "$tmp" "$target"; } || { rm -f "$tmp"; exit 1; }',
+      "sh", root.settingsPayloadPath]
     // Quickshell Process exit notification: overridable onExited handler
     // (onFinished: is not a signal; assigning it fails the component load).
     onExited: function (exitCode) { root.flushSettingsPayload() }
@@ -876,6 +881,22 @@ Panel {
     if (settingsPayloadWriteProc.running) return
     if (root.settingsPayloadWriteText === root.settingsPayloadStarted) return
     root.settingsPayloadStarted = root.settingsPayloadWriteText
+    var text = root.settingsPayloadWriteText
+    var cmd = [
+      "sh", "-c",
+      'umask 077 && mkdir -p "${1%/*}" && target="$1" && shift && tmp="${target}.tmp.$$" && { printf %s "$@" > "$tmp" && mv -f "$tmp" "$target"; } || { rm -f "$tmp"; exit 1; }',
+      "sh", root.settingsPayloadPath
+    ]
+    // Chunk under Linux's 128 KiB MAX_ARG_STRLEN (32768 UTF-16 units <= 96 KiB UTF-8)
+    // so large installed plugin lists never get truncated.
+    var chunkSize = 32768
+    if (text.length === 0) {
+      cmd.push("")
+    } else {
+      for (var i = 0; i < text.length; i += chunkSize)
+        cmd.push(text.slice(i, i + chunkSize))
+    }
+    settingsPayloadWriteProc.command = cmd
     settingsPayloadWriteProc.running = true
   }
 
@@ -1285,7 +1306,7 @@ Panel {
       && /^[a-z0-9][a-z0-9.-]{0,127}$/.test(String(obj.id || ""))
       && String(obj.id || "").indexOf("..") === -1
       && /^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+(\.git)?\/?$/.test(String(obj.repo || ""))
-      && typeof obj.ts === "number"
+      && typeof obj.ts === "number" && isFinite(obj.ts)
     var newId = accepted ? String(obj.id) : ""
     var oldId = root.watchState ? String(root.watchState.id) : ""
     // A failed/partial read (the file is renamed-replaced while we reload,
@@ -1492,20 +1513,45 @@ Panel {
   // wording (watchedName() would name the wrong plugin here). When the CLI
   // exits, the installed list re-reads and the panel republishes, so the
   // row's optimistic flip resolves to the real state either way.
-  function toggleInstalledPlugin(id, enable, name) {
-    if (!root.validPluginId(id)) return
-    if (settingsToggleProc.running) return
-    // The panel repaints from published rows every 400ms, long before the
-    // CLI + list re-read land: hold the requested state in the rows until
-    // a post-CLI read reports the truth (see installedPlugins rows).
-    root.pendingToggle = { id: String(id), enable: enable === true }
-    settingsToggleInfo = { id: String(id), enable: enable === true,
-      name: name !== "" ? name : String(id) }
+  function startSettingsToggle(info) {
+    root.pendingToggle = { id: info.id, enable: info.enable === true }
+    root.pendingToggleSettled = false
+    settingsToggleInfo = info
     settingsToggleProc.command = ["omarchy", "plugin",
-      enable ? "enable" : "disable", String(id)]
+      info.enable ? "enable" : "disable", info.id]
     settingsToggleProc.running = true
   }
 
+  function toggleInstalledPlugin(id, enable, name) {
+    if (!root.validPluginId(id)) return
+    var info = {
+      id: String(id),
+      enable: enable === true,
+      name: name !== "" ? String(name) : String(id)
+    }
+    if (settingsToggleProc.running) {
+      var q = root.settingsToggleQueue.slice()
+      var replaced = false
+      for (var i = 0; i < q.length; i++) {
+        if (q[i].id === info.id) {
+          q[i] = info
+          replaced = true
+          break
+        }
+      }
+      if (!replaced) q.push(info)
+      root.settingsToggleQueue = q
+      root.pendingToggle = { id: info.id, enable: info.enable }
+      root.pendingToggleSettled = false
+      return
+    }
+    // The panel repaints from published rows every 400ms, long before the
+    // CLI + list re-read land: hold the requested state in the rows until
+    // a post-CLI read reports the truth (see installedPlugins rows).
+    root.startSettingsToggle(info)
+  }
+
+  property var settingsToggleQueue: []
   property var settingsToggleInfo: ({})
   // In-flight panel enable/disable: {id, enable} while the CLI runs, and
   // the flag that the CLI exited (the next list read is the truth and
@@ -1534,6 +1580,13 @@ Panel {
         root.notify("Plugin " + base + " failed",
           info.name + ": omarchy plugin " + base + " exited with code "
           + exitCode + (out ? ": " + out : ""))
+      }
+      if (root.settingsToggleQueue.length > 0) {
+        var q = root.settingsToggleQueue.slice()
+        var next = q.shift()
+        root.settingsToggleQueue = q
+        root.startSettingsToggle(next)
+        return
       }
       // The truth for the panel (republished through the list re-read) and
       // the popup, if this plugin happens to be the watched one. The CLI
@@ -1565,7 +1618,8 @@ Panel {
   }
 
   function watchedName() {
-    return root.watchState ? String(root.watchState.name || root.watchState.id) : ""
+    if (!root.watchState) return ""
+    return String(root.watchState.name || root.watchState.id).replace(/[\x00-\x1f\x7f]/g, "")
   }
 
   // The host rewrites the beacon atomically (temp file + rename), which
@@ -2232,6 +2286,7 @@ Panel {
         spacing: Style.space(14)
 
         Text {
+          id: bwHeaderIcon
           text: ""
           font.family: Style.font.family
           font.pixelSize: Math.max(Style.font.heading,
@@ -2243,9 +2298,11 @@ Panel {
         Column {
           id: bwHeaderTextCol
           anchors.verticalCenter: parent.verticalCenter
+          width: Math.max(Style.space(80), bwHeaderRow.width - bwHeaderIcon.implicitWidth - Style.space(14))
           spacing: Style.space(2)
 
           Row {
+            width: parent.width
             spacing: Style.space(8)
 
             Text {
@@ -2255,10 +2312,13 @@ Panel {
               font.pixelSize: Style.font.title
               font.bold: true
               color: Color.foreground
+              elide: Text.ElideRight
+              width: Math.min(implicitWidth, Math.max(Style.space(40), parent.width - (root.headerVersion !== "" ? bwHeaderVersionPill.width + Style.space(8) : 0)))
               anchors.verticalCenter: parent.verticalCenter
             }
 
             Rectangle {
+              id: bwHeaderVersionPill
               visible: root.headerVersion !== ""
               anchors.verticalCenter: parent.verticalCenter
               height: Style.space(18)

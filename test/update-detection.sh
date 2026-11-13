@@ -166,6 +166,22 @@ FIX_LIST='not json' res3=$(FIX_LIST='not json' bash "$UPD" check); rc=$?
 check "garbage list still ok:true" "0" "$rc"
 check "garbage list -> no plugins" "[]" "$(jq -c '.plugins' <<<"$res3")"
 
+# Non-JSON HTML error page from CDN must fail closed as catalog-unreachable:
+HTML_CATALOG="$TESTHOME/html-catalog.html"
+printf '<html><body>502 Bad Gateway</body></html>\n' > "$HTML_CATALOG"
+res_html=$(FIX_CATALOG="$HTML_CATALOG" bash "$UPD" check); rc=$?
+check "html catalog failure exit 0" "0" "$rc"
+check "html catalog failure ok:false" "false" "$(jq -r '.ok' <<<"$res_html")"
+check "html catalog failure error tag" "catalog-unreachable" "$(jq -r '.error' <<<"$res_html")"
+
+# Corrupt stats cache must not break details map; multiple local manifest versions stay separated:
+STATS_CACHE="$TESTHOME/.cache/omarchy/plugins-stats.json"
+mkdir -p "${STATS_CACHE%/*}"
+printf '{corrupt json\n' > "$STATS_CACHE"
+res_stats=$(FIX_LIST="$TESTHOME/list.json" bash "$UPD" check)
+check "corrupt stats cache preserves behind details version" "0.1.0" "$(jq -r '.details["behind.plugin"].version // ""' <<<"$res_stats")"
+check "corrupt stats cache preserves sibling details version" "0.1.0" "$(jq -r '.details["lag.plugin"].version // ""' <<<"$res_stats")"
+
 echo
 if (( FAILURES > 0 )); then
   echo "$FAILURES check(s) failed"
