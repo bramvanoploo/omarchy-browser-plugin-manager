@@ -4,6 +4,9 @@
 //   not installed            -> "Install"
 //   installed, enabled       -> "Disable" + "Uninstall"
 //   installed, not enabled   -> "Enable" + "Uninstall"
+// An installed bar widget gets "Position" left of the enable/disable
+// button: the host summons the desktop placement dialog for it (the same
+// dialog the bar popup's Position shortcut opens).
 // Installable plugins anchor these to the command panel's Copy button; a
 // manual-setup (non-installable) plugin that is installed on this machine
 // gets the same installed-state buttons at the right end of its tag row
@@ -112,6 +115,9 @@
   /* Arrow rising from a baseline ("arrow-up-from-line"), used as a mask
    * (see below). */
   --pi-update: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 17V3'/%3E%3Cpath d='m6 9 6-6 6 6'/%3E%3Cpath d='M5 21h14'/%3E%3C/svg%3E");
+  /* Three centered strokes ("align-center", the placement dialog's own
+   * section glyph family), used as a mask (see below). */
+  --pi-position: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round'%3E%3Cpath d='M4 6h16'/%3E%3Cpath d='M8 12h8'/%3E%3Cpath d='M4 18h16'/%3E%3C/svg%3E");
 }
 .pi-icon::before,
 .pi-icon::after {
@@ -166,6 +172,13 @@
   background: currentColor;
   -webkit-mask: var(--pi-update) center / contain no-repeat;
   mask: var(--pi-update) center / contain no-repeat;
+}
+/* Position (bar widgets): the centered-stroke glyph, masked like the
+ * update icon, so it takes the button's tone (base text color). */
+.pi-icon-position {
+  background: currentColor;
+  -webkit-mask: var(--pi-position) center / contain no-repeat;
+  mask: var(--pi-position) center / contain no-repeat;
 }
 /* Diagonal UPDATE/INSTALLED ribbon in the card's top-right corner. The corner
  * box clips the rotated banner; overflow stays local to the box so the site's
@@ -366,6 +379,7 @@
     "unknown-plugin-id": "Plugin is not in the marketplace catalog",
     "repo-mismatch": "Catalog repo does not match this plugin",
     "not-one-click-installable": "This plugin has no one-click install",
+    "not-a-bar-widget": "This plugin has no bar icon to position",
     "invalid-plugin-id": "Invalid plugin id",
     "invalid-repo-url": "Invalid repo url",
   };
@@ -521,6 +535,14 @@
   function installedButtons(plugin, state) {
     const buttons = [];
     const enabled = Boolean(state.enabled);
+    // Bar widgets only, and only while installed (the host re-validates
+    // both): opens the desktop placement dialog, the same one the bar
+    // popup's Position shortcut summons. Left of the enable/disable verb.
+    if (state.barWidget === true) {
+      const position = makeButton("Position", "Position this plugin on the bar", "", "pi-icon-position");
+      wireAction(position, plugin, "placement");
+      buttons.push(position);
+    }
     const verb = enabled ? "Disable" : "Enable";
     const tip = verb + " this plugin";
     const toggle = makeButton(
@@ -641,7 +663,8 @@
       if (!state || !state.ok || !lastState) return;
       if (state.installed !== lastState.installed
         || state.enabled !== lastState.enabled
-        || state.updateAvailable !== lastState.updateAvailable) {
+        || state.updateAvailable !== lastState.updateAvailable
+        || state.barWidget !== lastState.barWidget) {
         lastState = state;
         remountButtons(plugin, state);
       }
@@ -707,7 +730,8 @@
   }
 
   function startBeacon(plugin) {
-    if (beaconTimer) return;
+    if (beaconTimer || !plugin) return;
+    windowFocused = document.hasFocus();
     const refresh = () => setBeacon(plugin, beaconShouldBeActive());
     const leave = () => {
       // Explicit tab/page departure: drop the record now (id-scoped, so a
@@ -775,10 +799,12 @@
     let plugin = null;
     try {
       const catalog = await loadCatalog();
-      plugin = (catalog.plugins || []).find((item) => item && item.id === PLUGIN_ID);
+      const pluginList = Array.isArray(catalog) ? catalog : (catalog && catalog.plugins) || [];
+      plugin = pluginList.find((item) => item && item.id === PLUGIN_ID);
     } catch (_e) {
       return;
     }
+    if (!plugin) return;
     if (!installable(plugin)) {
       // Not installable from the browser (no install command, built-in,
       // failed upstream check): a plugin installed on this machine is fully
@@ -802,11 +828,12 @@
           // resolved), and only wait via observer until the preview and
           // the tag row are there.
           const tryMountPassive = () => {
+            if (mounted) return true;
             const preview = document.querySelector("#detail-content .detail-preview");
             const tags = document.querySelector(
               "#detail-content .plugin-detail-article > .plugin-tags");
             if (!preview || !tags) return false;
-            mountPassiveButtons(plugin, state);
+            mountPassiveButtons(plugin, lastState || state);
             return true;
           };
           if (!tryMountPassive()) {
@@ -831,8 +858,12 @@
     const target = document.querySelector("#detail-content");
     if (!target || mounted) return;
     const observer = new MutationObserver(() => {
+      if (mounted) {
+        observer.disconnect();
+        return;
+      }
       if (document.querySelector("#detail-content [data-install-copy]")) {
-        mountButtons(plugin, state);
+        mountButtons(plugin, lastState || state);
         if (mounted) { startStateSync(plugin); startBeacon(plugin); }
         observer.disconnect();
       }

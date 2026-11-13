@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>PlugBrug Preview Banner</title>
+<title>PlugBrug Preview Banner 2</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -10,284 +10,322 @@
     width: 1920px;
     height: 1080px;
     overflow: hidden;
-    background-color: #0d1418;
-    font-family: "Liberation Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: #0a0e11;
+    font-family: "Adwaita Sans", "Liberation Sans", sans-serif;
     color: #f7f5ea;
     position: relative;
   }
 
-  /* Ambient background layers */
-  .bg-grid {
+  /* ---------- Generated backdrop + scrims ---------- */
+  .bg-art {
     position: absolute; inset: 0;
-    background-image:
-      linear-gradient(rgba(204, 203, 192, 0.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(204, 203, 192, 0.04) 1px, transparent 1px);
-    background-size: 40px 40px;
+    background-image: url("bg_1920.png");
+    background-size: cover;
+    background-position: center;
+    filter: brightness(1.32) saturate(1.12);
     z-index: 0;
   }
-  .glow {
-    position: absolute;
-    border-radius: 50%;
-    pointer-events: none;
-    z-index: 0;
+  .scrim-base {
+    position: absolute; inset: 0; z-index: 1;
+    background: rgba(8, 11, 14, 0.22);
   }
-  .glow-tl {
-    width: 1100px; height: 1100px;
-    left: -350px; top: -350px;
-    background: radial-gradient(circle, rgba(214, 93, 14, 0.22) 0%, rgba(214, 93, 14, 0) 62%);
+  .scrim-left {
+    position: absolute; inset: 0; z-index: 1;
+    background: linear-gradient(90deg,
+      rgba(7, 10, 13, 0.86) 0%,
+      rgba(7, 10, 13, 0.70) 30%,
+      rgba(7, 10, 13, 0.30) 50%,
+      rgba(7, 10, 13, 0.04) 70%,
+      rgba(7, 10, 13, 0.18) 100%);
   }
-  .glow-tr {
-    width: 1000px; height: 1000px;
-    right: -250px; top: -200px;
-    background: radial-gradient(circle, rgba(215, 124, 23, 0.16) 0%, rgba(215, 124, 23, 0) 60%);
+  .scrim-bottom {
+    position: absolute; inset: 0; z-index: 1;
+    background: linear-gradient(0deg,
+      rgba(7, 10, 13, 0.88) 0%,
+      rgba(7, 10, 13, 0.28) 14%,
+      rgba(7, 10, 13, 0) 30%);
   }
-  .glow-mid {
-    width: 800px; height: 800px;
-    left: 800px; top: 100px;
-    background: radial-gradient(circle, rgba(106, 133, 154, 0.12) 0%, rgba(106, 133, 154, 0) 65%);
+  .vignette {
+    position: absolute; inset: 0; z-index: 1;
+    background: radial-gradient(ellipse 1400px 900px at 62% 44%,
+      rgba(0,0,0,0) 55%, rgba(0,0,0,0.42) 100%);
   }
-  .glow-b {
-    width: 1200px; height: 800px;
-    right: 0px; bottom: -350px;
-    background: radial-gradient(circle, rgba(214, 93, 14, 0.14) 0%, rgba(214, 93, 14, 0) 60%);
+  .hairline-top {
+    position: absolute; left: 0; right: 0; top: 0; height: 3px; z-index: 6;
+    background: linear-gradient(90deg,
+      rgba(252,125,50,0) 0%,
+      rgba(252,125,50,0.75) 18%,
+      rgba(214,93,14,0.85) 42%,
+      rgba(106,133,154,0.5) 78%,
+      rgba(106,133,154,0) 100%);
+  }
+  .hairline-bottom {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 2px; z-index: 6;
+    background: linear-gradient(90deg,
+      rgba(106,133,154,0) 0%,
+      rgba(106,133,154,0.4) 30%,
+      rgba(214,93,14,0.7) 72%,
+      rgba(252,125,50,0) 100%);
   }
 
-  /* Left column */
-  .left {
+  /* ---------- Left column ---------- */
+  .left-col {
     position: absolute;
-    left: 85px; top: 44px;
+    left: 96px; top: 64px;
     width: 700px;
-    z-index: 2;
-  }
-  .pills { display: flex; gap: 14px; }
-  .pill {
-    display: inline-flex; align-items: center;
-    padding: 6px 16px;
-    border-radius: 999px;
-    font-size: 13px; font-weight: 700;
-    letter-spacing: 1.5px;
-  }
-  .pill-orange {
-    border: 1px solid #d65d0e;
-    color: #fc7d32;
-    background: rgba(214, 93, 14, 0.14);
-  }
-  .pill-gray {
-    border: 1px solid rgba(204, 203, 192, 0.20);
-    color: #cccbc0;
-    background: rgba(36, 42, 47, 0.55);
-  }
-  .pill-cyan {
-    border: 1px solid rgba(106, 133, 154, 0.45);
-    color: #89a4ba;
-    background: rgba(106, 133, 154, 0.14);
-  }
-
-  .head-row { display: flex; align-items: center; gap: 24px; margin-top: 36px; }
-  .tile {
-    width: 64px; height: 64px; flex-shrink: 0;
-    border-radius: 16px;
-    border: 1px solid rgba(214, 93, 14, 0.35);
-    background: rgba(214, 93, 14, 0.10);
-    display: grid; place-items: center;
-  }
-  h1 { font-size: 44px; font-weight: 700; color: #f7f5ea; letter-spacing: -0.5px; white-space: nowrap; }
-  .subtitle {
-    margin-top: 18px;
-    width: 680px;
-    font-size: 19px;
-    line-height: 1.55;
-    color: #cccbc0;
-  }
-  .cards { margin-top: 32px; display: flex; flex-direction: column; gap: 14px; }
-  .card {
-    display: flex; gap: 16px;
-    padding: 15px 22px 15px 18px;
-    border-radius: 12px;
-    border: 1px solid rgba(214, 93, 14, 0.22);
-    background: rgba(36, 42, 47, 0.55);
-  }
-  .card .cicon {
-    width: 40px; height: 40px; flex-shrink: 0;
-    border-radius: 10px;
-    border: 1px solid rgba(214, 93, 14, 0.32);
-    background: rgba(214, 93, 14, 0.10);
-    display: grid; place-items: center;
-  }
-  .card .ctext { padding-top: 1px; }
-  .card h3 {
-    display: inline;
-    font-size: 19px; font-weight: 700; color: #f7f5ea;
-  }
-  .badge {
-    display: inline-block;
-    margin-left: 12px;
-    padding: 3px 9px;
-    border-radius: 5px;
-    background: rgba(214, 93, 14, 0.16);
-    color: #fc7d32;
-    font-size: 11.5px; font-weight: 700;
-    letter-spacing: 1px;
-    vertical-align: 3px;
-  }
-  .card p {
-    margin-top: 7px;
-    font-size: 14.5px;
-    line-height: 1.5;
-    color: #cccbc0;
-  }
-  .footer {
-    position: absolute;
-    left: 85px; bottom: 46px;
-    font-size: 15px;
-    color: #737373;
-    z-index: 2;
-  }
-
-  /* Right: Dynamic Layered Showcase */
-  .stage {
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    pointer-events: none;
-  }
-
-  /* Step Badges */
-  .step-tag {
-    position: absolute;
-    display: inline-flex; align-items: center; gap: 7px;
-    padding: 5px 13px;
-    border-radius: 999px;
-    font-size: 11.5px; font-weight: 700;
-    letter-spacing: 0.8px;
-    text-transform: uppercase;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(8px);
-  }
-  .tag-cyan {
-    background: rgba(13, 20, 24, 0.90);
-    border: 1px solid #6a859a;
-    color: #89a4ba;
-  }
-  .tag-orange {
-    background: rgba(24, 18, 14, 0.90);
-    border: 1px solid #d65d0e;
-    color: #fc7d32;
-  }
-  .tag-emerald {
-    background: rgba(18, 24, 20, 0.90);
-    border: 1px solid #cfd7c5;
-    color: #cfd7c5;
-  }
-
-  /* Card 1: Web Marketplace Discovery (Top-Left, tilted) */
-  .card-catalog {
-    position: absolute;
-    left: 825px; top: 56px;
-    width: 450px;
-    border-radius: 12px;
-    overflow: hidden;
-    border: 1px solid rgba(106, 133, 154, 0.40);
-    background: #141a1e;
-    box-shadow:
-      0 0 35px rgba(106, 133, 154, 0.12),
-      0 20px 60px rgba(0, 0, 0, 0.75);
-    transform: rotate(-2.5deg);
-    transform-origin: center center;
-    z-index: 2;
-  }
-  .card-catalog img {
-    width: 100%;
-    display: block;
-  }
-
-  /* Card 2: Bar Widget Settings Popup (Top-Right, tilted) */
-  .card-settings {
-    position: absolute;
-    left: 1315px; top: 42px;
-    width: 475px;
-    border-radius: 12px;
-    overflow: hidden;
-    border: 1px solid rgba(214, 93, 14, 0.40);
-    background: #141a1e;
-    box-shadow:
-      0 0 40px rgba(214, 93, 14, 0.16),
-      0 20px 60px rgba(0, 0, 0, 0.75);
-    transform: rotate(2.0deg);
-    transform-origin: center center;
-    z-index: 2;
-  }
-  .card-settings img {
-    width: 100%;
-    display: block;
-  }
-
-  /* Card 3: Live Desktop Install Wizard (Bottom, Separated with breathing room) */
-  .card-wizard {
-    position: absolute;
-    left: 980px; top: 480px;
-    width: 680px;
-    border-radius: 10px;
-    overflow: hidden;
-    border: 1.5px solid rgba(214, 93, 14, 0.60);
-    background: #141a1e;
-    box-shadow:
-      0 0 50px rgba(214, 93, 14, 0.22),
-      0 0 16px rgba(214, 93, 14, 0.15),
-      0 28px 85px rgba(2, 12, 18, 0.95);
     z-index: 4;
   }
-  .card-wizard img {
-    width: 100%;
-    display: block;
+  .pill-row { display: flex; gap: 12px; align-items: center; }
+  .pill {
+    font-family: "JetBrainsMono Nerd Font", monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 6px 13px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .pill-orange {
+    color: #ffab63;
+    border: 1px solid rgba(214, 93, 14, 0.65);
+    background: linear-gradient(135deg, rgba(214,93,14,0.20), rgba(214,93,14,0.06));
+    box-shadow: 0 0 18px rgba(214, 93, 14, 0.20), inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+  .pill-version {
+    font-family: "Adwaita Sans", sans-serif;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: none;
+    color: #0b0e10;
+    background: linear-gradient(135deg, #fda85e, #e0670d);
+    border: 1px solid rgba(252, 125, 50, 0.9);
+    box-shadow: 0 4px 22px rgba(214, 93, 14, 0.45), inset 0 1px 0 rgba(255,255,255,0.35);
+  }
+  .pill-gray {
+    color: #d3dade;
+    border: 1px solid rgba(160, 176, 190, 0.40);
+    background: rgba(28, 34, 40, 0.62);
+    backdrop-filter: blur(8px);
   }
 
-  /* Decorative connection hint */
-  .flow-indicator {
-    position: absolute;
-    left: 1265px; top: 205px;
-    z-index: 3;
+  .head-row {
+    display: flex; align-items: center; gap: 26px;
+    margin-top: 38px;
+  }
+  .hero-tile {
+    width: 84px; height: 84px;
+    border-radius: 20px;
     display: flex; align-items: center; justify-content: center;
-    width: 42px; height: 42px;
-    border-radius: 50%;
-    background: rgba(20, 26, 30, 0.90);
-    border: 1px solid rgba(214, 93, 14, 0.45);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    background: linear-gradient(135deg, rgba(214,93,14,0.30), rgba(214,93,14,0.05));
+    border: 1px solid rgba(252, 125, 50, 0.55);
+    box-shadow: 0 0 34px rgba(214, 93, 14, 0.30), inset 0 1px 0 rgba(255,255,255,0.12), 0 18px 40px rgba(0,0,0,0.55);
   }
-  .flow-indicator svg {
-    color: #d65d0e;
+  .hero-tile svg { filter: drop-shadow(0 0 10px rgba(252,125,50,0.55)); }
+  h1 {
+    font-size: 66px;
+    font-weight: 800;
+    letter-spacing: -1.6px;
+    line-height: 1.04;
+    background: linear-gradient(170deg, #ffffff 5%, #f4ecdd 50%, #ddd3c1 95%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  h1 .accent { 
+    background: linear-gradient(135deg, #fdb27a, #e0670d);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .title-meta { display: flex; flex-direction: column; }
+  .title-rule {
+    margin-top: 10px; height: 1px; width: 190px;
+    background: linear-gradient(90deg, rgba(252,125,50,0.85), rgba(252,125,50,0));
+  }
+  .subtitle {
+    margin-top: 22px;
+    width: 672px;
+    font-size: 19px;
+    line-height: 1.6;
+    font-weight: 400;
+    color: #cfd6d2;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.6);
   }
 
+  /* ---------- Feature cards ---------- */
+  .cards { margin-top: 36px; display: flex; flex-direction: column; gap: 12px; }
+  .card {
+    position: relative;
+    display: flex; align-items: center; gap: 18px;
+    padding: 13px 22px 13px 18px;
+    border-radius: 14px;
+    border: 1px solid rgba(214, 93, 14, 0.22);
+    background: linear-gradient(120deg, rgba(19, 25, 30, 0.66), rgba(15, 20, 24, 0.50));
+    backdrop-filter: blur(14px);
+    box-shadow: 0 14px 34px rgba(0,0,0,0.50), inset 0 1px 0 rgba(255,255,255,0.055);
+  }
+  .card::before {
+    content: ""; position: absolute; inset: 0; border-radius: 14px;
+    background: linear-gradient(120deg, rgba(252,125,50,0.14), rgba(252,125,50,0) 40%);
+    pointer-events: none;
+  }
+  .cicon {
+    flex: 0 0 auto;
+    width: 42px; height: 42px;
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(214, 93, 14, 0.38);
+    background: linear-gradient(135deg, rgba(214,93,14,0.20), rgba(214,93,14,0.05));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+  .card-body { position: relative; }
+  .card-body h3 {
+    font-size: 18.5px; font-weight: 650; letter-spacing: -0.2px;
+    display: inline;
+    color: #f7f5ea;
+  }
+  .badge {
+    display: inline-block; margin-left: 12px;
+    padding: 3px 9px 2px;
+    border-radius: 6px;
+    font-family: "JetBrainsMono Nerd Font", monospace;
+    font-size: 12px; letter-spacing: 0.06em;
+    font-weight: 600;
+    color: #ffab63;
+    border: 1px solid rgba(252, 125, 50, 0.50);
+    background: rgba(24, 16, 10, 0.85);
+    vertical-align: 3px;
+  }
+  .card-body p {
+    margin-top: 5px;
+    font-size: 13.8px; line-height: 1.58;
+    color: #c6ccd2;
+  }
+
+  .footer {
+    position: absolute; left: 96px; bottom: 44px; z-index: 4;
+    font-family: "Adwaita Sans", sans-serif;
+    font-size: 14px; letter-spacing: 0.4px;
+    color: #b6bdba;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+  }
+
+  /* ---------- Right showcase ---------- */
+  .stage { position: absolute; inset: 0; z-index: 3; }
+  .shot {
+    position: absolute;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #141a1e;
+  }
+  .shot img { display: block; width: 100%; height: auto; }
+  .shot::after {
+    content: ""; position: absolute; inset: 0; border-radius: 14px;
+    pointer-events: none;
+  }
+  .card-catalog {
+    left: 822px; top: 80px; width: 424px;
+    transform: rotate(-2.2deg);
+    border: 1px solid rgba(106, 133, 154, 0.42);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 0 38px rgba(106,133,154,0.16),
+      0 26px 70px rgba(0,0,0,0.80);
+  }
+  .card-catalog::after { box-shadow: inset 0 1px 0 rgba(255,255,255,0.12); }
+  .card-settings {
+    left: 1322px; top: 80px; width: 496px;
+    transform: rotate(1.8deg);
+    border: 1px solid rgba(106, 133, 154, 0.42);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 0 42px rgba(106,133,154,0.18),
+      0 28px 80px rgba(0,0,0,0.82);
+    z-index: 3;
+  }
+  .card-settings::after { box-shadow: inset 0 1px 0 rgba(255,255,255,0.12); }
+  .card-wizard {
+    left: 1042px; top: 460px; width: 700px;
+    border: 1.5px solid rgba(214, 93, 14, 0.60);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.05), 0 0 60px rgba(214,93,14,0.24),
+      0 34px 90px rgba(0,0,0,0.9);
+    z-index: 4;
+  }
+  .card-wizard::after {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.15);
+    background: linear-gradient(160deg, rgba(252,125,50,0.05), rgba(252,125,50,0) 35%);
+  }
+
+  .step-tag {
+    position: absolute;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-family: "JetBrainsMono Nerd Font", monospace;
+    font-size: 12px; font-weight: 600;
+    letter-spacing: 0.4px;
+    box-shadow: 0 10px 26px rgba(0,0,0,0.6);
+    backdrop-filter: blur(8px);
+    z-index: 5;
+    white-space: nowrap;
+  }
+  .tag-cyan {
+    background: rgba(10, 16, 20, 0.92);
+    border: 1px solid rgba(130, 160, 185, 0.85);
+    color: #c8d7e4;
+  }
+  .tag-orange {
+    background: rgba(24, 17, 12, 0.92);
+    border: 1px solid rgba(214, 93, 14, 0.85);
+    color: #ffab63;
+  }
+  .tag-emerald {
+    background: rgba(14, 19, 16, 0.92);
+    border: 1px solid rgba(207, 215, 197, 0.75);
+    color: #dfe5d6;
+  }
+  .flow-indicator {
+    position: absolute; left: 1262px; top: 250px; z-index: 5;
+    width: 44px; height: 44px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: #fc9a55;
+    background: rgba(20, 14, 10, 0.9);
+    border: 1px solid rgba(214, 93, 14, 0.6);
+    box-shadow: 0 0 26px rgba(214, 93, 14, 0.35), 0 10px 24px rgba(0,0,0,0.6);
+    transform: rotate(-6deg);
+  }
 </style>
 </head>
 <body>
-  <div class="bg-grid"></div>
-  <div class="glow glow-tl"></div>
-  <div class="glow glow-tr"></div>
-  <div class="glow glow-mid"></div>
-  <div class="glow glow-b"></div>
+  <div class="bg-art"></div>
+  <div class="scrim-base"></div>
+  <div class="scrim-left"></div>
+  <div class="scrim-bottom"></div>
+  <div class="vignette"></div>
+  <div class="hairline-top"></div>
+  <div class="hairline-bottom"></div>
 
-  <div class="left">
-    <div class="pills">
+  <!-- Left: Identity & features -->
+  <div class="left-col">
+    <div class="pill-row">
       <span class="pill pill-orange">OMARCHY PLUGIN</span>
-      <span class="pill pill-gray">v{{VERSION}}</span>
-      <span class="pill pill-cyan">BROWSER EXTENSION</span>
+      <span class="pill pill-version">v{{VERSION}}</span>
+      <span class="pill pill-gray">BROWSER EXTENSION</span>
     </div>
+
     <div class="head-row">
-      <div class="tile">
-        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <div class="hero-tile">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
           <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
           <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
           <path d="M14 17.5a3.5 3.5 0 0 0 7 0 3.5 3.5 0 0 0-7 0"></path>
         </svg>
       </div>
-      <h1>PlugBrug</h1>
+      <div class="title-meta">
+        <h1>Plug<span class="accent">Brug</span></h1>
+        <div class="title-rule"></div>
+      </div>
     </div>
-    <div class="subtitle">
-      One-click installation and management for Omarchy plugins directly from the
-      official marketplace, bridging your web browser and the desktop shell.
-    </div>
+
+    <div class="subtitle">One-click installation and management for Omarchy plugins directly from the official marketplace, bridging your web browser and the desktop shell.</div>
+
     <div class="cards">
       <div class="card">
         <div class="cicon">
@@ -297,22 +335,24 @@
             <line x1="12" y1="15" x2="12" y2="3"></line>
           </svg>
         </div>
-        <div class="ctext">
+        <div class="card-body">
           <h3>Direct Marketplace Installs</h3><span class="badge">FIREFOX &amp; CHROMIUM</span>
           <p>Injects native Install, Enable, Disable, and Uninstall buttons directly into official plugins.omarchy.org cards and detail pages.</p>
         </div>
       </div>
+
       <div class="card">
         <div class="cicon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
           </svg>
         </div>
-        <div class="ctext">
+        <div class="card-body">
           <h3>Interactive Confirmation Wizard</h3><span class="badge">SAFE &amp; VERIFIED</span>
           <p>Review repository manifests, inspect release notes, and confirm actions through a native desktop overlay before anything runs.</p>
         </div>
       </div>
+
       <div class="card">
         <div class="cicon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -320,11 +360,12 @@
             <circle cx="12" cy="12" r="3"></circle>
           </svg>
         </div>
-        <div class="ctext">
+        <div class="card-body">
           <h3>Live Browser Tab Awareness</h3><span class="badge">BAR WIDGET</span>
           <p>Top bar icon dynamically glows when browsing plugin pages, offering quick jump navigation and instant status inspection.</p>
         </div>
       </div>
+
       <div class="card">
         <div class="cicon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -333,22 +374,24 @@
             <line x1="15" y1="3" x2="15" y2="21"></line>
           </svg>
         </div>
-        <div class="ctext">
+        <div class="card-body">
           <h3>Top Bar Icon Placement</h3><span class="badge">LEFT &middot; CENTER &middot; RIGHT</span>
           <p>Choose bar section placement upon install, or effortlessly move installed plugin icons between sections with one click.</p>
         </div>
       </div>
+
       <div class="card">
         <div class="cicon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
           </svg>
         </div>
-        <div class="ctext">
+        <div class="card-body">
           <h3>Automated Update Polling</h3><span class="badge">BACKGROUND CHECK</span>
           <p>Regular background update checks with customizable polling intervals, desktop notifications, and unverified release gates.</p>
         </div>
       </div>
+
       <div class="card">
         <div class="cicon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fc7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -356,9 +399,9 @@
             <polygon points="12 8 8 12 12 16 12 13 16 13 16 11 12 11 12 8"></polygon>
           </svg>
         </div>
-        <div class="ctext">
+        <div class="card-body">
           <h3>Native Messaging Host</h3><span class="badge">ZERO OVERHEAD</span>
-          <p>Secure local IPC bridge using standard WebExtension native messaging—no open web ports, extra daemons, or tracking.</p>
+          <p>Secure local IPC bridge using standard WebExtension native messaging&mdash;no open web ports, extra daemons, or tracking.</p>
         </div>
       </div>
     </div>
@@ -366,32 +409,23 @@
 
   <div class="footer">MIT License&nbsp;&nbsp;&bull;&nbsp;&nbsp;Built for Omarchy Linux with Quickshell &amp; Hyprland</div>
 
-  <!-- Right: Playful & Informative Layered Showcase -->
+  <!-- Right: showcase -->
   <div class="stage">
-    <!-- Step 1 Tag -->
-    <div class="step-tag tag-cyan" style="left: 835px; top: 26px; z-index: 5;">
+    <div class="step-tag tag-cyan" style="left: 832px; top: 58px;">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
       1 &middot; Discover &amp; Manage in Browser
     </div>
 
-    <!-- Step 3 Tag -->
-    <div class="step-tag tag-orange" style="left: 1325px; top: 18px; z-index: 5;">
+    <div class="step-tag tag-orange" style="left: 1330px; top: 50px;">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
       3 &middot; Bar Widget &amp; Auto-Update Settings
     </div>
 
-    <!-- Step 2 Tag -->
-    <div class="step-tag tag-emerald" style="left: 995px; top: 457px; z-index: 6;">
+    <div class="step-tag tag-emerald" style="left: 1058px; top: 440px; z-index: 6;">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
       2 &middot; Native Desktop Confirmation Wizard
     </div>
 
-    <!-- Card 1: Catalog Card -->
-    <div class="card-catalog">
-      <img src="catalog_card.png" alt="Omarchy marketplace plugin card with injected uninstall button">
-    </div>
-
-    <!-- Center Flow Arrow -->
     <div class="flow-indicator">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M5 12h14"></path>
@@ -399,14 +433,14 @@
       </svg>
     </div>
 
-    <!-- Card 2: Settings Panel -->
-    <div class="card-settings">
-      <img src="settings_panel.png" alt="PlugBrug settings panel">
+    <div class="shot card-catalog">
+      <img src="assets/catalog_card.png" alt="">
     </div>
-
-    <!-- Card 3: Install Wizard Card -->
-    <div class="card-wizard">
-      <img src="wizard_confirm.png" alt="PlugBrug wizard plugin confirmation card">
+    <div class="shot card-settings">
+      <img src="assets/settings_panel.png" alt="">
+    </div>
+    <div class="shot card-wizard">
+      <img src="assets/wizard_confirm.png" alt="">
     </div>
   </div>
 </body>

@@ -25,7 +25,7 @@ command -v "$real_shell" >/dev/null 2>&1 || real_shell="$(command -v omarchy-she
 # batch); publish a marker file per run (removed on any exit) and summon
 # the wizard on its running stage, which polls the marker directory and
 # closes itself once no fresh marker remains.
-LABEL="${1:-plugins}"; shift
+LABEL="${1:-plugins}"; [ $# -gt 0 ] && shift
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager"
 MARK_DIR="$STATE_DIR/in-progress"
 mkdir -p "$MARK_DIR" 2>/dev/null || true
@@ -45,6 +45,11 @@ while [ $# -gt 0 ]; do
       if [ -x "$plug/bin/plugin-installer-setup" ]; then
         "$plug/bin/plugin-installer-setup" --uninstall >/dev/null 2>&1 || true
       fi
+      # Forget extension presence and any left-click dialog decline: both
+      # gate files describe this plugin's browser relationship, so a
+      # fresh install re-offers the extension (the extension's own
+      # heartbeats rebuild the seen stamps once it is installed again).
+      rm -f "$STATE_DIR/browser-extension-seen.json" "$STATE_DIR/browser-prompt-dismissed.json"
     fi
     if omarchy plugin remove "$id" --yes >/dev/null 2>&1; then
       ok=$((ok+1))

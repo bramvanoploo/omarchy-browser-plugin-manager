@@ -21,11 +21,11 @@ set -u
 # owner-only from creation, whatever the caller's umask.
 umask 077
 export PATH="${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH"
-KIND="$1"
-ID="$2"
-NAME="$3"
-REPO="$4"
-SECTION="$5"
+KIND="${1:-}"
+ID="${2:-}"
+NAME="${3:-}"
+REPO="${4:-}"
+SECTION="${5:-}"
 
 case "$ID" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*)
   notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
@@ -93,6 +93,7 @@ update)
     if [ "$OUT" = "cli-uptodate" ]; then
       notify "Plugin up to date" "$NAME was already at the latest version."
     elif [ "$OUT" = "pinned" ]; then
+      omarchy-shell -q shell rescanPlugins >/dev/null 2>&1 || true
       notify "Plugin updated" "$NAME is updated to verified commit ${SECTION:0:7}."
     else
       notify "Plugin updated" "$NAME is updated to the latest version."
@@ -210,6 +211,7 @@ uninstall)
     if [ -x "$PLUG/bin/plugin-installer-setup" ]; then
       "$PLUG/bin/plugin-installer-setup" --uninstall >/dev/null 2>&1 || true
     fi
+    rm -f "$STATE_DIR/browser-extension-seen.json" "$STATE_DIR/browser-prompt-dismissed.json"
   fi
   if ! OUT="$(omarchy plugin remove "$ID" --yes 2>&1)"; then
     notify "Plugin uninstall failed" "$NAME: $(clean "$OUT")"

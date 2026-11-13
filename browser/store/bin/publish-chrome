@@ -1,0 +1,166 @@
+#!/bin/bash
+# Publishes a new version of the extension to the Chrome Web Store listing
+# (https://chromewebstore.google.com/detail/nalcgjmbglkcmohokidcmogcbpmhkdjf)
+# without touching the Developer Dashboard.
+#
+# This is the automated replacement for dragging the -chrome.zip onto the
+# dashboard's Package page: it drives the Chrome Web Store Publish API V2
+# (the V1 API was retired 15 Oct 2026) - upload the zip, wait for the async
+# upload to land, then submit for review with "publish". The listing's
+# visibility settings are kept as they are.
+#
+# One-time setup (the only portal work, ever; mirrors AMO's API key):
+#   1. console.cloud.google.com -> new project -> APIs & Services ->
+#      enable "Chrome Web Store API".
+#   2. OAuth consent screen: External, fill app info, add YOUR email under
+#      "Test users" (no verification review needed then).
+#   3. Credentials -> Create Credentials -> OAuth client ID -> Web
+#      application; Authorized redirect URI:
+#      https://developers.google.com/oauthplayground
+#   4. Open https://developers.google.com/oauthplayground, gear icon ->
+#      "Use your own OAuth credentials" (client ID + secret), scope:
+#      https://www.googleapis.com/auth/chromewebstore, Authorize APIs
+#      (sign in as the store's developer account; 2-step verification must
+#      be on) -> Exchange authorization code for tokens.
+#   5. Copy into .env: the client ID, client secret, and the REFRESH_TOKEN
+#      (a long-lived credential; access tokens are minted per run).
+#   6. Publisher ID: Developer Dashboard -> Publisher -> Settings
+#      -> GOOGLE_CWS_PUBLISHER_ID.
+#
+# .env keys required (gitignored, same file the AMO scripts use):
+#   GOOGLE_CWS_PUBLISHER_ID   Google publisher ID (decimal number)
+#   GOOGLE_CWS_CLIENT_ID      OAuth client ID from step 3
+#   GOOGLE_CWS_CLIENT_SECRET  OAuth client secret from step 3
+#   GOOGLE_CWS_REFRESH_TOKEN  refresh token from step 4
+#
+# Usage (after bumping the version in the root manifest.json and running
+# browser/store/bin/package, which builds dist/<slug>-<version>-chrome.zip):
+#   browser/store/bin/publish-chrome
+#
+# Safety: Chrome rejects an upload whose manifest version was not increased,
+# and this script additionally records the last published version in
+# dist/.chrome-published-version so re-runs between releases are no-ops.
+# Override with --force to submit anyway.
+
+set -euo pipefail
+export LC_ALL=C
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
+REPO_DIR="$(dirname -- "$(dirname -- "$(dirname -- "$BIN_DIR")")")"
+EXT_DIR="$REPO_DIR/browser/extension"
+DIST_DIR="$REPO_DIR/dist"
+ENV_FILE="$REPO_DIR/.env"
+STATE_FILE="$DIST_DIR/.chrome-published-version"
+
+# Same item the plugin-installer-setup allowlists (its CHROME_STORE_ID).
+ITEM_ID="${GOOGLE_CWS_ITEM_ID:-nalcgjmbglkcmohokidcmogcbpmhkdjf}"
+
+FORCE=0
+for arg in "$@"; do
+  case "$arg" in
+    --force) FORCE=1 ;;
+    *) echo "unknown argument: $arg (only --force)" >&2; exit 1 ;;
+  esac
+done
+
+[[ -f "$ENV_FILE" ]] || { echo "Missing .env with the GOOGLE_CWS_* keys (see this script's header for the one-time setup)." >&2; exit 1; }
+set -a; source "$ENV_FILE"; set +a
+[[ -n "${GOOGLE_CWS_PUBLISHER_ID:-}" && -n "${GOOGLE_CWS_CLIENT_ID:-}" \
+   && -n "${GOOGLE_CWS_CLIENT_SECRET:-}" && -n "${GOOGLE_CWS_REFRESH_TOKEN:-}" ]] || {
+  echo "Set GOOGLE_CWS_PUBLISHER_ID, GOOGLE_CWS_CLIENT_ID, GOOGLE_CWS_CLIENT_SECRET and GOOGLE_CWS_REFRESH_TOKEN in .env (see this script's header for the one-time setup)." >&2
+  exit 1
+}
+
+VERSION="$(jq -r .version "$EXT_DIR/manifest.json")"
+[[ "$VERSION" != "null" && -n "$VERSION" ]] || { echo "extension manifest has no version" >&2; exit 1; }
+
+# Artifact: derive the slug exactly like browser/store/bin/package.
+NAME="$(jq -r .name "$EXT_DIR/manifest.json" | tr '[:upper:]' '[:lower:]' \
+  | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-\{1,\}//; s/-\{1,\}$//')"
+ZIP="$DIST_DIR/$NAME-$VERSION-chrome.zip"
+[[ -f "$ZIP" ]] || { echo "Missing $ZIP: run browser/store/bin/package first." >&2; exit 1; }
+
+# Idempotence guard: Chrome refuses duplicate versions on its own, but a
+# local record keeps "run on every release" tidy (and out of the upload
+# queue). AMO's publish-firefox script has the same guard against the live listing.
+if [[ "$FORCE" -ne 1 && -f "$STATE_FILE" && "$(cat "$STATE_FILE")" == "$VERSION" ]]; then
+  echo "Chrome Web Store submission for $VERSION already done: nothing to publish."
+  exit 0
+fi
+
+# Access token from the refresh token (credentials stay in the request
+# body, never argv: same leak rule as browser/store/bin/sign).
+TOKEN_RESP="$(curl -sS --max-time 30 https://oauth2.googleapis.com/token \
+  --data-urlencode "client_id=$GOOGLE_CWS_CLIENT_ID" \
+  --data-urlencode "client_secret=$GOOGLE_CWS_CLIENT_SECRET" \
+  --data-urlencode "refresh_token=$GOOGLE_CWS_REFRESH_TOKEN" \
+  --data-urlencode "grant_type=refresh_token")"
+ACCESS_TOKEN="$(printf '%s' "$TOKEN_RESP" | jq -r '.access_token // empty')"
+[[ -n "$ACCESS_TOKEN" ]] || {
+  echo "Google token refresh failed: $(printf '%s' "$TOKEN_RESP" | jq -r '.error_description // .error // "unknown error"')" >&2
+  echo "Common causes: refresh token revoked (redo step 4), consent screen lost 'test user' status, or client secret changed." >&2
+  exit 1
+}
+
+API="https://chromewebstore.googleapis.com/v2/publishers/$GOOGLE_CWS_PUBLISHER_ID/items/$ITEM_ID"
+# The zip body must go to the /upload/ media endpoint: the plain /v2/...:upload
+# metadata URI makes Google parse the package as JSON ("Invalid JSON payload
+# received. Unexpected token. PK..."), per the API docs' explicit warning.
+UPLOAD_API="https://chromewebstore.googleapis.com/upload/v2/publishers/$GOOGLE_CWS_PUBLISHER_ID/items/$ITEM_ID"
+
+echo "Uploading $(basename -- "$ZIP") ($VERSION) to item $ITEM_ID ..."
+
+UPLOAD_OUT="$(curl -sS --max-time 300 -w '\n%{http_code}' \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -X POST -T "$ZIP" "$UPLOAD_API:upload")"
+UPLOAD_BODY="${UPLOAD_OUT%$'\n'*}"
+UPLOAD_HTTP="${UPLOAD_OUT##*$'\n'}"
+if [[ "$UPLOAD_HTTP" != "200" ]]; then
+  printf '%s\n' "$UPLOAD_BODY" | jq . 2>/dev/null || printf '%s\n' "$UPLOAD_BODY" >&2
+  case "$UPLOAD_BODY" in
+    *"Version number must be increased"*|*"Invalid version number in manifest"*|*PKG_INVALID_VERSION_NUMBER*)
+      echo "Chrome rejected the upload: bump 'version' in manifest.json (and re-run package) before publishing." >&2 ;;
+  esac
+  exit 1
+fi
+
+# The upload is async: poll fetchStatus until lastAsyncUploadState settles.
+UP_STATE="$(printf '%s' "$UPLOAD_BODY" | jq -r '.uploadState // empty')"
+if [[ "$UP_STATE" == *"IN_PROGRESS"* ]]; then
+  for _ in $(seq 1 40); do
+    sleep 3
+    STATUS="$(curl -sS --max-time 30 -H "Authorization: Bearer $ACCESS_TOKEN" "$API:fetchStatus")"
+    UP_STATE="$(printf '%s' "$STATUS" | jq -r '.lastAsyncUploadState // empty')"
+    [[ "$UP_STATE" == *"IN_PROGRESS"* ]] || break
+  done
+fi
+if [[ "$UP_STATE" == *"FAILED"* || "$UP_STATE" == *"IN_PROGRESS"* ]]; then
+  echo "Upload did not settle (state: ${UP_STATE:-unknown}); check the dashboard's Package page." >&2
+  exit 1
+fi
+echo "Upload complete (crxVersion $(printf '%s' "$UPLOAD_BODY" | jq -r --arg v "$VERSION" '.crxVersion // $v'))."
+
+echo "Submitting $VERSION for review ..."
+PUBLISH_OUT="$(curl -sS --max-time 60 -w '\n%{http_code}' \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -X POST "$API:publish")"
+PUBLISH_BODY="${PUBLISH_OUT%$'\n'*}"
+PUBLISH_HTTP="${PUBLISH_OUT##*$'\n'}"
+if [[ "$PUBLISH_HTTP" != "200" ]]; then
+  printf '%s\n' "$PUBLISH_BODY" | jq . 2>/dev/null || printf '%s\n' "$PUBLISH_BODY" >&2
+  echo "publish failed (HTTP $PUBLISH_HTTP); the upload is stored but NOT submitted for review." >&2
+  exit 1
+fi
+printf '%s\n' "$PUBLISH_BODY" | jq '{status: .status, statusDetail: .statusDetail}' 2>/dev/null || true
+
+printf '%s\n' "$VERSION" > "$STATE_FILE"
+
+cat <<EOF
+
+Submitted $VERSION to the Chrome review queue.
+Status: https://chromewebstore.google.com/detail/$ITEM_ID
+        (or re-run: curl -H "Authorization: Bearer <token>" $API:fetchStatus)
+The public page updates automatically once Chrome approves the version;
+most updates with unchanged permissions pass automated review the same day.
+EOF

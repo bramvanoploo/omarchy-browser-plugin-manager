@@ -2,6 +2,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
+import QtQuick.Controls
 import qs.Commons
 import qs.Ui
 
@@ -23,13 +24,14 @@ import qs.Ui
 // browser-extension prompt (once, via the install worker). The Omarchy plugin
 // is only half the system; the Install buttons in the browser come from the
 // matching browser extension.
-// The prompt detects the default browser, sends the user to the Firefox
-// add-on page (addons.mozilla.org) for Firefox-based browsers, or to the
-// Chrome Web Store page for Chromium-based ones, and explains what happens
-// there and why. Cancelling shows a follow-up stage: the plugin does nothing
-// without its browser extension, with options to open the extension page,
-// cancel, or uninstall the Omarchy plugin (detached worker, since removing
-// this plugin unloads the wizard).
+// The bar widget's left click gates the same prompt: when no installed
+// browser has the extension, or the default browser specifically lacks it,
+// the click opens this dialog instead of the manage popup (the extension is
+// seen through per-family stamps the extension/host write into the state
+// dir). The dialog presents the extension as the plugin's core marketplace
+// feature and links the right store for the default browser, the other
+// family as a second link. Cancelling records a dismissal marker so the
+// bar stops intercepting clicks; the store buttons just open and close.
 // The native messaging host registration is automated: registering on every
 // load is idempotent, the uninstall worker unregisters before removing the
 // plugin, and a destruction-time watcher unregisters after a terminal
@@ -37,6 +39,15 @@ import qs.Ui
 
 Item {
   id: root
+
+  readonly property color foreground: Color.foreground
+  readonly property color accent: Color.accent
+  readonly property color dim: Qt.darker(Color.foreground, 1.45)
+  readonly property string fontFamily: Style.font.family
+  property string activePluginOpId: ""
+  property string pluginActionStatus: ""
+  property alias pluginFilterQuery: root.manageFilter
+  readonly property var filteredPlugins: root.manageFilteredRows()
 
   property string omarchyPath: Quickshell.env("OMARCHY_PATH")
   property var shell: null
@@ -102,14 +113,20 @@ Item {
   property bool defaultBrowserLoaded: false
 
   property bool opened: false
+
+
   // review | enable-confirm | disable-confirm | uninstall-confirm
   // | update-confirm | enabling | placement | disabling
-  // | browser-prompt | browser-defer | running
+  // | browser-prompt | running
   property string stage: "review"
 
   property string pluginId: ""
   property string pluginRepo: ""
   property string pluginName: ""
+  // Version shown in the header pill while a settings-opened placement
+  // stage is up (see headerVersion and openPlacementFromSettings); the
+  // Manage row's installed version is copied in when that flow starts.
+  property string pluginVersion: ""
   // "install" (default) | "uninstall" | "enable" | "disable" | "update"
   // | "running" — decided by the native host from live local state, never
   // by the page. "running" is the in-progress system panel: summoned by a
@@ -148,9 +165,21 @@ Item {
   property var pluginManifest: null
   property string catalogError: ""
   property string manifestError: ""
+  property bool listLoaded: false
+  property string listError: ""
   readonly property bool catalogLoading: !catalogLoaded && catalogError === ""
 
   readonly property string marketplaceUrl: "https://plugins.omarchy.org/"
+  // About-tab links: this plugin's GitHub project, its issue tracker, its
+  // marketplace listing (the same plugin.html page the browser extension
+  // watches), and the two repo documents.
+  readonly property string githubRepoUrl:
+    "https://github.com/bramvanoploo/omarchy-browser-plugin-manager"
+  readonly property string githubIssuesUrl: root.githubRepoUrl + "/issues"
+  readonly property string marketplaceListingUrl:
+    root.marketplaceUrl + "plugin.html?id=" + root.managerId
+  readonly property string licenseUrl: root.githubRepoUrl + "/blob/main/LICENSE"
+  readonly property string privacyUrl: root.githubRepoUrl + "/blob/main/PRIVACY.md"
   readonly property string catalogThumb: {
     var e = root.catalogEntry
     var t = e ? String(e.previewImage || e.previewThumbnail || "") : ""
@@ -251,13 +280,19 @@ Item {
     ? pluginManifest.kinds : []
 
   readonly property bool needsManifest: root.mode === "install" || root.mode === "enable"
+  readonly property bool needsListCheck: root.mode === "uninstall"
+    || root.mode === "enable"
+    || root.mode === "disable"
+    || root.mode === "update"
 
   readonly property string reviewBlocked: {
     if (catalogError.length > 0) return catalogError
+    if (listError.length > 0) return listError
     if (updateVerifyBlocked.length > 0) return updateVerifyBlocked
     if (needsManifest && manifestError.length > 0) return manifestError
     if (!catalogLoaded) return "Loading marketplace data\u2026"
     if (needsManifest && !manifestLoaded) return "Loading marketplace data\u2026"
+    if (needsListCheck && !listLoaded) return "Loading local plugin state\u2026"
     return ""
   }
   readonly property bool canAct: reviewBlocked.length === 0
@@ -266,10 +301,28 @@ Item {
   readonly property bool isManagerStage: root.stage === "settings"
     || root.stage === "settings-confirm"
     || root.stage === "browser-prompt"
-    || root.stage === "browser-defer"
+
+  // Footer container visibility. Derived from the stage list only: the
+  // containers must never read their buttons' `visible`, because Item's
+  // visible getter reports *effective* visibility (self && every
+  // ancestor). A parent binding on a child's visible therefore poisons
+  // itself: hiding the PanelWindow cascades false into the rows' reads,
+  // the container's binding assigns itself false, and afterwards the
+  // (invisible) container pins the rows' effective visibility at false,
+  // so the binding can never recover - the footer was gone until the
+  // shell restarted. Keep this list in sync with the footer buttons'
+  // own bindings: every stage with at least one visible footer button.
+  readonly property bool footerVisible: [
+    "settings", "settings-confirm", "review", "uninstall-confirm",
+    "enable-confirm", "disable-confirm", "update-confirm", "placement",
+    "browser-prompt"
+  ].indexOf(root.stage) >= 0
 
   // Header version: the version pill shown in the panel header next to the title.
   readonly property string headerVersion: {
+    if (root.placementFromSettings && root.pluginVersion !== "") {
+      return root.pluginVersion
+    }
     if (root.isManagerStage || root.pluginId === root.managerId) {
       return root.managerVersion
     }
@@ -285,11 +338,14 @@ Item {
   // Header subtitle: the action this dialog performs, under the plugin
   // identity (name + version pill).
   readonly property string headerSubtitle: {
-    if (root.stage === "browser-prompt" || root.stage === "browser-defer")
+    if (root.stage === "browser-prompt")
       return "Browser extension setup"
-    if (root.stage === "placement")
+    if (root.stage === "placement") {
+      if (root.placementFromSettings)
+        return "Position bar icon \u2014 choose section"
       return (root.mode === "enable" ? "Enable plugin" : "Install plugin")
         + " \u2014 choose bar section"
+    }
     if (root.stage === "enabling") return "Enabling plugin\u2026"
     if (root.stage === "disabling") return "Disabling plugin\u2026"
     if (root.stage === "running")
@@ -379,13 +435,36 @@ Item {
     root.close()
   }
 
-  // Self-removal from the defer stage: removing this plugin reloads the
-  // shell and destroys this overlay, so it runs as the same detached
-  // uninstall worker used for normal uninstalls (the notification is its
-  // completion report).
-  function uninstallManager() {
-    if (root.pluginId !== root.managerId) return
-    root.spawnWorker("uninstall", "")
+  // The bar's left-click gate tells the browser extension dialog why it
+  // intercepted the click: "none" (no installed browser has the
+  // extension) or "missing-default" (some browsers have it, the default
+  // browser does not); an empty reason means an external summon (the
+  // install consent gate) where the neutral wording applies. seen is
+  // the browser families the extension already reports into.
+  property string extPromptReason: ""
+  property var extSeenFamilies: []
+
+  // Names the seen families in the missing-default copy.
+  readonly property string extSeenFamiliesPhrase: {
+    var fams = []
+    for (var i = 0; i < root.extSeenFamilies.length; i++) fams.push(String(root.extSeenFamilies[i]))
+    if (fams.indexOf("chrome") >= 0 && fams.indexOf("firefox") >= 0)
+      return "Chromium and Firefox browsers"
+    if (fams.indexOf("chrome") >= 0) return "Chromium browsers"
+    if (fams.indexOf("firefox") >= 0) return "Firefox browsers"
+    return "other browsers"
+  }
+
+  // Declining the left-click extension dialog is durable: a dismiss
+  // marker (which the bar watches) is written, then the overlay closes.
+  // The marketplace flow is unaffected: someone who declined the click
+  // gate can still install the extension from the plugin page later;
+  // that re-stamps extension presence but never clears the dismissal.
+  function dismissExtensionPrompt() {
+    Quickshell.execDetached(["sh", "-c",
+      'umask 077 && mkdir -p "${1%/*}" && printf %s dismissed > "$1"',
+      "sh", stateDir + "/browser-prompt-dismissed.json"])
+    root.close()
   }
 
   function open(payloadJson) {
@@ -397,13 +476,13 @@ Item {
     var newMode = String(payload.mode || "install")
     if (newMode !== "uninstall" && newMode !== "enable" && newMode !== "disable"
         && newMode !== "update" && newMode !== "running"
-        && newMode !== "browser-prompt" && newMode !== "browser-defer"
+        && newMode !== "browser-prompt"
         && newMode !== "settings" && newMode !== "settings-confirm") newMode = "install"
     // Stage before mode: the title binding chooses its source from stage, and
     // assigning a browser-* mode while the old stage is still a confirm stage
     // would index the title map with it (undefined -> "Unable to assign
     // [undefined] to QString").
-    stage = (newMode === "browser-prompt" || newMode === "browser-defer"
+    stage = (newMode === "browser-prompt"
       || newMode === "running" || newMode === "settings"
       || newMode === "settings-confirm")
       ? (newMode === "settings-confirm" ? "settings-confirm" : newMode)
@@ -412,16 +491,18 @@ Item {
 
     pluginId = String(payload.id || "")
     pluginRepo = String(payload.repo || "")
-    pluginName = String(payload.name || pluginId)
-    if (mode === "browser-prompt" || mode === "browser-defer") pluginId = managerId
+    pluginName = String(payload.name || pluginId).replace(/[\x00-\x1f\x7f]/g, "")
+    if (mode === "browser-prompt") pluginId = managerId
     if (!pluginName) pluginName = root.managerName
 
     catalogLoaded = false
     manifestLoaded = false
+    listLoaded = false
     catalogEntry = null
     pluginManifest = null
     catalogError = ""
     manifestError = ""
+    listError = ""
     enableOutput = ""
     isBarWidget = false
     defaultSection = "centerEnd"
@@ -430,6 +511,13 @@ Item {
     finalCheck = false
     settingsConfirm = null
     installedVersion = ""
+    placementFromSettings = false
+    placementPreviousSection = ""
+    placementPreviousMode = ""
+    placementFromBrowser = false
+    pluginVersion = ""
+    activePluginOpId = ""
+    pluginActionStatus = ""
 
     opened = true
 
@@ -495,6 +583,48 @@ Item {
           stage = "settings"
         }
       }
+      // Placement detour requested by a Position button: the settings
+      // panel opens underneath, then walks straight into the placement
+      // step for the plugin named in the payload. This is the same
+      // openPlacementFromSettings the Manage rows' Position button calls,
+      // so placement's Escape/Close land back on the live settings panel.
+      // A browser summon (the marketplace page) carries no settings
+      // snapshot to walk back to, so it marks the detour as browser
+      // sourced: every exit closes the panel instead.
+      if (mode === "settings" && payload.stage === "placement"
+          && validPluginId(String(payload.id || ""))) {
+        root.openPlacementFromSettings({
+          id: String(payload.id),
+          name: String(payload.name || payload.id),
+          repo: String(payload.repo || ""),
+          version: String(payload.version || ""),
+          section: String(payload.section || ""),
+          fromBrowser: String(payload.source || "") === "browser"
+        })
+      }
+      return
+    }
+
+    if (mode === "browser-prompt") {
+      // No marketplace data needed: the prompt shows this manager's own
+      // name/version (from the shell-loaded manifest) and the detected
+      // default browser. The bar's left-click gate adds why it
+      // intercepted (reason) and which browser families already have
+      // the extension (seenFamilies); anything malformed reads as the
+      // neutral install-consent-gate wording.
+      root.extPromptReason = (payload.reason === "none"
+        || payload.reason === "missing-default") ? payload.reason : ""
+      root.extSeenFamilies = Array.isArray(payload.seenFamilies)
+        ? payload.seenFamilies.filter(function (f) {
+            return f === "chrome" || f === "firefox"
+          })
+        : []
+      catalogLoaded = true
+      manifestLoaded = true
+      listLoaded = true
+      defaultBrowserLoaded = false
+      defaultBrowserId = ""
+      browserProc.running = true
       return
     }
 
@@ -502,6 +632,7 @@ Item {
       catalogError = "Invalid plugin identifier"
       catalogLoaded = true
       manifestLoaded = true
+      listLoaded = true
       return
     }
 
@@ -510,18 +641,7 @@ Item {
       catalogError = "Invalid plugin repository URL"
       catalogLoaded = true
       manifestLoaded = true
-      return
-    }
-
-    if (mode === "browser-prompt" || mode === "browser-defer") {
-      // No marketplace data needed: the prompt shows this manager's own
-      // name/version (from the shell-loaded manifest) and the detected
-      // default browser.
-      catalogLoaded = true
-      manifestLoaded = true
-      defaultBrowserLoaded = false
-      defaultBrowserId = ""
-      browserProc.running = true
+      listLoaded = true
       return
     }
 
@@ -541,7 +661,8 @@ Item {
     // turn calls close(). Clearing `opened` first makes that re-entry a no-op.
     if (!root.opened) return
     root.opened = false
-    if (root.mode === "settings" || root.mode === "settings-confirm")
+    if (root.mode === "settings" || root.mode === "settings-confirm"
+        || (root.placementFromSettings && root.placementPreviousMode === "settings"))
       root.writeSettingsCmd({ action: "closed", session: root.settingsSession })
     root.stopPending()
     if (root.shell && typeof root.shell.hide === "function")
@@ -639,6 +760,51 @@ Item {
     return "\uF037"
   }
 
+  property bool placementFromSettings: false
+  property string placementPreviousSection: ""
+  // The manager-stage mode ("settings") the placement detour interrupted:
+  // placement sets mode to "move", and every return path has to restore
+  // it, or settings-stage layout gated on the mode (the identity PiLine)
+  // leaks a visible row back into the fixed-height panel.
+  property string placementPreviousMode: ""
+  // Who summoned the placement detour. The bar popup and the Manage rows
+  // open it on top of the live settings panel, so Escape/Cancel walk back
+  // down to it. The marketplace page opens the very same dialog with no
+  // settings panel behind it, so there every exit closes the panel.
+  property bool placementFromBrowser: false
+
+  function placementReturnsToSettings() {
+    return root.placementFromSettings && !root.placementFromBrowser
+  }
+
+  function returnPlacementToSettings() {
+    if (root.placementPreviousMode !== "")
+      root.mode = root.placementPreviousMode
+    root.placementPreviousMode = ""
+    root.placementFromSettings = false
+    root.stage = "settings"
+  }
+
+  function openPlacementFromSettings(item) {
+    if (!item) return
+    root.placementFromSettings = true
+    root.placementPreviousMode = root.mode
+    root.pluginId = String(item.id || "")
+    root.pluginName = String(item.name || item.id || "")
+    root.pluginRepo = String(item.repo || "")
+    root.pluginVersion = String(item.version || item.installed || "")
+    root.placementPreviousSection = String(item.section || "")
+    root.placementFromBrowser = (item.fromBrowser === true)
+    root.mode = "move"
+    root.stage = "placement"
+  }
+
+  function currentPlacementSection() {
+    if (root.placementFromSettings && root.placementPreviousSection !== "")
+      return root.placementPreviousSection
+    return root.defaultSection
+  }
+
   function installWithSection(section) {
     if (root.mode !== "install" || root.stage !== "placement") return
     if (root.barPlacementSections.indexOf(section) === -1) return
@@ -726,7 +892,7 @@ Item {
           // stale onExited that sets catalogError after open() reset it.
           root.catalogError = ""
           root.catalogEntry = entry
-          if (entry.name) root.pluginName = String(entry.name)
+          if (entry.name) root.pluginName = String(entry.name).replace(/[\x00-\x1f\x7f]/g, "")
           if (String(entry.kind || "").indexOf("Bar widget") !== -1 || entry.category === "Bar widgets" || entry.category === "Widgets") {
             root.isBarWidget = true
           }
@@ -798,8 +964,9 @@ Item {
     }
     onExited: function (exitCode) {
       if (!root.opened) return
+      root.listLoaded = true
       if (exitCode !== 0) {
-        if (root.stage === "review") root.catalogError = "Could not read the local plugin list"
+        if (root.stage === "review") root.listError = "Could not read the local plugin list"
         return
       }
       var entry = null
@@ -812,22 +979,22 @@ Item {
         entry = null
       }
       if (!entry || entry.firstParty) {
-        root.catalogError = "Plugin is not installed as a user plugin; nothing to do"
+        root.listError = "Plugin is not installed as a user plugin; nothing to do"
       } else if (root.mode === "enable" && entry.enabled) {
-        root.catalogError = "Plugin is already enabled"
+        root.listError = "Plugin is already enabled"
       } else if (root.mode === "disable" && !entry.enabled) {
-        root.catalogError = "Plugin is already disabled"
+        root.listError = "Plugin is already disabled"
       } else if (root.mode === "enable") {
-        root.catalogError = ""
+        root.listError = ""
         root.stage = "enable-confirm"
       } else if (root.mode === "disable") {
-        root.catalogError = ""
+        root.listError = ""
         root.stage = "disable-confirm"
       } else if (root.mode === "update") {
-        root.catalogError = ""
+        root.listError = ""
         root.stage = "update-confirm"
       } else {
-        root.catalogError = ""
+        root.listError = ""
         root.stage = "uninstall-confirm"
       }
     }
@@ -879,14 +1046,8 @@ Item {
   Process {
     id: settingsCmdWriteProc
     command: ["sh", "-c",
-      'umask 077 && mkdir -p "${1%/*}" && printf %s "$3" | head -c "$2" > "$1"',
-      "sh", root.settingsCmdPath,
-      // Byte bound: 3x the JS string length (each UTF-16 unit is at most
-      // 3 UTF-8 bytes) plus one, so the bound is always above the real
-      // byte count and printf's EOF ends the stream. The cap keeps the
-      // argument under the kernel's per-arg limit.
-      String(Math.min(65536, root.settingsCmdWriteText.length * 3 + 1)),
-      root.settingsCmdWriteText]
+      'umask 077 && mkdir -p "${1%/*}" && target="$1" && shift && tmp="${target}.tmp.$$" && { printf %s "$@" > "$tmp" && mv -f "$tmp" "$target"; } || { rm -f "$tmp"; exit 1; }',
+      "sh", root.settingsCmdPath]
     // Quickshell Process exposes its exit notification as the overridable
     // onExited handler (onFinished: is not a signal here: assigning it
     // fails the component load); the flush chain continues queued sends
@@ -902,6 +1063,20 @@ Item {
     if (settingsCmdWriteProc.running) return
     if (root.settingsCmdWriteText === root.settingsCmdStarted) return
     root.settingsCmdStarted = root.settingsCmdWriteText
+    var text = root.settingsCmdWriteText
+    var cmd = [
+      "sh", "-c",
+      'umask 077 && mkdir -p "${1%/*}" && target="$1" && shift && tmp="${target}.tmp.$$" && { printf %s "$@" > "$tmp" && mv -f "$tmp" "$target"; } || { rm -f "$tmp"; exit 1; }',
+      "sh", root.settingsCmdPath
+    ]
+    var chunkSize = 32768
+    if (text.length === 0) {
+      cmd.push("")
+    } else {
+      for (var i = 0; i < text.length; i += chunkSize)
+        cmd.push(text.slice(i, i + chunkSize))
+    }
+    settingsCmdWriteProc.command = cmd
     settingsCmdWriteProc.running = true
   }
 
@@ -944,6 +1119,33 @@ Item {
       }
       if (retired) root.settingsPending = next
     }
+    // Same confirm-or-keep retirement for the enable echoes: a snapshot
+    // row that carries the requested state confirms the click (the echo
+    // was true all along - the widget's own override took over from the
+    // command on), so the entry goes; one that still contradicts it keeps
+    // the hold until the 4s window expires (a failed toggle reverting to
+    // reality exactly once, on that snapshot).
+    var pend = root.pendingEnable
+    var pendKeys = Object.keys(pend)
+    if (pendKeys.length > 0) {
+      var confirmed = ({})
+      var anyConfirmed = false
+      var nowMs = Date.now()
+      for (var pi = 0; pi < pendKeys.length; pi++) {
+        var pk2 = pendKeys[pi]
+        var pe = pend[pk2]
+        var row = null
+        var prows = Array.isArray(d.plugins) ? d.plugins : []
+        for (var ri = 0; ri < prows.length; ri++)
+          if (prows[ri] && String(prows[ri].id || "") === pk2) row = prows[ri]
+        if ((row && row.enabled === pe.enable) || nowMs - Number(pe.at) > 6000) {
+          anyConfirmed = true
+          continue
+        }
+        confirmed[pk2] = pe
+      }
+      if (anyConfirmed) root.pendingEnable = confirmed
+    }
     root.settingsSnap = d
   }
 
@@ -960,18 +1162,33 @@ Item {
   property string settingsSession: ""
   function writeSettingsCmd(obj) {
     var o = obj || {}
-    o.seq = String(Date.now()) + "-"
+    var nowMs = Date.now()
+    o.seq = String(nowMs) + "-"
       + String(Math.floor(Math.random() * 1e6))
     // Session stamp: the widget ignores commands from any other session,
     // so lines a previous panel left on disk can never replay.
     o.session = root.settingsSession
-    settingsCmdQueue = settingsCmdQueue.concat([o])
+    var isHeartbeat = (o.action === "panel_open")
+    // Heartbeats are superseded by the next one (they only keep the panel
+    // snapshot alive); real commands are NEVER age-dropped: an action the
+    // widget has not consumed yet must replay on the next write. The
+    // session stamp above (not the queue's age) is what keeps a dead
+    // session's leftovers from ever being honored.
+    var kept = []
+    for (var i = 0; i < settingsCmdQueue.length; i++) {
+      var item = settingsCmdQueue[i]
+      if (!item) continue
+      if (isHeartbeat && item.heartbeat) continue
+      kept.push(item)
+    }
+    kept.push({ raw: JSON.stringify(o), heartbeat: isHeartbeat })
     // Bound the in-memory log: the widget consumes (removes) the file
     // after dispatch, and consumed lines only inflate the rewrite.
-    if (settingsCmdQueue.length > 60)
-      settingsCmdQueue = settingsCmdQueue.slice(settingsCmdQueue.length - 60)
+    if (kept.length > 60)
+      kept = kept.slice(kept.length - 60)
+    settingsCmdQueue = kept
     root.settingsCmdWriteText = settingsCmdQueue.map(function (c) {
-      return JSON.stringify(c)
+      return c.raw
     }).join("\n") + "\n"
     root.flushSettingsCmd()
   }
@@ -1022,16 +1239,359 @@ Item {
     return root.snapList("verified").concat(root.snapList("unverified"))
   }
 
-  // Mirrors the bar popup's updatesGroupVisible: true when the status
-  // lines, batch button, or lists have anything to show, so the rule
-  // under the toggles only paints when there is a group to separate.
-  function settingsUpdatesGroupVisible() {
-    return root.snapBool("updateChecking")
-      || root.settingsAllRows().length > 0
-      || root.snapBool("updateCheckFailed")
-      || root.snapBool("settingsSaveFailed")
-      || (root.snapStr("lastCheckText") !== "never"
-          && root.snapStr("lastCheckText") !== "")
+  // ---- settings-panel tab bar (Updates / Manage / Settings / About) ------
+  // OmApple panel style: an icon, a title, and a one-line description per
+  // tab in a left rail (see the tab delegate in the settings stage).
+  property string settingsTab: "updates"
+  // (Literal glyphs: the U+F04xx/F03xx icons are plane-15 codepoints, and
+  // the QML lexer's \u escapes consume exactly 4 hex digits, so they must
+  // be written as literal characters, not escapes.)
+  readonly property var settingsTabModel: [
+    { key: "updates",  iconText: "󰑐", title: "Updates",
+      desc: "Plugin updates" },
+    { key: "manage",   iconText: "󰏓", title: "Manage",
+      desc: "Installed plugins" },
+    { key: "settings", iconText: "󰒓", title: "Settings",
+      desc: "Update behaviour" },
+    { key: "about",    iconText: "󰋽", title: "About",
+      desc: "What this does" },
+  ]
+  // The settings card is a fixed size: the OmApple panel's own dimensions
+  // (968x682) per the OmApple reference, dialed back 15% on the height
+  // (580), then grown 10% back on it (638); shrunk further only when the
+  // panel itself is smaller.
+  // Every height the tab bodies need derives from this root property,
+  // because a body that sizes the column that sizes the card, reading
+  // the card back, is a binding loop.
+  readonly property real settingsCardHeight: Math.min(Style.space(638),
+    panel.height - Style.space(48))
+  // The active tab's rail entry (title + desc), reused by the category
+  // title header above the tab body.
+  function settingsTabEntry() {
+    for (var i = 0; i < settingsTabModel.length; i++) {
+      if (settingsTabModel[i].key === settingsTab) {
+        // The Manage header keeps the installed-plugin count live.
+        if (settingsTab === "manage" && root.snapBool("pluginsListed"))
+          return {
+            title: settingsTabModel[i].title,
+            desc: settingsTabModel[i].desc
+              + "  \u00b7  " + root.snapList("plugins").length,
+          }
+        return settingsTabModel[i]
+      }
+    }
+    return {}
+  }
+  // Plugin whose Manage row has its section chooser expanded, "" for none.
+  property string manageMoveForId: ""
+  // Enable echo window: id -> {enable, at} for the last click. The widget
+  // only learns the toggle through the cmd file a moment after the click,
+  // and a plugin-list read that STARTED before the click can PUBLISH after
+  // it: that snapshot row carries pre-toggle truth, wipes a one-shot local
+  // patch, and the switch flips back before the post-CLI truth lands (the
+  // seen switch-back-again flicker). managePlugins() holds the row at the
+  // clicked value for a short window instead, re-evaluated on every
+  // snapshot: a successful toggle makes the truth match the echo (the
+  // overlay no-ops), a failed one reverts to reality when the window
+  // closes - and the widget's own override keeps the row steady from the
+  // moment the command is processed on.
+  property var pendingEnable: ({})
+  function managePlugins() {
+    var pe = root.pendingEnable
+    var now = Date.now()
+    var list = root.snapList("plugins")
+    var out = []
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i]
+      if (!r) { out.push(r); continue }
+      var p = pe[String(r.id || "")]
+      if (p && now - Number(p.at) < 4000 && r.enabled !== p.enable) {
+        var o = ({})
+        for (var k in r) o[k] = r[k]
+        o.enabled = p.enable
+        out.push(o)
+      } else {
+        out.push(r)
+      }
+    }
+    return out
+  }
+  // Manage-tab search filter: the input field's text, matched case-
+  // insensitively against every row's name and id.
+  property string manageFilter: ""
+  // Manage-tab state filter: "" (both), "enabled" or "disabled", toggled
+  // by the two filter buttons beside the search field. It composes with
+  // the search text, and it is applied after managePlugins()' optimistic
+  // override, so a row the user just toggled follows along immediately.
+  property string manageStateFilter: ""
+  function manageFilteredRows() {
+    var q = root.manageFilter.trim().toLowerCase()
+    var st = root.manageStateFilter
+    var rows = root.managePlugins()
+    if (q === "" && st === "") return rows
+    return rows.filter(function (r) {
+      if (!r) return false
+      if (st !== "" && Boolean(r.enabled) !== (st === "enabled")) return false
+      if (q === "") return true
+      var hay = (String(r.name || "") + " " + String(r.id || "")
+        + " " + String(r.author || "") + " " + String(r.desc || "")
+        + " " + String(r.description || ""))
+        .toLowerCase()
+      return hay.indexOf(q) !== -1
+    })
+  }
+  // Render identity of the manage list. The Repeater renders from
+  // manageRenderRows instead of filteredPlugins directly: the model is
+  // only re-assigned - which destroys and re-creates every card,
+  // momentarily collapses contentHeight and clamps contentY to 0 - when
+  // the row id set or order changes, i.e. on a filter/search edit, an
+  // install, an uninstall or a move. Snapshot echoes and optimistic
+  // enable/disable patches keep the same ids, so the existing cards
+  // simply repaint through their delegate's live `row` lookup and the
+  // scroll position is never destroyed at all.
+  readonly property string manageRenderSig: {
+    var rows = root.filteredPlugins
+    var s = ""
+    for (var i = 0; i < rows.length; i++)
+      s += (i > 0 ? "|" : "") + String(rows[i] ? rows[i].id : "?")
+    return s
+  }
+  property var manageRenderRows: []
+  onManageRenderSigChanged: manageRenderRows = root.filteredPlugins
+  // Scroll-position hold, the safety net under that: a rebuild the id
+  // signature cannot avoid (a plugin installed or removed elsewhere)
+  // still flashes contentHeight through its collapsed value, and
+  // StopAtBounds clamps contentY to 0 in that window. Track the last
+  // real scroll offset on every contentY change and re-assert it as the
+  // rebuilt cards restore contentHeight. Search/state-filter edits
+  // still land at the top: they change which rows exist, so the old
+  // offset is meaningless.
+  property real manageSavedY: -1
+  property string manageSavedFilter: ""
+  property string manageSavedState: ""
+  property bool manageRestoring: false
+  // Where and when the hold last wrote contentY. The Flickable answers
+  // a restore write with a sub-pixel correction of its own (118.5 ->
+  // 119) just after the restoring flag has fallen; that correction must
+  // not be mistaken for a user scroll, or the hold is silently retargeted
+  // to the collapsed position and the list stays pinned near the top.
+  property int manageRestoreAtMs: 0
+  property real manageRestoreY: -1
+  Connections {
+    target: pluginCardsFlickable
+    function onContentYChanged() {
+      // A restore write is mid-burst clamped by the partially rebuilt
+      // content; it must not overwrite the saved offset we are aiming at.
+      if (root.manageRestoring)
+        return
+      var y = pluginCardsFlickable.contentY
+      if (y > 0 && root.manageSavedY > 0
+        && Date.now() - root.manageRestoreAtMs < 250
+        && Math.abs(y - root.manageRestoreY) <= 2)
+        return
+      if (y > 0) {
+        root.manageSavedY = y
+        return
+      }
+      // y==0 with full content height = a real user scroll to the top
+      // (forget the hold); y==0 while contentHeight has collapsed is the
+      // rebuild clamp itself (keep the hold).
+      if (pluginCardsFlickable.contentHeight - pluginCardsFlickable.height
+        >= root.manageSavedY)
+        root.manageSavedY = 0
+    }
+    function onContentHeightChanged() {
+      if (root.manageSavedY <= 0)
+        return
+      var maxY = Math.max(0, pluginCardsFlickable.contentHeight
+        - pluginCardsFlickable.height)
+      if (pluginCardsFlickable.contentY < root.manageSavedY && maxY > 0) {
+        var target = Math.min(root.manageSavedY, maxY)
+        root.manageRestoring = true
+        root.manageRestoreAtMs = Date.now()
+        root.manageRestoreY = target
+        pluginCardsFlickable.contentY = target
+        root.manageRestoring = false
+      }
+    }
+  }
+  // Filter/search edits (which also swap the model) still reset the list
+  // to the top instead of re-asserting the hold.
+  function manageScrollModelSwapped() {
+    if (manageFilter !== manageSavedFilter
+      || manageStateFilter !== manageSavedState) {
+      manageSavedFilter = manageFilter
+      manageSavedState = manageStateFilter
+      manageSavedY = -1
+      pluginCardsFlickable.contentY = 0
+    }
+  }
+  // The installed-plugin snapshot row for an id, or null when the list
+  // has no row (yet).
+  function pluginRowById(id) {
+    var list = root.managePlugins()
+    for (var i = 0; i < list.length; i++)
+      if (list[i] && String(list[i].id) === String(id)) return list[i]
+    return null
+  }
+  // Update-snapshot rows prepared for PiPluginCard: the update lists carry
+  // only {id, name, from, to, verified}, so each row is copied and joined
+  // with the installed-plugin row (live enable state, bar section,
+  // bar-widget kind, catalog author/description/repo). installed/latest
+  // and from/to are normalized to the same pair so the card's Update
+  // confirm and version pill read either spelling; updateAvailable marks
+  // every row as an available update and updatable carries whether the
+  // bar would actually apply it under the verification setting.
+  function updatesCardRows(items) {
+    var out = []
+    for (var i = 0; i < (items || []).length; i++) {
+      var u = items[i]
+      if (!u) continue
+      var o = {}
+      for (var k in u) o[k] = u[k]
+      var inst = root.pluginRowById(String(o.id || ""))
+      if (inst) {
+        o.author = inst.author
+        o.desc = inst.desc
+        o.repo = inst.repo
+        o.enabled = inst.enabled
+        o.isBarWidget = inst.isBarWidget
+        o.kinds = inst.kinds
+        if (!o.section) o.section = inst.section
+        if (!o.name) o.name = inst.name
+      }
+      o.installed = String(o.installed || o.from || "")
+      o.latest = String(o.latest || o.to || "")
+      o.from = o.installed
+      o.to = o.latest
+      // Every row is an available update (drives badge/border); whether it
+      // is actionable mirrors the bar's eligibleUpdates(): verified rows
+      // always, unverified ones only while the opt-in is on.
+      o.updateAvailable = true
+      o.updatable = (o.verified === true) || root.snapBool("allowUnverified")
+      out.push(o)
+    }
+    return out
+  }
+  // The plugin page on plugins.omarchy.org for a row's id (the same page
+  // the catalog links to; the id is payload-sourced and url-encoded).
+  function pluginPageUrl(id) {
+    return "https://plugins.omarchy.org/plugin.html?id="
+      + encodeURIComponent(String(id || ""))
+  }
+  // Open a plugin's marketplace page: the widget dispatches open_url after
+  // re-validating the https scheme, then closes the panel (the page is the
+  // point of the click, same dismissal as the store buttons).
+  function openPluginPageAndClose(id) {
+    root.writeSettingsCmd({ action: "open_url", url: root.pluginPageUrl(id) })
+    root.close()
+  }
+  // Counter shown after the Updates tab title: the total available updates
+  // spelled out by kind (verified + unverified), so both stay explicit the
+  // way the two list sections keep them apart.
+  function settingsVerifiedCount() {
+    return root.snapList("verified").length
+  }
+  function settingsUnverifiedCount() {
+    return root.snapList("unverified").length
+  }
+  function settingsUpdateBadgeText() {
+    var v = root.settingsVerifiedCount()
+    var u = root.settingsUnverifiedCount()
+    if (v > 0 && u > 0) return v + " + " + u
+    return v > 0 ? String(v) : String(u)
+  }
+  function settingsUpdateCountsText() {
+    var v = root.settingsVerifiedCount()
+    var u = root.settingsUnverifiedCount()
+    var parts = []
+    if (v > 0) parts.push(v + " verified")
+    if (u > 0) parts.push(u + " unverified")
+    if (parts.length === 0) return "No plugin updates available"
+    var n = v + u
+    return n + " plugin update" + (n === 1 ? "" : "s") + " available: "
+      + parts.join(", ")
+      + (u > 0 && !root.snapBool("allowUnverified")
+        ? " (unverified ones need the Settings-tab toggle)" : "")
+  }
+  // Move a plugin's bar icon from the Manage tab: patch the row locally so
+  // the section label updates at once, and the widget re-validates and runs
+  // the same move chain the popup's move row uses, then republishes (a
+  // failed move republishes the old section and the patch reverts).
+  function manageMove(id, section) {
+    var list = root.snapList("plugins").map(function (r) {
+      if (r && String(r.id) === String(id)) {
+        var o = {}
+        for (var k in r) o[k] = r[k]
+        o.section = String(section)
+        return o
+      }
+      return r
+    })
+    root.snapPatch({ plugins: list })
+    root.manageMoveForId = ""
+    root.writeSettingsCmd({ action: "move_icon", id: String(id),
+      section: String(section) })
+  }
+  // Enable/disable from a Manage row: same optimistic echo as the move
+  // (the row flips at once); the widget validates the id grammar, runs
+  // omarchy plugin enable/disable, reloads the plugin list, and
+  // republishes, so a failed toggle lands back on the real state.
+  function manageToggle(id, enable) {
+    // Arm the echo window (see managePlugins) and flip the local snapshot
+    // for the instant paint; the window then holds the row steady across
+    // any stale or override-free republish until the CLI truth lands.
+    var pe = ({})
+    for (var pk in root.pendingEnable) pe[pk] = root.pendingEnable[pk]
+    pe[String(id)] = { enable: enable === true, at: Date.now() }
+    root.pendingEnable = pe
+    var list = root.snapList("plugins").map(function (r) {
+      if (r && String(r.id) === String(id)) {
+        var o = {}
+        for (var k in r) o[k] = r[k]
+        o.enabled = enable === true
+        return o
+      }
+      return r
+    })
+    root.snapPatch({ plugins: list })
+    var name = ""
+    for (var i = 0; i < list.length; i++)
+      if (list[i] && String(list[i].id) === String(id))
+        name = String(list[i].name || "")
+    root.writeSettingsCmd({ action: "run_toggle", id: String(id),
+      enable: enable === true, name: name })
+  }
+  // Open a plugin's repository from its Manage row: the widget execs
+  // xdg-open after re-validating the https scheme. The panel deliberately
+  // stays open (a browser tab steals focus anyway, and the click-away
+  // handler would close the panel the moment it loses focus).
+  function manageOpenUrl(url) {
+    root.writeSettingsCmd({ action: "open_url", url: String(url || "") })
+  }
+  // Can this row's plugin be summoned as a window? Mirrors the shell's own
+  // panel loader rule: only panel/overlay/menu entry kinds get a panel
+  // Loader, and a disabled plugin has none to summon (the CLI refuses it).
+  // Bar widgets open through the bar itself, and their row carries the
+  // position button instead.
+  function rowIsSummonable(row) {
+    if (!row || row.enabled !== true || row.isBarWidget) return false
+    if (row.section) return false
+    var kinds = row.kinds
+    if (!Array.isArray(kinds)) return false
+    return kinds.indexOf("panel") !== -1 || kinds.indexOf("overlay") !== -1
+      || kinds.indexOf("menu") !== -1
+  }
+  // Open button on a summonable Manage row: the bar routes this to the
+  // shell CLI (omarchy-shell shell summon <id>), the documented way to
+  // open one of these plugins. The panel stays open, like every other
+  // row action.
+  function manageSummonPlugin(row) {
+    if (!root.rowIsSummonable(row)) return
+    root.writeSettingsCmd({ action: "summon_plugin", id: String(row.id || "") })
+  }
+  function openExternalUrl(url) {
+    root.manageOpenUrl(url)
   }
   function toggleAllowUnverified() {
     var next = !root.snapBool("allowUnverified")
@@ -1057,6 +1617,19 @@ Item {
     root.markPending("updateChecking", true)
     root.refreshRequestedAt = Date.now()
     root.writeSettingsCmd({ action: "refresh" })
+  }
+  // Queue the store launch (the widget execs the family's browser when it
+  // dispatches the command) and close the panel right away, the way the
+  // install prompt's openExtensionPage() dismisses itself: the store page
+  // is the point of the click, and the panel has nothing left to show.
+  // open_store lands before close()'s "closed" line in the append log, so
+  // the widget's in-order dispatch still launches the browser.
+  function openStoreAndClose(urlKey, binKey) {
+    root.writeSettingsCmd({
+      action: "open_store", url: root.snapStr(urlKey),
+      bin: root.snapStr(binKey)
+    })
+    root.close()
   }
   function beginUpdateConfirm(rows) {
     if (!rows || rows.length === 0) return
@@ -1205,9 +1778,17 @@ Item {
   // fallback.
   Process {
     id: browserProc
+    // omarchy-browser.desktop is Omarchy's launcher wrapper and names no
+    // browser family, so that answer (or an empty one) is resolved via
+    // omarchy-cmd-default-browser, the reader the wrapper itself uses.
     command: ["bash", "-c",
-      "xdg-settings get default-web-browser 2>/dev/null"
-      + " || xdg-mime query default x-scheme-handler/https 2>/dev/null || true"]
+      "b=$(xdg-settings get default-web-browser 2>/dev/null || true);"
+      + " if [ -z \"$b\" ] || [ \"$b\" = omarchy-browser.desktop ]"
+      + " && [ -x \"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-cmd-default-browser\" ]; then"
+      + " d=$(\"${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-cmd-default-browser\" 2>/dev/null || true);"
+      + " [ -n \"$d\" ] && b=$d; fi;"
+      + " [ -n \"$b\" ] || b=$(xdg-mime query default x-scheme-handler/https 2>/dev/null || true);"
+      + " printf %s \"$b\""]
     stdout: StdioCollector {
       id: browserProcOut
       waitForEnd: true
@@ -1378,6 +1959,7 @@ Item {
   // (uninstall) the satellites spiral inward and fade. All colors come from
   // the live shell palette, so the panel follows the Omarchy theme.
   function paintGlobe(ctx, W, H, t, escape, gridCol, dotCol, starCol, sats) {
+    if (!(W > 0 && H > 0)) return
     // Scene scale relative to the reference 120px-tall canvas: the globe
     // radius, stroke widths, and satellite dots all follow it, so callers
     // get a proportionally identical scene at any canvas size.
@@ -1495,6 +2077,107 @@ Item {
       ctx.beginPath()
       ctx.arc(pt.x, pt.y, 2.2 * fade * sc, 0, 6.2832)
       ctx.fillStyle = rgba(dotCol, 0.95 * fade)
+      ctx.fill()
+    }
+  }
+
+  // Empty-state companion to the globe: a wireframe cardboard box with its
+  // top flaps open, drawn in the globe's visual language - depth decides
+  // edge alpha, the same twinkling star field scatters around it, and a
+  // few accent sparkles drift out of the opening. It turns slowly on its
+  // axis and bobs on a sine. The motion never has a loop seam: every
+  // moving part is a smooth, endless function of time (the yaw simply
+  // keeps turning, the bob/flap sway are sine terms, and each sparkle
+  // fades in from zero alpha and back to zero before its cycle restarts).
+  // Colors come from the live palette like paintGlobe's.
+  function paintEmptyBox(ctx, W, H, t, gridCol, dotCol, starCol) {
+    if (!(W > 0 && H > 0)) return
+    // Same reference-unit scaling as the globe: identical scene feel at
+    // any canvas size.
+    var sc = H / 120
+    var cx = W / 2, cy = H / 2
+    var rgba = function (c, a) {
+      return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a.toFixed(3) + ")"
+    }
+    // Geometry (reference units): box half-extents and flap length.
+    var a = 23, b = 17, h = 19, f = 12
+    var yaw = t * 0.16                          // endless slow turn
+    var pitch = 0.4 + 0.04 * Math.sin(t * 0.5)  // lean showing the opening
+    var bob = 2.2 * Math.sin(t * 0.9)           // gentle float
+    var cosY = Math.cos(yaw), sinY = Math.sin(yaw)
+    var cosP = Math.cos(pitch), sinP = Math.sin(pitch)
+    var proj = function (x, y, z) {
+      var x1 = x * cosY + z * sinY
+      var z1 = -x * sinY + z * cosY
+      var y2 = y * cosP - z1 * sinP
+      var z2 = y * sinP + z1 * cosP
+      return { x: cx + x1 * sc, y: cy - (y2 + bob) * sc, z: z2 }
+    }
+    var edgeAlpha = function (z, boost) {
+      var nz = Math.max(-1, Math.min(1, z / 34))
+      var al = nz >= 0 ? 0.2 + 0.55 * nz : 0.08
+      return boost ? Math.min(1, al * 1.5) : al
+    }
+    ctx.clearRect(0, 0, W, H)
+    // Stars: the globe's deterministic scatter and twinkle, kept clear of
+    // the box's footprint so they read as backdrop, not clutter.
+    for (var i = 0; i < 26; i++) {
+      var sx = (i * 97 + 31) % W, sy = (i * 53 + 17) % H
+      var sdx = sx - cx, sdy = sy - cy
+      if (sdx * sdx + sdy * sdy < (a + 10) * (a + 10) * sc * sc) continue
+      ctx.fillStyle = rgba(starCol, 0.18 + 0.15 * Math.sin(t * 1.3 + i * 2.1))
+      ctx.fillRect(sx, sy, 1.4, 1.4)
+    }
+    // Every edge is collected with its mean depth, then drawn far-to-near
+    // so the fainter back edges never overprint the brighter front ones.
+    var edges = []
+    var addEdge = function (p, q, boost) {
+      edges.push({ p: p, q: q, z: (p.z + q.z) / 2, b: boost })
+    }
+    var corners = [[-a, -b], [a, -b], [a, b], [-a, b]]
+    var norms = [[0, -1], [1, 0], [0, 1], [-1, 0]]
+    for (var ci = 0; ci < 4; ci++) {
+      var c1 = corners[ci], c2 = corners[(ci + 1) % 4]
+      // Bottom ring, top rim (boosted: it frames the opening), stiles.
+      addEdge(proj(c1[0], -h, c1[1]), proj(c2[0], -h, c2[1]), false)
+      addEdge(proj(c1[0], h, c1[1]), proj(c2[0], h, c2[1]), true)
+      addEdge(proj(c1[0], -h, c1[1]), proj(c1[0], h, c1[1]), false)
+      // Open flap on this rim edge: hinged at the rim, tilted outward and
+      // slightly up, with an easy per-flap sway (sine terms -> seamless).
+      var n = norms[ci]
+      var fb = 0.3 + 0.045 * Math.sin(t * 1.15 + ci * 1.7)
+      var ox = Math.cos(fb) * n[0] * f, oz = Math.cos(fb) * n[1] * f
+      var oy = Math.sin(fb) * f
+      var t1 = proj(c1[0] + ox, h + oy, c1[1] + oz)
+      var t2 = proj(c2[0] + ox, h + oy, c2[1] + oz)
+      addEdge(proj(c1[0], h, c1[1]), t1, false)
+      addEdge(proj(c2[0], h, c2[1]), t2, false)
+      addEdge(t1, t2, false)
+    }
+    edges.sort(function (u, v) { return u.z - v.z })
+    ctx.lineWidth = 1
+    for (var ei = 0; ei < edges.length; ei++) {
+      var e = edges[ei]
+      ctx.beginPath()
+      ctx.moveTo(e.p.x, e.p.y)
+      ctx.lineTo(e.q.x, e.q.y)
+      ctx.strokeStyle = rgba(gridCol, edgeAlpha(e.z, e.b))
+      ctx.stroke()
+    }
+    // Sparkles: three motes of accent light drift up and out of the open
+    // box. Each fades in from nothing and back to nothing, so its cycle
+    // restart is invisible (this is what keeps the loop seamless).
+    for (var k = 0; k < 3; k++) {
+      var cyc = (t * 0.22 + k / 3) % 1
+      var alpha = 0.85 * Math.sin(Math.PI * cyc)
+      if (alpha <= 0.02) continue
+      var rise = -h + (2 * h + 16) * cyc
+      var wob = 6 * Math.sin(t * 1.7 + k * 2.4)
+      var sp = proj(wob, rise, wob * 0.4)
+      var r = (1.1 + 0.5 * Math.sin(t * 2.3 + k)) * sc
+      ctx.beginPath()
+      ctx.arc(sp.x, sp.y, Math.max(0.6, r), 0, 6.2832)
+      ctx.fillStyle = rgba(dotCol, alpha * 0.9)
       ctx.fill()
     }
   }
@@ -1662,6 +2345,8 @@ Item {
   component PiButton: BorderSurface {
     id: piButton
     property string label: ""
+    // Optional leading glyph (Nerd Font icon), rendered left of the label.
+    property string iconText: ""
     property string tooltipText: ""
     property bool spin: false
     property int labelPixelSize: Style.font.body
@@ -1674,7 +2359,9 @@ Item {
     readonly property bool hot: piMouse.containsMouse
     signal clickedPi
 
-    implicitWidth: labelText.implicitWidth + Style.space(36)
+    // With iconText set, the row's implicit width covers both texts;
+    // empty, it collapses to just the label, exactly as before.
+    implicitWidth: piButtonRow.implicitWidth + Style.space(36)
     implicitHeight: Style.space(34)
     width: implicitWidth
     height: implicitHeight
@@ -1691,31 +2378,51 @@ Item {
         : Util.alpha(Color.foreground, 0.2)),
       1)
 
-    Text {
-      id: labelText
+    // Row, not a lone centered Text, so an iconText glyph can sit left of
+    // the label; the positioner skips the invisible icon text, so a label
+    // button still renders exactly as before.
+    Row {
+      id: piButtonRow
       anchors.centerIn: parent
-      text: piButton.label
-      color: piButton.active ? Color.accent
-        : (piButton.enabled
-          ? (piButton.primary || piButton.danger ? piButton.tone : Color.foreground)
-          : Util.alpha(Color.foreground, 0.35))
-      font.family: Style.font.family
-      font.pixelSize: piButton.labelPixelSize
-      font.bold: piButton.primary || piButton.danger || piButton.active
-      transformOrigin: Item.Center
+      spacing: piButton.iconText !== "" ? Style.space(10) : 0
+      Text {
+        id: piIconText
+        visible: piButton.iconText !== ""
+        anchors.verticalCenter: piButtonRow.verticalCenter
+        text: piButton.iconText
+        color: piButton.active ? Color.accent
+          : (piButton.enabled
+            ? (piButton.primary || piButton.danger ? piButton.tone : Color.foreground)
+            : Util.alpha(Color.foreground, 0.35))
+        font.family: Style.font.family
+        font.pixelSize: Style.font.icon
+      }
+      Text {
+        id: labelText
+        anchors.verticalCenter: piButtonRow.verticalCenter
+        text: piButton.label
+        color: piButton.active ? Color.accent
+          : (piButton.enabled
+            ? (piButton.primary || piButton.danger ? piButton.tone : Color.foreground)
+            : Util.alpha(Color.foreground, 0.35))
+        font.family: Style.font.family
+        font.pixelSize: piButton.labelPixelSize
+        font.bold: piButton.primary || piButton.danger || piButton.active
+        transformOrigin: Item.Center
 
-      // NumberAnimation (GUI-thread timer driven) rather than
-      // RotationAnimator: the shell's composited windows do not advance
-      // render-thread animators (same mechanism the bar's refresh button
-      // used). Loops full circles while the check runs, and resets so the
-      // icon sits upright again once it finishes.
-      NumberAnimation on rotation {
-        from: 0
-        to: 360
-        duration: 900
-        loops: Animation.Infinite
-        running: piButton.spin
-        onRunningChanged: if (!running) labelText.rotation = 0
+        // NumberAnimation (GUI-thread timer driven) rather than
+        // RotationAnimator: the shell's composited windows do not advance
+        // render-thread animators (same mechanism the bar's refresh button
+        // used). Loops full circles while the check runs, and resets so the
+        // icon sits upright again once it finishes.
+        NumberAnimation on rotation {
+          from: 0
+          to: 360
+          duration: 900
+          loops: Animation.Infinite
+          running: piButton.spin
+          onRunningChanged: if (!running) labelText.rotation = 0
+        }
       }
     }
     MouseArea {
@@ -1738,58 +2445,64 @@ Item {
     }
   }
 
-  // Settings update-list row: plugin name + installed -> latest, a primary
-  // Update text button, and an Uninstall icon button (trash glyph from the
-  // Nerd Font Style.font.family resolves to, labelled by its tooltip). The
-  // icon button is deliberately not tone-highlighted: the confirm stage is
-  // what makes an uninstall loud. Every field is catalog-sourced, so
-  // plain-text Text keeps remote strings inert.
-  component PiUpdateRow: Row {
-    id: piRow
-    width: parent ? parent.width : 0
-    spacing: Style.spacing.controlGap
-    readonly property real updateWidth: Style.space(78)
-    readonly property real iconSize: Style.space(30)
-    Column {
-      width: parent.width - piRow.updateWidth - piRow.iconSize
-        - 2 * Style.spacing.controlGap
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(2)
-      Text {
-        width: parent.width
-        elide: Text.ElideRight
-        textFormat: Text.PlainText
-        text: String(modelData.name)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
-        color: Color.foreground
-      }
-      Text {
-        width: parent.width
-        elide: Text.ElideRight
-        textFormat: Text.PlainText
-        text: String(modelData.from) + "  \u2192  " + String(modelData.to)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        color: Color.muted
+  // Bordered icon button in the OmApple plugins-list idiom: a bare glyph,
+  // the shell's control spec (normal -> hover-cursor), and a tooltip naming
+  // the action. Used for every per-row Manage action.
+  component PiIconButton: BorderSurface {
+    id: piIconBtn
+    property string iconText: ""
+    property string tooltipText: ""
+    property bool spin: false
+    property bool active: false
+    property real iconSize: Style.font.body + 2
+    property color tone: Color.foreground
+    signal clickedPi
+
+    implicitWidth: Style.space(34)
+    implicitHeight: Style.space(30)
+    width: implicitWidth
+    height: implicitHeight
+    radius: Style.cornerRadius
+    padding: 0
+    color: active
+      ? Util.alpha(Color.accent, 0.25)
+      : (piIconMouse.containsMouse
+        ? Style.hoverFillFor(Color.foreground, tone) : "transparent")
+    borderSpec: active
+      ? Border.flat(Color.accent, 1)
+      : Border.controlSpec(piIconMouse.containsMouse
+        ? "hover-cursor" : "normal", Color.foreground, tone)
+
+    Text {
+      id: piIconBtnText
+      anchors.centerIn: parent
+      text: piIconBtn.iconText
+      color: piIconBtn.enabled ? piIconBtn.tone
+        : Util.alpha(Color.foreground, 0.35)
+      font.family: Style.font.family
+      font.pixelSize: piIconBtn.iconSize
+      transformOrigin: Item.Center
+      // Same NumberAnimation-not-RotationAnimator rule as PiButton: the
+      // shell's composited windows do not advance render-thread animators.
+      NumberAnimation on rotation {
+        from: 0
+        to: 360
+        duration: 900
+        loops: Animation.Infinite
+        running: piIconBtn.spin
+        onRunningChanged: if (!running) piIconBtnText.rotation = 0
       }
     }
-    PiButton {
-      anchors.verticalCenter: parent.verticalCenter
-      width: piRow.updateWidth
-      height: piRow.iconSize
-      label: "Update"
-      primary: true
-      onClickedPi: root.beginUpdateConfirm([modelData])
+    MouseArea {
+      id: piIconMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: piIconBtn.clickedPi()
     }
-    PiButton {
-      anchors.verticalCenter: parent.verticalCenter
-      width: piRow.iconSize
-      height: piRow.iconSize
-      label: "\uF1F8"
-      labelPixelSize: Math.round(piRow.iconSize / 2)
-      tooltipText: "Uninstall"
-      onClickedPi: root.beginUninstallConfirm(modelData)
+    PanelToolTip {
+      visible: piIconMouse.containsMouse && piIconBtn.tooltipText !== ""
+      text: piIconBtn.tooltipText
     }
   }
 
@@ -1798,7 +2511,10 @@ Item {
   // AutoText would interpret markup in it, so a remote <img src=...> tag
   // would fetch from the network before the user installed anything.
   component PiLine: Text {
-    width: cardColumn.width
+    // Fill the containing column/row: the settings panel nests these inside
+    // tab bodies narrower than the card, so the width comes from the parent
+    // (same ownership as PiUpdateSection).
+    width: parent ? parent.width : 0
     wrapMode: Text.Wrap
     textFormat: Text.PlainText
     color: Util.alpha(Color.foreground, 0.75)
@@ -1810,7 +2526,7 @@ Item {
   // foreground alpha so it reads as a rule in any theme (the bar popup's
   // separator, ported verbatim).
   component PiRule: Rectangle {
-    width: cardColumn.width
+    width: parent ? parent.width : 0
     height: 1
     color: Util.alpha(Color.foreground, 0.15)
   }
@@ -1819,7 +2535,7 @@ Item {
   // in the default browser via xdg-open. Colors come from the inline style
   // in root.linkTag (RichText ignores Text.linkColor).
   component PiTextLink: Text {
-    width: cardColumn.width
+    width: parent ? parent.width : 0
     wrapMode: Text.Wrap
     textFormat: Text.RichText
     color: Util.alpha(Color.foreground, 0.75)
@@ -1837,7 +2553,7 @@ Item {
   // widget wraps installed browsers in an accent span). No links, so no
   // href is reachable from it.
   component PiRichLine: Text {
-    width: cardColumn.width
+    width: parent ? parent.width : 0
     wrapMode: Text.Wrap
     textFormat: Text.RichText
     color: Color.muted
@@ -1845,10 +2561,415 @@ Item {
     font.pixelSize: Style.font.caption
   }
 
-  // One update list: bold title + live count pill, then a capped
-  // scrollable box (three rows, fade hint below the fold), rows carrying
-  // name, installed -> latest, and per-row Update/Uninstall. Same
-  // structure the bar popup's update sections used.
+  // Shared plugin card for both settings lists: the Manage tab's full
+  // installed set and the two Updates-tab lists render the identical
+  // card (the Manage Repeater used this markup inline; it is now a named
+  // component so both lists share it). A bordered surface - accent when
+  // the row is updatable - with a letter avatar, name and version pill
+  // ("v{from} -> v{to}" whenever a row carries two different versions,
+  // plain "v{installed}" otherwise), a "by {author} . {id}" meta line,
+  // an Update Available badge and the shell enable/disable switch, the
+  // plugin description, and the action row: the marketplace page and the
+  // repository link on the left, and Update (arms the same settings-confirm
+  // gate the batch action uses), Position bar icon (bar widgets and placed
+  // plugins) and Remove (uninstall gate) right-aligned underneath the
+  // toggle. Every string comes from the widget's
+  // snapshot, and plain-text Text keeps remote names inert.
+  component PiPluginCard: BorderSurface {
+                      id: pluginCard
+                      // The row object this card paints. Defaults to the
+                      // Repeater context's modelData (the Updates tab's
+                      // PiUpdateSection keeps working unchanged); the
+                      // manage list overrides it with a live lookup so
+                      // snapshot echoes and enable/disable patches update
+                      // the card in place instead of rebuilding every
+                      // card (a rebuild collapses the list's
+                      // contentHeight and jumps the scroll position).
+                      property var row: modelData
+                      readonly property var safeRow: (row && typeof row === "object") ? row : ({})
+                      width: parent.width
+                      implicitHeight: pluginCardCol.implicitHeight + Style.space(28)
+                      height: implicitHeight
+                      color: Util.alpha(root.foreground, 0.03)
+                      borderSpec: (safeRow.updateAvailable || safeRow.updatable)
+                        ? Border.flat(Color.accent, 1)
+                        : (Boolean(safeRow.installed || safeRow.version) ? Border.flat(Util.alpha(root.foreground, 0.16), 1) : Border.none())
+                      radius: Style.cornerRadius
+
+                      readonly property bool isBusy: root.activePluginOpId === String(safeRow.id || "")
+                      readonly property string authorText: String(safeRow.author || "")
+                      readonly property string descText: String(safeRow.description || safeRow.desc || "")
+                      readonly property string repoText: String(safeRow.repo || "")
+                      // Version pill pair: the update-list rows carry both
+                      // sides (from/to); an installed row only has its own
+                      // version, and latest when the row is updatable.
+                      readonly property string fromText: String(
+                        safeRow.from || safeRow.installed
+                        || safeRow.version || "")
+                      readonly property string toText: String(
+                        safeRow.to || safeRow.latest || "")
+                      readonly property bool isUpdatable: Boolean(safeRow.updateAvailable || safeRow.updatable)
+
+                      Column {
+                        id: pluginCardCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Style.space(14)
+                        spacing: Style.space(10)
+
+                        // 1. Header Line: Icon, Title, Author, Version, Status Badges
+                        Row {
+                          width: parent.width
+                          spacing: Style.space(10)
+
+                          Rectangle {
+                            width: Style.space(34)
+                            height: Style.space(34)
+                            radius: Style.cornerRadius
+                            color: pluginCard.isUpdatable
+                              ? Util.alpha(Color.accent, 0.2)
+                              : (Boolean(pluginCard.safeRow.installed || pluginCard.safeRow.version) ? Util.alpha(root.foreground, 0.08) : Util.alpha(root.foreground, 0.04))
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Text {
+                              anchors.centerIn: parent
+                              text: pluginCard.safeRow.name && String(pluginCard.safeRow.name).length > 0 ? String(pluginCard.safeRow.name).substring(0, 1).toUpperCase() : "󰏖"
+                              textFormat: Text.PlainText
+                              color: pluginCard.isUpdatable ? Color.accent : (Boolean(pluginCard.safeRow.installed || pluginCard.safeRow.version) ? root.foreground : root.dim)
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.body
+                              font.bold: true
+                            }
+                          }
+
+                          Column {
+                            width: Math.max(0, parent.width - Style.space(34) - Style.space(10) - badgesRow.implicitWidth - Style.space(10))
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 2
+
+                            Row {
+                              width: parent.width
+                              spacing: Style.space(6)
+
+                              Text {
+                                text: String(pluginCard.safeRow.name || pluginCard.safeRow.id || "")
+                                textFormat: Text.PlainText
+                                color: root.foreground
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.body
+                                font.bold: true
+                                elide: Text.ElideRight
+                                width: Math.min(implicitWidth, Math.max(Style.space(40), parent.width
+                                  - (cardVerText.visible ? cardVerText.width + Style.space(6) : 0)
+                                  - (cardRankText.visible ? cardRankText.width + Style.space(6) : 0)
+                                  - (cardStarsText.visible ? cardStarsText.width + Style.space(6) : 0)
+                                  - (cardHeartsText.visible ? cardHeartsText.width + Style.space(6) : 0)))
+                              }
+
+                              Text {
+                                id: cardVerText
+                                // A row that carries both versions spells the
+                                // pair out ("v{from} -> v{to}") even when the
+                                // two strings are equal (an unverified update
+                                // can re-offer the same version); a row with
+                                // one version stays plain "v{installed}".
+                                visible: pluginCard.fromText !== ""
+                                  || pluginCard.toText !== ""
+                                text: pluginCard.fromText !== ""
+                                  && pluginCard.toText !== ""
+                                  ? "v" + pluginCard.fromText + "  \u2192  v"
+                                    + pluginCard.toText
+                                  : "v" + (pluginCard.fromText !== ""
+                                    ? pluginCard.fromText : pluginCard.toText)
+                                textFormat: Text.PlainText
+                                color: Color.accent
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                                font.bold: true
+                              }
+
+                              Text {
+                                id: cardRankText
+                                visible: Boolean(pluginCard.safeRow.rankLabel)
+                                text: String(pluginCard.safeRow.rankLabel || "")
+                                textFormat: Text.PlainText
+                                color: Color.accent
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                                font.bold: true
+                              }
+
+                              Text {
+                                id: cardStarsText
+                                visible: Boolean(pluginCard.safeRow.stars && pluginCard.safeRow.stars > 0)
+                                text: "★ " + (pluginCard.safeRow.stars || 0)
+                                color: root.dim
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                              }
+
+                              Text {
+                                id: cardHeartsText
+                                visible: Boolean(pluginCard.safeRow.hearts && pluginCard.safeRow.hearts > 0)
+                                text: "♥ " + (pluginCard.safeRow.hearts || 0)
+                                color: root.dim
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                              }
+                            }
+
+                            Text {
+                              width: parent.width
+                              text: (pluginCard.authorText !== "" ? ("by " + pluginCard.authorText + " · ") : "") + String(pluginCard.safeRow.id || "")
+                              textFormat: Text.PlainText
+                              color: root.dim
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.caption
+                              elide: Text.ElideRight
+                            }
+                          }
+
+                          // Status Badges & Toggle Switch
+                          Row {
+                            id: badgesRow
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: Style.space(6)
+
+                            // T2 Specific Badge
+                            Rectangle {
+                              visible: Boolean(pluginCard.safeRow.isT2 || pluginCard.safeRow.isExactT2)
+                              height: Style.space(22)
+                              width: t2BadgeRow.implicitWidth + Style.space(12)
+                              radius: Style.cornerRadius
+                              color: Util.alpha(Color.accent, 0.14)
+                              border.color: Util.alpha(Color.accent, 0.5)
+                              border.width: 1
+
+                              Row {
+                                id: t2BadgeRow
+                                anchors.centerIn: parent
+                                spacing: Style.space(4)
+                                Text {
+                                  text: ""
+                                  color: Color.accent
+                                  font.family: root.fontFamily
+                                  font.pixelSize: Style.font.caption
+                                }
+                                Text {
+                                  text: "T2"
+                                  color: Color.accent
+                                  font.family: root.fontFamily
+                                  font.pixelSize: Style.font.caption
+                                  font.bold: true
+                                }
+                              }
+                            }
+
+                            // Update Available Badge
+                            Rectangle {
+                              visible: pluginCard.isUpdatable
+                              height: Style.space(22)
+                              width: updateBadgeText.implicitWidth + Style.space(12)
+                              radius: Style.cornerRadius
+                              color: Util.alpha(Color.accent, 0.2)
+                              border.color: Color.accent
+                              border.width: 1
+
+                              Text {
+                                id: updateBadgeText
+                                anchors.centerIn: parent
+                                text: "󰚰 Update Available"
+                                color: Color.accent
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                                font.bold: true
+                              }
+                            }
+
+                            // Toggle Switch to enable/disable plugin
+                            ToggleSwitch {
+                              id: cardToggleSwitch
+                              visible: true
+                              anchors.verticalCenter: parent.verticalCenter
+                              checked: pluginCard.safeRow.enabled !== false
+                              accent: root.accent
+                              foreground: checked ? root.accent : root.foreground
+                              busy: pluginCard.isBusy
+                              enabled: !pluginCard.isBusy && root.activePluginOpId === ""
+                              onToggled: root.manageToggle(String(pluginCard.safeRow.id || ""), !checked)
+
+                              PanelToolTip {
+                                visible: cardToggleSwitch.containsMouse
+                                text: (pluginCard.safeRow.enabled !== false) ? "Enabled" : "Disabled"
+                              }
+                            }
+                          }
+                        }
+
+                        // 2. Description
+                        Text {
+                          width: parent.width
+                          visible: pluginCard.descText !== ""
+                          text: pluginCard.descText
+                          textFormat: Text.PlainText
+                          color: root.foreground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          wrapMode: Text.WordWrap
+                          lineHeight: 1.25
+                        }
+
+                        // 3. Actions Row: the marketplace and repository
+                        // links sit on the left; the actions (Update, then the
+                        // one that opens the plugin - Position bar icon for
+                        // bar widgets, Open for summonable panel-type ones -
+                        // then Remove) are right-aligned, in
+                        // that order, so Remove lands directly underneath
+                        // the enable/disable toggle in the header row. The
+                        // positioner skips invisible children, so hidden
+                        // conditional buttons leave no gaps behind.
+                        Item {
+                          id: pluginActionsRow
+                          width: parent.width
+                          height: Math.max(linksRow.implicitHeight,
+                            actionsRow.implicitHeight)
+
+                          Row {
+                            id: linksRow
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: Style.space(8)
+
+                            // External link to Omarchy Plugins website page
+                            Button {
+                              tooltipText: "Plugins page ↗"
+                              iconText: "󰖟"
+                              bordered: true
+                              onClicked: root.openPluginPageAndClose(String(pluginCard.safeRow.id || ""))
+                            }
+
+                            // External link to repository
+                            Button {
+                              visible: pluginCard.repoText !== ""
+                              tooltipText: "GitHub ↗"
+                              iconText: "󰌹"
+                              bordered: true
+                              onClicked: root.manageOpenUrl(pluginCard.repoText)
+                            }
+                          }
+
+                          Row {
+                            id: actionsRow
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: Style.space(8)
+
+                            // Update button (if update available): wrapped in
+                            // an accent ring + tint so every updatable row's
+                            // action pops (the row itself keeps a highlighted
+                            // border; the shell Button's own fill/border
+                            // bindings are internal and not overridable, so
+                            // the highlight paints behind a transparent
+                            // Button). An unverified update the verification
+                            // opt-in refuses still shows here - the row is
+                            // badged - but its tooltip states why the click
+                            // only explains (the bar refuses the update).
+                            Item {
+                              id: updateBtnWrap
+                              visible: Boolean(pluginCard.isUpdatable)
+                              implicitWidth: btnUpdate.implicitWidth
+                              implicitHeight: btnUpdate.implicitHeight
+
+                              Rectangle {
+                                anchors.fill: parent
+                                radius: Style.cornerRadius
+                                color: Util.alpha(root.accent, 0.14)
+                                border.color: root.accent
+                                border.width: 1
+                              }
+
+                              Button {
+                                id: btnUpdate
+                                anchors.fill: parent
+                                background: "transparent"
+                                // Icon (and hover/focus tokens) follow
+                                // `foreground`; the idle fill and border come
+                                // from the accent ring behind this button.
+                                foreground: root.accent
+                                tooltipText: pluginCard.isBusy
+                                  ? "Updating..."
+                                  : (pluginCard.safeRow.updatable === false
+                                    ? "Unverified update: enable \"Update to unverified versions\" in the Settings tab first"
+                                    : ("Update to v" + (pluginCard.safeRow.latest || pluginCard.safeRow.version || pluginCard.safeRow.installed || "")))
+                                iconText: pluginCard.isBusy ? "󰑐" : "󰚰"
+                                iconSpinning: pluginCard.isBusy
+                                enabled: !pluginCard.isBusy && root.activePluginOpId === ""
+                                onClicked: root.beginUpdateConfirm([{
+                                  id: String(pluginCard.safeRow.id || ""),
+                                  name: String(pluginCard.safeRow.name || pluginCard.safeRow.id || ""),
+                                  from: String(pluginCard.safeRow.installed || pluginCard.safeRow.version || ""),
+                                  to: String(pluginCard.safeRow.latest || pluginCard.safeRow.version || ""),
+                                  verified: pluginCard.safeRow.verified === true
+                                }])
+                              }
+                            }
+
+                            // Bar positioning button (for bar widgets)
+                            Button {
+                              visible: Boolean(pluginCard.safeRow.isBarWidget || pluginCard.safeRow.section)
+                              tooltipText: "Position bar icon"
+                              iconText: "\uF037"
+                              bordered: true
+                              enabled: !pluginCard.isBusy && root.activePluginOpId === ""
+                              onClicked: root.openPlacementFromSettings(pluginCard.safeRow)
+                            }
+
+                            // Open button (non-bar plugins that the shell
+                            // can summon as a window: panel/overlay/menu
+                            // kinds, and only while enabled - a disabled
+                            // plugin has no panel to open). It sits in the
+                            // same slot the position button takes on bar
+                            // rows; the two are mutually exclusive. The
+                            // circle-play glyph reads as "run this plugin
+                            // now"; the open-in-new/window-arrow glyph read
+                            // as an external-browser jump, which this is not
+                            // (it opens the plugin's own window in the shell).
+                            Button {
+
+                              visible: root.rowIsSummonable(pluginCard.safeRow)
+                              tooltipText: "Open plugin"
+                              iconText: "\uF144"
+                              bordered: true
+                              enabled: !pluginCard.isBusy && root.activePluginOpId === ""
+                              onClicked: root.manageSummonPlugin(pluginCard.safeRow)
+                            }
+
+                            // Remove button
+                            Button {
+                              visible: true
+                              tooltipText: pluginCard.isBusy ? "Removing..." : "Remove"
+                              iconText: pluginCard.isBusy ? "󰑐" : "󰆴"
+                              iconSpinning: pluginCard.isBusy
+                              bordered: true
+                              enabled: !pluginCard.isBusy && root.activePluginOpId === ""
+                              onClicked: root.beginUninstallConfirm({
+                                id: String(pluginCard.safeRow.id || ""),
+                                name: String(pluginCard.safeRow.name || pluginCard.safeRow.id || "")
+                              })
+                            }
+                          }
+                        }
+                      }
+                    }
+
+  // One update list: bold title + live count pill, then the same plugin
+  // cards the Manage tab list uses. The snapshot's update rows (id, name,
+  // from, to, verified) are joined with the installed-plugin list and the
+  // catalog detail before reaching the card (root.updatesCardRows), so a
+  // row can show the full information and every button; the version pill
+  // keeps spelling out the from -> to pair. The tab body already scrolls
+  // (settingsFlickable), so the section no longer caps its own height.
   component PiUpdateSection: Column {
     id: piSec
     property string title: ""
@@ -1857,25 +2978,11 @@ Item {
     width: parent ? parent.width : 0
     spacing: Style.space(8)
     visible: items.length > 0
-    readonly property int capRows: 3
-    // Rows are all the same height, so one row's height falls out of the
-    // column total: (implicitHeight - the (n-1) row gaps) / n. The column's
-    // implicitHeight is a real property, so the box keeps tracking the rows
-    // when they arrive after the pane was built; sizing off
-    // piSecRepeater.itemAt(0) would not re-evaluate and would leave the box
-    // at the fallback while the rows are taller. Style.space(30) only covers
-    // the moment before the first row exists.
-    readonly property real rowHeight: piSecRepeater.count > 0
-      ? (piSecColumn.implicitHeight
-        - Style.space(6) * (piSecRepeater.count - 1)) / piSecRepeater.count
-      : Style.space(30)
-    // Up to the cap the box is exactly the rows it holds; past it the box
-    // holds capRows rows and the rest scrolls. Either way the Flickable's
-    // Style.space(8) margins are added at both ends, otherwise every row is
-    // clipped by 16px.
-    readonly property real boxHeight: (items.length > capRows
-      ? rowHeight * capRows + Style.space(6) * (capRows - 1)
-      : piSecColumn.implicitHeight) + Style.space(16)
+
+    // Joined card rows (see root.updatesCardRows): a binding, so a fresh
+    // snapshot - or an optimistic enable/move echo patching the installed
+    // list - re-renders the cards.
+    readonly property var cardRows: root.updatesCardRows(piSec.items)
 
     Row {
       spacing: Style.space(8)
@@ -1905,42 +3012,68 @@ Item {
       }
     }
 
-    Rectangle {
+    Column {
       width: piSec.width
-      height: piSec.boxHeight
-      radius: Style.cornerRadius
-      color: Util.alpha(Color.foreground, 0.05)
-      clip: true
-      Flickable {
-        id: piSecFlick
-        anchors.fill: parent
-        anchors.margins: Style.space(8)
-        contentHeight: piSecColumn.implicitHeight
-        boundsBehavior: Flickable.StopAtBounds
-        Column {
-          id: piSecColumn
+      spacing: Style.space(10)
+      Repeater {
+        model: piSec.cardRows
+        // Braces matter (see PiUpdateSection's old note): the bare
+        // component type is not a delegate definition.
+        delegate: PiPluginCard { }
+      }
+    }
+  }
+
+  // Settings-tab toggle row: an OmApple-panel-style bordered surface with
+  // a bold label and explanatory caption left, and the shell's own
+  // ToggleSwitch (the same control the OmApple panel and bar popups use)
+  // right. The caller owns the value; `toggledPi` fires on every click.
+  component PiToggleRow: BorderSurface {
+    id: piToggleRow
+    property string label: ""
+    property string desc: ""
+    property bool checked: false
+    signal toggledPi
+
+    width: parent ? parent.width : 0
+    height: Style.space(62)
+    color: Util.alpha(Color.foreground, 0.03)
+    radius: Style.cornerRadius
+
+    Row {
+      anchors.fill: parent
+      anchors.leftMargin: Style.space(14)
+      anchors.rightMargin: Style.space(14)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(14)
+
+      Column {
+        width: parent.width - settingSwitch.width - Style.space(14)
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(2)
+        Text {
           width: parent.width
-          spacing: Style.space(6)
-          Repeater {
-            id: piSecRepeater
-            model: piSec.items
-            // Braces matter: `delegate: PiUpdateRow` (the bare type) is not a
-            // delegate definition, so the Repeater instantiates no rows and
-            // the box paints empty at the height items.length asked for.
-            delegate: PiUpdateRow { }
-          }
+          elide: Text.ElideRight
+          text: piToggleRow.label
+          color: Color.foreground
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+          font.bold: true
+        }
+        Text {
+          width: parent.width
+          elide: Text.ElideRight
+          text: piToggleRow.desc
+          color: Color.muted
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
         }
       }
-      Text {
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: Style.space(3)
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: (piSec.items.length - piSec.capRows) + " more below \u00b7 scroll"
-        color: Color.muted
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        visible: piSecFlick.contentHeight > piSecFlick.height + 1
-          && piSecFlick.contentY + piSecFlick.height < piSecFlick.contentHeight - 1
+      ToggleSwitch {
+        id: settingSwitch
+        anchors.verticalCenter: parent.verticalCenter
+        checked: piToggleRow.checked
+        onToggled: piToggleRow.toggledPi()
       }
     }
   }
@@ -2039,7 +3172,13 @@ Item {
 
     MouseArea {
       anchors.fill: parent
-      onClicked: root.close()
+      onClicked: {
+        if (root.stage === "placement" && root.placementReturnsToSettings()) {
+          root.returnPlacementToSettings()
+        } else {
+          root.close()
+        }
+      }
     }
 
     // Escape closes the panel. The surface grabs exclusive keyboard focus
@@ -2047,25 +3186,43 @@ Item {
     Item {
       anchors.fill: parent
       focus: true
-      Keys.onEscapePressed: root.close()
+      Keys.onEscapePressed: {
+        if (root.stage === "placement" && root.placementReturnsToSettings()) {
+          root.returnPlacementToSettings()
+        } else {
+          root.close()
+        }
+      }
     }
 
     BorderSurface {
       id: card
       anchors.centerIn: parent
-      width: Math.min(Style.space(672), panel.width - Style.space(48))
-      // Fit the visible stage dynamically: cardColumn.implicitHeight sums only
-      // the visible children in the Column, so the card hugs the current stage's
-      // content, clamped to the screen.
-      height: Math.min(cardColumn.anchors.topMargin
-                       + cardColumn.implicitHeight
-                       + card.contentBottomInset,
-                       panel.height - Style.space(48))
+      // The settings stage is a fixed-size card (the OmApple panel's
+      // 968x682, dialed back 15% to 823x580 and then grown 10% on both
+      // axes to 905x638, shrunk only when the panel is smaller); the
+      // wizard stages keep hugging the visible stage content, clamped
+      // to the screen (cardColumn.implicitHeight sums visible children only).
+      width: root.stage === "settings"
+        ? Math.min(Style.space(905), panel.width - Style.space(48))
+        : Math.min(Style.space(760), panel.width - Style.space(48))
+      height: root.stage === "settings"
+        ? root.settingsCardHeight
+        : Math.min(cardColumn.anchors.topMargin
+                   + cardColumn.implicitHeight
+                   + card.footerInset,
+                   panel.height - Style.space(48))
       clip: true
       radius: Style.cornerRadius
       color: Color.popups.background
       borderSpec: Border.flat(Color.accent, Style.normalBorderWidth)
       padding: Style.space(24)
+      // Header and footer paddings are dialed tighter than the insets they
+      // otherwise follow (two 15% steps): the header's margins above/below
+      // the header row, and the even inset that frames the footer strip on
+      // all four sides. The body keeps the full content insets.
+      readonly property real headerInset: Math.round(contentTopInset * 0.8 * 0.85 * 0.85)
+      readonly property real footerInset: Math.round(contentBottomInset * 0.85 * 0.85)
 
       // Swallow clicks over the card so the scrim MouseArea below doesn't close.
       MouseArea { anchors.fill: parent; onClicked: {} }
@@ -2075,18 +3232,19 @@ Item {
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.topMargin: Math.round(card.contentTopInset * 0.8)
+        anchors.topMargin: card.headerInset
         anchors.rightMargin: card.contentRightInset
         anchors.leftMargin: card.contentLeftInset
         spacing: Style.spacing.panelGap
 
         // Header block: bar icon + plugin name + version pill + action
-        // subtitle, with equal margins above and below (20% less than the left
-        // content margin) and a full-width divider under the header.
+        // subtitle, with equal margins above and below (the header inset:
+        // 20% under the content margin, then 15% tighter twice over) and a
+        // full-width divider under the header.
         Item {
           id: headerBlock
           width: cardColumn.width
-          implicitHeight: headerRow.implicitHeight + Math.round(card.contentTopInset * 0.8)
+          implicitHeight: headerRow.implicitHeight + card.headerInset
           height: implicitHeight
 
         Row {
@@ -2157,6 +3315,80 @@ Item {
           }
         }
 
+          // Panel-header actions, right-aligned and shown ONLY while the
+          // tabbed settings layout is on screen (root.isManagerStage,
+          // stage "settings"): the batch update first, then a manual
+          // check. Install review, placement, the running system panel
+          // and the settings-confirm gate all reuse this header, and
+          // these two actions belong to the settings panel alone. The
+          // batch is the accent-primary (ring + tint behind a
+          // transparent Button); the check's icon spins 360 while a
+          // check runs (the shared Button's iconSpinning, gated on
+          // reduce-motion). Both defer to the bar: the batch arms the
+          // settings-confirm gate, the check writes the refresh command
+          // (the bar's running-check guard makes a redundant click a safe
+          // no-op, so it stays clickable during a check and the spin
+          // covers the whole check via the published updateChecking flag).
+          Row {
+            id: headerActionsRow
+            // Not root.isManagerStage: that also covers settings-confirm
+            // and the browser-prompt stage, which reuse this header
+            // for their own cards. Only the tabbed settings stage itself.
+            visible: root.stage === "settings"
+            anchors.right: parent.right
+            anchors.verticalCenter: headerRow.verticalCenter
+            spacing: Style.space(10)
+            Item {
+              visible: root.settingsEligibleRows().length > 0
+              implicitWidth: btnHeaderUpdate.implicitWidth
+              implicitHeight: btnHeaderUpdate.implicitHeight
+
+              Rectangle {
+                anchors.fill: parent
+                radius: Style.cornerRadius
+                color: Util.alpha(root.accent, 0.14)
+                border.color: root.accent
+                border.width: 1
+              }
+
+              Button {
+                id: btnHeaderUpdate
+                anchors.fill: parent
+                background: "transparent"
+                foreground: root.accent
+                text: "Update " + root.settingsEligibleRows().length
+                  + (root.settingsEligibleRows().length === 1
+                    ? " plugin now" : " plugins now")
+                iconText: "󰚰"
+                onClicked: root.beginUpdateConfirm(root.settingsEligibleRows())
+              }
+            }
+            Button {
+              id: btnHeaderCheck
+              text: root.snapBool("updateChecking")
+                ? "Checking for updates" : "Check for updates"
+              iconText: "\uF021"
+              bordered: true
+              // Disabled while a check runs (the label and spinning icon
+              // carry that state); the bar's running-check guard made a
+              // redundant click a no-op anyway, but a dimmed, inert button
+              // is the honest affordance.
+              enabled: !root.snapBool("updateChecking")
+              // The kit has no disabled tint: dim the button itself so the
+              // inert state is visible (the spinning icon carries the
+              // "checking" half of the state).
+              opacity: enabled ? 1.0 : 0.55
+              iconSpinning: root.snapBool("updateChecking")
+                && !Style.reduceMotion
+              // The check's results (globe, empty state, update rows) all
+              // live in the Updates tab: show it while the check runs.
+              onClicked: {
+                root.settingsTab = "updates"
+                root.refreshUpdates()
+              }
+            }
+          }
+
           // Divider spanning the full card width, under the header.
           Rectangle {
             anchors.bottom: parent.bottom
@@ -2169,8 +3401,13 @@ Item {
         }
 
         PiLine {
-          visible: root.stage !== "browser-prompt" && root.stage !== "browser-defer"
+          visible: root.stage !== "browser-prompt"
             && root.stage !== "running"
+            // Stage-gated as well as mode-gated: the settings panel's card
+            // is fixed-height, so a stray visible row here (e.g. mode left
+            // on "move" after the placement detour) clips the footer off
+            // the card. The stage check makes that class of leak impossible.
+            && root.stage !== "settings" && root.stage !== "settings-confirm"
             && root.mode !== "settings" && root.mode !== "settings-confirm"
           text: root.pluginName + "  \u00b7  " + root.pluginId
           color: Color.foreground
@@ -2351,289 +3588,953 @@ Item {
         }
 
         // ---- stage: settings (the bar widget's settings panel as a
-        // centered system overlay: toggles, update lists, batch update,
-        // poll interval, store links; every control writes a command the
-        // widget dispatches, and the panel repaints from the republished
-        // snapshot within 400ms) ----
-        // Scrollable body: the settings content (toggles with captions,
-        // both capped lists, interval row, store section) can exceed the
-        // card, so the stage scrolls between the fixed header and footer.
-        Flickable {
+        // centered system overlay, organized as four vertical tabs:
+        // Updates, Manage, Settings and About. The tab bar sits at the
+        // left; the tab body scrolls between the fixed header and footer.
+        // Every control writes a command the widget dispatches, and the
+        // panel repaints from the republished snapshot within 400ms. ----
+        Row {
           visible: root.stage === "settings"
           width: cardColumn.width
-          implicitHeight: visible ? height : 0
-          // Fit the content, capped at the space left on screen between the
-          // fixed header and footer (card clamps to panel.height - 48, and
-          // carries 24+24 of padding). Only scrolls when the content is
-          // taller than the available space; never stretches the card.
-          // Must not bind to cardColumn.height: the card height is derived
-          // from this Flickable's rect (childrenRect), so that would loop.
-          height: Math.min(settingsBody.childrenRect.height,
-                           Math.max(Style.space(160), panel.height
-                             - Style.space(96)
-                             - headerBlock.height - footerDivider.implicitHeight
-                             - footerRow.height - 3 * cardColumn.spacing))
-          // childrenRect (visible children only): Column.implicitHeight
-          // counts the conditionally hidden rows too, which would leave
-          // blank space at the bottom of the scroll range.
-          contentHeight: settingsBody.childrenRect.height
-          boundsBehavior: Flickable.StopAtBounds
+          spacing: Style.space(16)
+
+          // Vertical tab rail: OmApple-panel-style buttons (icon + title +
+          // one-line description, accent strip and tinted fill on the
+          // active one). The Updates button carries a counter pill after
+          // its title: the total available updates spelled out by kind
+          // ("verified + unverified"), urgent-toned whenever unverified
+          // ones are part of the total; the tooltip spells both counts out.
+          id: settingsStageRow
+          // Exact vertical budget for the tab body: the fixed settings card
+          // minus every fixed element stacked above and below it (top margin,
+          // the PlugBrug header, the footer divider and buttons, the bottom
+          // inset, and the column gaps). The
+          // settings row then fills the card to the pixel, so the footer is
+          // never clipped and the body is always exactly the space between
+          // header and footer.
+          readonly property real settingsBodyMax: Math.max(Style.space(160),
+            root.settingsCardHeight - card.headerInset
+            - card.footerInset - headerBlock.height
+            - footerDivider.implicitHeight - footerArea.height
+            - 3 * cardColumn.spacing)
           Column {
-          id: settingsBody
-          width: parent.width
-          // Same group spacing as the bar popup's settings column.
-          spacing: Style.space(20)
-
-          // Toggles first, directly under the panel header (as in the bar
-          // popup): the unverified toggle gates which versions the update
-          // sections and the batch action below can act on, so it reads as
-          // the setting that shapes the whole panel. Label + explanatory
-          // caption left, On/Off button right.
-          Row {
-            width: parent.width
-            spacing: Style.spacing.controlGap
-            Column {
-              width: parent.width - Style.space(86) - Style.spacing.controlGap
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(2)
-              PiLine { text: "Update to unverified versions"; width: parent.width }
-              PiLine {
-                width: parent.width
-                color: Color.muted
-                font.pixelSize: Style.font.caption
-                text: "Off: plugins only update to catalog-verified versions."
-              }
-            }
-            PiButton {
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(86)
-              label: root.snapBool("allowUnverified") ? "On" : "Off"
-              primary: root.snapBool("allowUnverified")
-              onClickedPi: root.toggleAllowUnverified()
-            }
-          }
-          Row {
-            width: parent.width
-            spacing: Style.spacing.controlGap
-            Column {
-              width: parent.width - Style.space(86) - Style.spacing.controlGap
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(2)
-              PiLine { text: "Notify about plugin updates"; width: parent.width }
-              PiLine {
-                width: parent.width
-                color: Color.muted
-                font.pixelSize: Style.font.caption
-                text: "Off: the badge and panel lists stay live, but no desktop notifications."
-              }
-            }
-            PiButton {
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(86)
-              label: root.snapBool("notifyUpdates") ? "On" : "Off"
-              primary: root.snapBool("notifyUpdates")
-              onClickedPi: root.toggleNotifyUpdates()
-            }
-          }
-
-          PiRule { visible: root.settingsUpdatesGroupVisible() }
-
-          // Animated checking indicator: wave-bouncing dots and pulsing text.
-          // Height strictly matches 1-line PiLine so panel height never shifts.
-          Item {
-            id: checkingLine
-            visible: root.snapBool("updateChecking")
-            width: cardColumn.width
-            implicitHeight: checkingTextMeasure.implicitHeight
-            height: implicitHeight
-
-            Text {
-              id: checkingTextMeasure
-              visible: false
-              text: "All installed plugins are up to date."
-              font.family: Style.font.family
-              font.pixelSize: Style.font.body
-            }
-
-            Row {
-              id: checkingRow
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(2)
-
-              Text {
-                id: checkingLabel
-                text: "Checking for plugin updates"
-                font.family: Style.font.family
-                font.pixelSize: Style.font.body
-                color: Util.alpha(Color.foreground, 0.75)
-
-                SequentialAnimation on color {
-                  running: checkingLine.visible && !Style.reduceMotion
-                  loops: Animation.Infinite
-                  ColorAnimation {
-                    from: Util.alpha(Color.foreground, 0.75)
-                    to: Color.accent
-                    duration: 900
-                    easing.type: Easing.InOutSine
-                  }
-                  ColorAnimation {
-                    from: Color.accent
-                    to: Util.alpha(Color.foreground, 0.75)
-                    duration: 900
-                    easing.type: Easing.InOutSine
-                  }
-                }
-              }
-
-              Repeater {
-                model: 3
-                delegate: Text {
-                  text: "."
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.body
-                  font.bold: true
-                  color: Color.accent
-                  property real lift: 0
-                  y: lift
-                  SequentialAnimation on lift {
-                    running: checkingLine.visible && !Style.reduceMotion
-                    loops: Animation.Infinite
-                    PauseAnimation { duration: index * 160 }
-                    NumberAnimation { from: 0; to: -4; duration: 220; easing.type: Easing.OutQuad }
-                    NumberAnimation { from: -4; to: 0; duration: 220; easing.type: Easing.InQuad }
-                    PauseAnimation { duration: 600 - (index * 160) }
-                  }
-                  SequentialAnimation on opacity {
-                    running: checkingLine.visible && !Style.reduceMotion
-                    loops: Animation.Infinite
-                    PauseAnimation { duration: index * 160 }
-                    NumberAnimation { from: 0.35; to: 1.0; duration: 220; easing.type: Easing.OutQuad }
-                    NumberAnimation { from: 1.0; to: 0.35; duration: 220; easing.type: Easing.InQuad }
-                    PauseAnimation { duration: 600 - (index * 160) }
-                  }
-                }
-              }
-            }
-          }
-
-          PiLine {
-            visible: !root.snapBool("updateChecking")
-              && !root.snapBool("updateCheckFailed")
-              && root.snapStr("lastCheckText") !== "never"
-              && root.snapStr("lastCheckText") !== ""
-              && root.settingsAllRows().length === 0
-            text: "All installed plugins are up to date."
-          }
-          PiLine {
-            visible: root.snapBool("updateCheckFailed")
-            color: Color.urgent
-            text: "Catalog unreachable: showing the last known update list."
-          }
-          PiLine {
-            visible: root.snapBool("settingsSaveFailed")
-            color: Color.urgent
-            text: "Settings file could not be written: changes apply this session only."
-          }
-
-          // Batch update (hidden while nothing is updatable): sits above
-          // the lists as the primary action; arms a confirmation for the
-          // eligible plugins, which then run through detached workers.
-          PiButton {
-            visible: root.settingsEligibleRows().length > 0
-            width: parent.width
-            primary: true
-            label: "Update " + root.settingsEligibleRows().length
-              + (root.settingsEligibleRows().length === 1
-                ? " plugin now" : " plugins now")
-            onClickedPi: root.beginUpdateConfirm(root.settingsEligibleRows())
-          }
-
-          // Per-plugin update lists: verified first, unverified below.
-          // The unverified list shows its rows under the opt-in toggle
-          // only: with the toggle off the widget never acts on them, and
-          // offering rows the batch refuses to update confuses the
-          // eligible count the batch label announces.
-          PiUpdateSection {
-            title: "Verified plugin updates"
-            tone: Color.accent
-            items: root.snapList("verified")
-          }
-          PiUpdateSection {
-            title: "Unverified plugin updates"
-            tone: Color.urgent
-            items: root.snapBool("allowUnverified") ? root.snapList("unverified") : []
-          }
-
-          PiRule {}
-
-          // Poll interval: five equal segments (selected one primary-marked)
-          // and the refresh button. Sits below the lists: the schedule and
-          // the manual check are settings, not the panel's primary action.
-          PiLine {
-            text: "Check for plugin updates:"
-          }
-          Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Style.spacing.controlGap
+            id: settingsTabBar
+            width: Style.space(242)
+            spacing: Style.space(8)
             Repeater {
-              model: root.snapList("pollValues")
-              delegate: PiButton {
-                width: Style.space(84)
-                label: String(root.snapList("pollLabels")[index] || "")
-                primary: Number(modelData) === Number(root.snapStr("pollMinutes"))
-                onClickedPi: root.setPollIntervalMinutes(modelData)
+              model: root.settingsTabModel
+              delegate: BorderSurface {
+                id: tabBtn
+                width: settingsTabBar.width
+                height: Style.space(54)
+                padding: 0
+                radius: Style.cornerRadius
+                color: root.settingsTab === modelData.key
+                  ? Style.selectedFillFor(Color.foreground, Color.accent)
+                  : tabBtnMouse.containsMouse
+                    ? Style.hoverFillFor(Color.foreground, Color.accent)
+                    : "transparent"
+                borderSpec: root.settingsTab === modelData.key
+                  ? Border.flat(Color.accent, 1)
+                  : Border.controlSpec(tabBtnMouse.containsMouse
+                      ? "hover-cursor" : "normal", Color.foreground, Color.accent)
+                // Left active accent strip (the OmApple rail marker).
+                Rectangle {
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.space(3)
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(4)
+                  height: Style.space(34)
+                  radius: Style.space(2)
+                  color: Color.accent
+                  visible: root.settingsTab === modelData.key
+                }
+                MouseArea {
+                  id: tabBtnMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    root.settingsTab = String(modelData.key)
+                    root.manageMoveForId = ""
+                  }
+                }
+                Row {
+                  anchors.fill: parent
+                  anchors.leftMargin: Style.space(14)
+                  anchors.rightMargin: Style.space(12)
+                  spacing: Style.space(12)
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: String(modelData.iconText)
+                    color: root.settingsTab === modelData.key
+                      ? Color.accent : Color.foreground
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.title
+                  }
+                  Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - Style.space(42)
+                    spacing: Style.space(2)
+                    Row {
+                      spacing: Style.space(6)
+                      Text {
+                        text: String(modelData.title)
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.body
+                        font.bold: root.settingsTab === modelData.key
+                        color: Color.foreground
+                        anchors.verticalCenter: parent.verticalCenter
+                      }
+                      // Updates-tab counter pill: total available updates
+                      // spelled out by kind, urgent-toned when unverified
+                      // ones are part of the total.
+                      Rectangle {
+                        id: updTabPill
+                        visible: modelData.key === "updates"
+                          && root.settingsAllRows().length > 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: updTabPillText.implicitWidth + Style.space(10)
+                        height: updTabPillText.implicitHeight + Style.space(4)
+                        radius: height / 2
+                        color: Util.alpha(root.snapList("unverified").length > 0
+                          ? Color.urgent : Color.accent, 0.16)
+                        Text {
+                          id: updTabPillText
+                          anchors.centerIn: parent
+                          text: root.settingsUpdateBadgeText()
+                          color: root.snapList("unverified").length > 0
+                            ? Color.urgent : Color.accent
+                          font.family: Style.font.family
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                        }
+                      }
+                    }
+                    Text {
+                      width: parent.width
+                      elide: Text.ElideRight
+                      text: String(modelData.desc)
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.caption
+                      color: Qt.darker(Color.foreground, 1.55)
+                    }
+                  }
+                }
+                PanelToolTip {
+                  visible: tabBtnMouse.containsMouse && modelData.key === "updates"
+                  text: root.settingsUpdateCountsText()
+                }
               }
             }
-            PiButton {
-              width: Style.space(34)
-              label: "\uF021"
-              labelPixelSize: Style.font.caption
-              spin: root.snapBool("updateChecking")
-              tooltipText: root.snapBool("updateChecking")
-                ? "Checking for updates\u2026"
-                : "Check for updates"
-              enabled: !root.snapBool("updateChecking")
-              onClickedPi: root.refreshUpdates()
+          }
+
+          // Hairline between rail and content, the OmApple separator.
+          Rectangle {
+            id: tabSeparator
+            width: 1
+            height: settingsContentCol.height
+            color: Util.alpha(Color.foreground, 0.08)
+          }
+
+          // Scrollable tab body column: no category header - the vertical
+          // tab rail already names each tab, and only the about tab carries
+          // a title of its own (the accent-toned plugin identity block).
+          Column {
+            id: settingsContentCol
+            width: cardColumn.width - settingsTabBar.width - tabSeparator.width
+              - 2 * settingsStageRow.spacing
+            spacing: 0
+
+            // Scrollable tab body: a fixed viewport that is always exactly
+            // the leftover space on the fixed settings card between the
+            // PlugBrug header and the footer (settingsBodyMax, derived from
+            // the fixed settings card). Only scrolls when the content is
+            // taller than that; never stretches the card and never reaches
+            // past the footer. clip keeps the sliding rows inside the
+            // viewport instead of painting over the header and footer. Must
+            // not bind to cardColumn.height: the wizard-stage card height is
+            // derived from that column, so that would loop.
+            Flickable {
+              id: settingsFlickable
+              visible: root.settingsTab !== "manage"
+              width: parent.width
+              height: settingsStageRow.settingsBodyMax
+              implicitHeight: visible ? height : 0
+              // Bound to the active tab column's own implicit height, not
+              // to settingsBody.childrenRect: childrenRect also counts the
+              // hidden tab columns, and the updates column's stage items
+              // bind implicitHeight: visible ? settingsFlickable.height : 0
+              // - their own visible flag stays true while the column hides
+              // them, so the hidden column injects a phantom contentHeight
+              // equal to the viewport itself, which made even the static
+              // Settings tab (and any other tab) flicker into scrollable.
+              contentHeight: Math.max(Style.space(1),
+                root.settingsTab === "updates" ? updatesTabCol.implicitHeight
+                  : root.settingsTab === "about" ? aboutTabCol.implicitHeight
+                    : settingsCol.implicitHeight)
+              clip: true
+              boundsBehavior: Flickable.StopAtBounds
+              ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+              Column {
+                id: settingsBody
+                width: parent.width
+                // Same group spacing as the bar popup's settings column.
+                spacing: Style.space(20)
+
+              // ---- tab: updates: the check state, the batch action, and
+              // the two per-plugin lists (verified first, unverified below,
+              // exactly as the widget gates them) ----
+              Column {
+                id: updatesTabCol
+                visible: root.settingsTab === "updates"
+                width: parent.width
+                spacing: Style.space(20)
+
+                // Checking indicator: the wireframe globe with orbiting
+                // satellites from the running stage, painted while the
+                // update check runs. Same zero-size/visibility guards as
+                // there: a hidden Canvas with a repaint animation keeps
+                // compositing frames and can leave stray globe fragments
+                // on this full-screen window. While a check runs the list
+                // area is empty, so the indicator claims the whole
+                // viewport (settingsFlickable has a fixed height derived
+                // from the card, never from content, so this cannot loop)
+                // and the globe scales to the largest square that fits,
+                // caption included.
+                // Shared slot for the globe and the empty-state box: only
+                // one is ever shown, and both claim the same full-flickable
+                // height, so a cross-fade between them never shifts the
+                // rows below. The slot's own height follows the *show*
+                // state, not the fade-out linger: when a check finishes
+                // with update rows appearing, the slot collapses at once
+                // and the fading globe just dissolves over the new list
+                // instead of shoving it down for the fade duration.
+                Item {
+                  id: settingsStageSlot
+                  width: parent.width
+                  implicitHeight: Math.max(
+                    checkingGlobe.show ? settingsFlickable.height : 0,
+                    emptyBoxStage.show ? settingsFlickable.height : 0)
+                  height: implicitHeight
+
+                  Item {
+                    id: checkingGlobe
+                    // Show state and visibility are kept apart so the item
+                    // can linger (visible) while it fades out to opacity 0;
+                    // the same Behaviour animates the 0 -> 1 fade-in. The
+                    // opacity binding depends only on `show` and visible
+                    // only on show+opacity, so nothing is circular.
+                    readonly property bool show: root.stage === "settings"
+                      && root.snapBool("updateChecking")
+                    visible: show || opacity > 0.01
+                    opacity: show ? 1 : 0
+                    Behavior on opacity {
+                      enabled: !Style.reduceMotion
+                      NumberAnimation { duration: 220 }
+                    }
+                    width: parent.width
+                    implicitHeight: visible ? settingsFlickable.height : 0
+                    height: implicitHeight
+                    // Largest square the globe can take (the panel width, or
+                    // the leftover height under the caption), then dialed
+                    // back 15%: the full-fit square reads too dominant.
+                    readonly property real side: Math.max(0, Math.min(
+                      width,
+                      height - checkingCaption.implicitHeight - Style.space(12))) * 0.85
+  
+                    Item {
+                      anchors.centerIn: parent
+                      width: checkingGlobe.side
+                      height: checkingGlobe.side + Style.space(8)
+                        + checkingCaption.implicitHeight
+  
+                      Canvas {
+                        id: checkingGlobeCanvas
+                        anchors.top: parent.top
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: checkingGlobe.visible ? checkingGlobe.side : 0
+                        height: checkingGlobe.visible ? checkingGlobe.side : 0
+                        visible: checkingGlobe.visible
+                        renderStrategy: Canvas.Image
+                        antialiasing: true
+                        property real phase: 0
+                        onPhaseChanged: requestPaint()
+                        onAvailableChanged: if (available) requestPaint()
+                        onVisibleChanged: if (!visible && available) {
+                          var c = getContext("2d")
+                          if (c) {
+                            c.clearRect(0, 0, width, height)
+                            c.resetTransform()
+                          }
+                        }
+                        onPaint: {
+                          if (!visible || !available) return
+                          var ctx = getContext("2d")
+                          if (!ctx) return
+                          root.paintGlobe(ctx, width, height, Date.now() / 1000,
+                            false,
+                            root.globeRgb(Color.foreground), root.globeRgb(Color.accent),
+                            root.globeRgb(Color.foreground))
+                        }
+                        NumberAnimation on phase {
+                          from: 0
+                          to: 3600
+                          duration: 360000
+                          loops: Animation.Infinite
+                          running: checkingGlobe.visible && !Style.reduceMotion
+                        }
+                      }
+  
+                      // Animated caption, same language as the running-stage
+                      // label: the words pulse between muted and accent, and
+                      // three dots bounce and fade in on a stagger (index *
+                      // 160) instead of a static ellipsis. Same running
+                      // guard as the globe itself; with reduce-motion the
+                      // animations stop and the line settles to its resting
+                      // state (plain caption + three steady dots).
+                      Row {
+                        id: checkingCaption
+                        anchors.top: checkingGlobeCanvas.bottom
+                        anchors.topMargin: Style.space(8)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: Style.space(2)
+  
+                        Text {
+                          id: checkingCaptionText
+                          textFormat: Text.PlainText
+                          text: "Checking for plugin updates"
+                          font.family: Style.font.family
+                          font.pixelSize: Style.font.caption
+                          font.italic: true
+                          color: Color.muted
+  
+                          SequentialAnimation on color {
+                            running: checkingGlobe.visible && !Style.reduceMotion
+                            loops: Animation.Infinite
+                            ColorAnimation {
+                              from: Color.muted
+                              to: Color.accent
+                              duration: 900
+                              easing.type: Easing.InOutSine
+                            }
+                            ColorAnimation {
+                              from: Color.accent
+                              to: Color.muted
+                              duration: 900
+                              easing.type: Easing.InOutSine
+                            }
+                          }
+                        }
+  
+                        Repeater {
+                          model: 3
+                          delegate: Text {
+                            text: "."
+                            font.family: Style.font.family
+                            font.pixelSize: Style.font.caption
+                            font.italic: true
+                            font.bold: true
+                            color: Color.accent
+                            property real lift: 0
+                            y: lift
+                            SequentialAnimation on lift {
+                              running: checkingGlobe.visible && !Style.reduceMotion
+                              loops: Animation.Infinite
+                              PauseAnimation { duration: index * 160 }
+                              NumberAnimation { from: 0; to: -4; duration: 220; easing.type: Easing.OutQuad }
+                              NumberAnimation { from: -4; to: 0; duration: 220; easing.type: Easing.InQuad }
+                              PauseAnimation { duration: 600 - (index * 160) }
+                            }
+                            SequentialAnimation on opacity {
+                              running: checkingGlobe.visible && !Style.reduceMotion
+                              loops: Animation.Infinite
+                              PauseAnimation { duration: index * 160 }
+                              NumberAnimation { from: 0.35; to: 1.0; duration: 220; easing.type: Easing.OutQuad }
+                              NumberAnimation { from: 1.0; to: 0.35; duration: 220; easing.type: Easing.InQuad }
+                              PauseAnimation { duration: 600 - (index * 160) }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+  
+                  // Empty state: nothing to update and no check running (so
+                  // no globe), the open cardboard box from paintEmptyBox
+                  // floats in the globe's slot - same viewport-filling and
+                  // scale guards as the checking globe above, and the
+                  // "up to date" message rides its caption instead of a
+                  // separate text line.
+                  Item {
+                    id: emptyBoxStage
+                    // Same linger-while-fading-out pattern as the globe.
+                    readonly property bool show: root.stage === "settings"
+                      && !root.snapBool("updateChecking")
+                      && !root.snapBool("updateCheckFailed")
+                      && root.settingsAllRows().length === 0
+                    visible: show || opacity > 0.01
+                    opacity: show ? 1 : 0
+                    Behavior on opacity {
+                      enabled: !Style.reduceMotion
+                      NumberAnimation { duration: 220 }
+                    }
+                    width: parent.width
+                    implicitHeight: visible ? settingsFlickable.height : 0
+                    height: implicitHeight
+                    readonly property real side: Math.max(0, Math.min(
+                      width,
+                      height - emptyBoxCaption.implicitHeight
+                        - Style.space(12))) * 0.85
+  
+                    Item {
+                      anchors.centerIn: parent
+                      width: emptyBoxStage.side
+                      height: emptyBoxStage.side + Style.space(8)
+                        + emptyBoxCaption.implicitHeight
+  
+                      Canvas {
+                        id: emptyBoxCanvas
+                        anchors.top: parent.top
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: emptyBoxStage.visible ? emptyBoxStage.side : 0
+                        height: emptyBoxStage.visible ? emptyBoxStage.side : 0
+                        visible: emptyBoxStage.visible
+                        renderStrategy: Canvas.Image
+                        antialiasing: true
+                        property real phase: 0
+                        onPhaseChanged: requestPaint()
+                        onAvailableChanged: if (available) requestPaint()
+                        onVisibleChanged: if (!visible && available) {
+                          var c = getContext("2d")
+                          if (c) {
+                            c.clearRect(0, 0, width, height)
+                            c.resetTransform()
+                          }
+                        }
+                        onPaint: {
+                          if (!visible || !available) return
+                          var ctx = getContext("2d")
+                          if (!ctx) return
+                          root.paintEmptyBox(ctx, width, height,
+                            Date.now() / 1000,
+                            root.globeRgb(Color.foreground), root.globeRgb(Color.accent),
+                            root.globeRgb(Color.foreground))
+                        }
+                        NumberAnimation on phase {
+                          from: 0
+                          to: 3600
+                          duration: 360000
+                          loops: Animation.Infinite
+                          running: emptyBoxStage.visible && !Style.reduceMotion
+                        }
+                      }
+  
+                      Text {
+                        id: emptyBoxCaption
+                        anchors.top: emptyBoxCanvas.bottom
+                        anchors.topMargin: Style.space(8)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: root.snapStr("lastCheckText") === "never"
+                          || root.snapStr("lastCheckText") === ""
+                          ? "No update check has run yet"
+                          : "All installed plugins are up to date"
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.caption
+                        font.italic: true
+                        font.bold: root.snapStr("lastCheckText") !== "never"
+                          && root.snapStr("lastCheckText") !== ""
+                        // The good-news state ("up to date") is highlighted
+                        // in accent; the neutral "no check yet" stays muted.
+                        color: root.snapStr("lastCheckText") !== "never"
+                          && root.snapStr("lastCheckText") !== ""
+                          ? Color.accent : Color.muted
+                      }
+                    }
+                  }
+                }
+                PiLine {
+                  visible: root.snapBool("updateCheckFailed")
+                  color: Color.urgent
+                  text: "Catalog unreachable: showing the last known update list."
+                }
+
+                // (The batch "Update N plugin(s) now" action moved to the
+                // settings panel header - see headerActionsRow.)
+
+                // Per-plugin update lists: verified first, unverified below.
+                // The unverified list shows its rows under the opt-in toggle
+                // only: with the toggle off the widget never acts on them,
+                // and offering rows the batch refuses to update confuses the
+                // eligible count the batch label announces.
+                PiUpdateSection {
+                  title: "Verified plugin updates"
+                  tone: Color.accent
+                  items: root.snapList("verified")
+                }
+                PiUpdateSection {
+                  title: "Unverified plugin updates"
+                  tone: Color.urgent
+                  items: root.snapBool("allowUnverified") ? root.snapList("unverified") : []
+                }
+              }
+
+              // ---- tab: settings: the update-gating toggles and the
+              // check-for-updates schedule (the toggles gate which versions
+              // the Updates tab can act on, so they read as the settings
+              // that shape the panel) ----
+              // ---- tab: settings: the two behaviour toggles, and the
+              // update-check schedule row ----
+              Column {
+                id: settingsCol
+                visible: root.settingsTab === "settings"
+                width: parent.width
+                // Tighter than the generic 20: this tab's content is fixed
+                // and must stay inside the derived viewport (settingsBodyMax)
+                // with real slack, so the flickable never becomes scrollable.
+                spacing: Style.space(14)
+
+                // Toggles first, directly under the tab header: OmApple
+                // panel-style rows (label + explanatory caption left, the
+                // shell ToggleSwitch right).
+                PiToggleRow {
+                  label: "Update to unverified versions"
+                  desc: "Off: plugins only update to catalog-verified versions."
+                  checked: root.snapBool("allowUnverified")
+                  onToggledPi: root.toggleAllowUnverified()
+                }
+                PiToggleRow {
+                  label: "Notify about plugin updates"
+                  desc: "Off: the badge and panel lists stay live, but no desktop notifications."
+                  checked: root.snapBool("notifyUpdates")
+                  onToggledPi: root.toggleNotifyUpdates()
+                }
+                PiLine {
+                  visible: root.snapBool("settingsSaveFailed")
+                  color: Color.urgent
+                  text: "Settings file could not be written: changes apply this session only."
+                }
+
+                PiRule {}
+
+                // Poll interval: five equal segments (selected one
+                // primary-marked) and the refresh button: the schedule and
+                // the manual check are settings, not a primary action.
+                PiLine {
+                  text: "Check for plugin updates:"
+                }
+                Row {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  spacing: Style.spacing.controlGap
+                  Repeater {
+                    model: root.snapList("pollValues")
+                    delegate: PiButton {
+                      width: Style.space(84)
+                      label: String(root.snapList("pollLabels")[index] || "")
+                      primary: Number(modelData) === Number(root.snapStr("pollMinutes"))
+                      onClickedPi: root.setPollIntervalMinutes(modelData)
+                    }
+                  }
+                  PiButton {
+                    width: Style.space(34)
+                    label: "\uF021"
+                    labelPixelSize: Style.font.caption
+                    spin: root.snapBool("updateChecking")
+                    tooltipText: root.snapBool("updateChecking")
+                      ? "Checking for updates\u2026"
+                      : "Check for updates"
+                    enabled: !root.snapBool("updateChecking")
+                    onClickedPi: root.refreshUpdates()
+                  }
+                }
+              }
+
+              // ---- tab: about: the browser stores, and this plugin's
+              // project links ----
+              Column {
+                id: aboutTabCol
+                visible: root.settingsTab === "about"
+                width: parent.width
+                spacing: Style.space(12)
+
+                // This plugin's own identity, rendered in the exact same
+                // format as the install-confirmation review's plugin block
+                // (bold accent-highlighted name, muted id line, description,
+                // the "by author · version · license · kinds" meta line and
+                // the "Source:" link): the data is this plugin's own
+                // manifest.json - the same file that backs the header's
+                // version badge - so it always describes the installed
+                // version. (The review's preview image and marketplace
+                // status lines are left out: this plugin has no own
+                // catalog entry in its own panel, and no self-verdict.)
+                PiLine {
+                  color: Color.accent
+                  font.bold: true
+                  text: root.managerName
+                }
+                PiLine {
+                  visible: root.managerId.length > 0
+                    && root.managerId !== root.managerName
+                  color: Color.muted
+                  font.pixelSize: Style.font.caption
+                  text: root.managerId
+                }
+                PiLine {
+                  visible: root.ownManifest !== null
+                    && String((root.ownManifest || {}).description || "").length > 0
+                  text: String((root.ownManifest || {}).description || "")
+                }
+                PiLine {
+                  text: {
+                    var e = root.ownManifest || {}
+                    var bits = []
+                    if (e.author) bits.push("by " + e.author)
+                    if (root.managerVersion) bits.push("v" + root.managerVersion)
+                    if (e.license) bits.push(String(e.license))
+                    var kinds = Array.isArray(e.kinds) ? e.kinds : []
+                    if (kinds.length) bits.push(kinds.join(", "))
+                    return bits.join("  \u00b7  ")
+                  }
+                }
+                PiTextLink {
+                  visible: root.githubRepoUrl.length > 0
+                  closeOnActivate: true
+                  text: "Source: " + root.linkTag(root.githubRepoUrl,
+                    root.githubRepoUrl)
+                }
+
+                PiRule {}
+
+                // Browser stores: the supported-browser lists (installed
+                // browsers accent-highlighted by the widget) above
+                // half-width buttons that open the store page in the first
+                // installed browser of that family (the labels carry the
+                // launch target) and dismiss the panel: the store page is
+                // the point of the click, the panel has nothing left to do
+                // once the launch command is queued. The open_store line is
+                // written before close() appends its "closed" line, so the
+                // widget's in-order dispatch launches the browser before the
+                // session closes (same command-plus-close pattern as a
+                // settings-confirm action).
+                Grid {
+                  width: parent.width
+                  columns: 2
+                  columnSpacing: Style.spacing.controlGap
+                  rowSpacing: Style.space(6)
+                  PiRichLine {
+                    width: (parent.width - Style.spacing.controlGap) / 2
+                    text: root.snapStr("chromeSupport")
+                  }
+                  PiRichLine {
+                    width: (parent.width - Style.spacing.controlGap) / 2
+                    text: root.snapStr("firefoxSupport")
+                  }
+                  PiButton {
+                    width: (parent.width - Style.spacing.controlGap) / 2
+                    label: root.snapStr("chromeLabel")
+                    onClickedPi: root.openStoreAndClose("chromeUrl", "chromeBin")
+                  }
+                  PiButton {
+                    width: (parent.width - Style.spacing.controlGap) / 2
+                    label: root.snapStr("firefoxLabel")
+                    onClickedPi: root.openStoreAndClose("firefoxUrl", "firefoxBin")
+                  }
+                }
+
+                PiRule {}
+
+                PiTextLink {
+                  text: "Project: " + root.linkTag(root.githubRepoUrl,
+                    "GitHub repository") + "  \u00b7  "
+                    + root.linkTag(root.githubIssuesUrl, "Report an issue")
+                }
+                PiTextLink {
+                  text: "Marketplace: " + root.linkTag(root.marketplaceListingUrl,
+                    "PlugBrug on the Omarchy plugin marketplace")
+                }
+                PiTextLink {
+                  text: "Docs: " + root.linkTag(root.licenseUrl, "License")
+                    + "  \u00b7  " + root.linkTag(root.privacyUrl, "Privacy policy")
+                }
+              }
             }
           }
 
-          PiRule {}
+            // Manage Tab: Pinned search toolbar and count at top,
+            // scrollable list of plugin cards below!
+            Item {
+              id: pluginsTabContainer
+              visible: root.settingsTab === "manage"
+              width: parent.width
+              height: settingsStageRow.settingsBodyMax
 
-          // Browser stores: the supported-browser lists (installed browsers
-          // accent-highlighted by the widget) above half-width buttons that
-          // open the store page in the first installed browser of that
-          // family (the labels carry the launch target).
-          Grid {
-            width: parent.width
-            columns: 2
-            columnSpacing: Style.spacing.controlGap
-            rowSpacing: Style.space(6)
-            PiRichLine {
-              width: (parent.width - Style.spacing.controlGap) / 2
-              text: root.snapStr("chromeSupport")
+              // Pinned Top Area: Search toolbar & active operation status banner
+              Column {
+                id: pluginsPinnedTop
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                spacing: Style.space(10)
+
+                // Toolbar: Search box and plugin count
+                Item {
+                  width: parent.width
+                  height: Style.space(32)
+
+                  Row {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(8)
+
+                    Loader {
+                      id: pluginSearchLoader
+                      width: Style.space(240)
+                      height: Style.space(32)
+                      active: root.opened && root.settingsTab === "manage"
+                      sourceComponent: FocusScope {
+                        id: pluginSearchScope
+                        width: Style.space(240)
+                        height: Style.space(32)
+
+                        readonly property bool _focused: searchInput.activeFocus
+                        readonly property bool _hot: searchMouseArea.containsMouse || _focused
+                        readonly property var _borderSpec: Border.controlSpec(_focused ? "focus" : (_hot ? "hover-cursor" : "normal"), root.foreground, root.accent)
+
+                        BorderSurface {
+                          anchors.fill: parent
+                          radius: Style.cornerRadius
+                          color: Style.controlFill(pluginSearchScope._focused, pluginSearchScope._hot, root.foreground, root.accent)
+                          borderSpec: pluginSearchScope._borderSpec
+                        }
+
+                        MouseArea {
+                          id: searchMouseArea
+                          anchors.fill: parent
+                          hoverEnabled: true
+                          cursorShape: Qt.IBeamCursor
+                          onClicked: searchInput.forceActiveFocus()
+                        }
+
+                        Text {
+                          anchors.left: parent.left
+                          anchors.right: parent.right
+                          anchors.leftMargin: Style.space(10)
+                          anchors.rightMargin: Style.space(10)
+                          anchors.verticalCenter: parent.verticalCenter
+                          visible: searchInput.text.length === 0
+                          text: "Search plugins..."
+                          font.pixelSize: Style.font.caption
+                          font.family: root.fontFamily
+                          color: Qt.darker(root.foreground, 1.6)
+                          elide: Text.ElideRight
+                        }
+
+                        TextInput {
+                          id: searchInput
+                          anchors.left: parent.left
+                          anchors.right: clearBtn.visible ? clearBtn.left : parent.right
+                          anchors.leftMargin: Style.space(10)
+                          anchors.rightMargin: Style.space(6)
+                          anchors.verticalCenter: parent.verticalCenter
+                          font.pixelSize: Style.font.caption
+                          font.family: root.fontFamily
+                          color: root.foreground
+                          clip: true
+                          readOnly: false
+                          text: root.pluginFilterQuery
+                          onTextChanged: root.pluginFilterQuery = text
+                        }
+
+                        MouseArea {
+                          id: clearBtn
+                          visible: searchInput.text.length > 0
+                          width: Style.space(20)
+                          height: Style.space(20)
+                          anchors.right: parent.right
+                          anchors.rightMargin: Style.space(6)
+                          anchors.verticalCenter: parent.verticalCenter
+                          cursorShape: Qt.PointingHandCursor
+                          onClicked: {
+                            searchInput.text = ""
+                            root.pluginFilterQuery = ""
+                          }
+
+                          Text {
+                            anchors.centerIn: parent
+                            text: "󰅖"
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                          }
+                        }
+                      }
+                    }
+
+                    // State filter toggles: each narrows the list to the
+                    // enabled or disabled plugins, and clicking the active
+                    // one clears the filter (both states shown again). They
+                    // compose with the search text; the count on the right
+                    // reflects the filtered rows.
+                    Button {
+                      text: "Enabled"
+                      fontSize: Style.font.caption
+                      bordered: true
+                      selected: root.manageStateFilter === "enabled"
+                      tooltipText: "Show only enabled plugins"
+                        + " \u2014 click again to show all"
+                      onClicked: root.manageStateFilter
+                        = root.manageStateFilter === "enabled" ? "" : "enabled"
+                    }
+                    Button {
+                      text: "Disabled"
+                      fontSize: Style.font.caption
+                      bordered: true
+                      selected: root.manageStateFilter === "disabled"
+                      tooltipText: "Show only disabled plugins"
+                        + " \u2014 click again to show all"
+                      onClicked: root.manageStateFilter
+                        = root.manageStateFilter === "disabled" ? "" : "disabled"
+                    }
+                  }
+
+                  Row {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(10)
+
+                    Text {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: root.filteredPlugins.length + " plugins"
+                      color: root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
+                }
+
+                // Operation in progress / feedback banner
+                BorderSurface {
+                  visible: root.pluginActionStatus !== ""
+                  width: parent.width
+                  height: Style.space(40)
+                  radius: Style.cornerRadius
+                  color: Util.alpha(Color.accent, 0.12)
+                  borderSpec: Border.flat(Color.accent, 1)
+
+                  Row {
+                    anchors.fill: parent
+                    anchors.leftMargin: Style.space(12)
+                    anchors.rightMargin: Style.space(12)
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(8)
+
+                    Text {
+                      text: root.activePluginOpId !== "" ? "󰑐" : "󰄲"
+                      color: Color.accent
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                    }
+
+                    Text {
+                      width: parent.width - Style.space(60)
+                      text: root.pluginActionStatus
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                      elide: Text.ElideRight
+                    }
+
+                    MouseArea {
+                      width: Style.space(20)
+                      height: Style.space(20)
+                      anchors.verticalCenter: parent.verticalCenter
+                      visible: root.activePluginOpId === ""
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.pluginActionStatus = ""
+
+                      Text {
+                        anchors.centerIn: parent
+                        text: "󰅖"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+                  }
+                }
+              }
+
+              // Scrollable Plugin Cards List
+              Flickable {
+                id: pluginCardsFlickable
+                anchors.top: pluginsPinnedTop.bottom
+                anchors.topMargin: Style.space(10)
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                contentHeight: pluginCardsColumn.childrenRect.height
+
+                Column {
+                  id: pluginCardsColumn
+                  width: parent.width
+                  spacing: Style.space(10)
+
+                  // Empty State
+                  BorderSurface {
+                    visible: root.filteredPlugins.length === 0
+                    width: parent.width
+                    height: Style.space(100)
+                    radius: Style.cornerRadius
+                    color: Util.alpha(root.foreground, 0.03)
+
+                    Column {
+                      anchors.centerIn: parent
+                      spacing: Style.space(8)
+
+                      Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "󰏖"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.title
+                      }
+
+                      Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "No plugins found"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+                  }
+
+                  // Plugin Cards Repeater
+                  Repeater {
+                    // Stable render identity: the model only swaps when the
+                    // row ids/order change (manageRenderSig), so enable/
+                    // disable patches and snapshot echoes repaint cards in
+                    // place instead of destroying and re-creating the whole
+                    // list (which collapses contentHeight and jumps the
+                    // scroll position mid-frame).
+                    model: root.manageRenderRows
+                    // Id-set changes (filter edits, installs, removals) do
+                    // rebuild; filter/search edits reset to the top.
+                    onModelChanged: root.manageScrollModelSwapped()
+
+                    delegate: PiPluginCard {
+                      // Live row: paint the current filtered row at this
+                      // index, re-read on every filteredPlugins change.
+                      row: root.filteredPlugins[index]
+                    }
+                  }
+                }
+              }
             }
-            PiRichLine {
-              width: (parent.width - Style.spacing.controlGap) / 2
-              text: root.snapStr("firefoxSupport")
-            }
-            PiButton {
-              width: (parent.width - Style.spacing.controlGap) / 2
-              label: root.snapStr("chromeLabel")
-              onClickedPi: root.writeSettingsCmd({
-                action: "open_store", url: root.snapStr("chromeUrl"),
-                bin: root.snapStr("chromeBin")
-              })
-            }
-            PiButton {
-              width: (parent.width - Style.spacing.controlGap) / 2
-              label: root.snapStr("firefoxLabel")
-              onClickedPi: root.writeSettingsCmd({
-                action: "open_store", url: root.snapStr("firefoxUrl"),
-                bin: root.snapStr("firefoxBin")
-              })
-            }
-          }
           }
         }
 
@@ -2854,41 +4755,38 @@ Item {
           }
         }
 
-        // ---- stage: browser-prompt (manager install finished) ----
-        // Shown exactly once: the install worker summons it directly after a
-        // successful install of the manager. The wizard is this manager's own
-        // UI; it is inert until the matching browser extension is installed.
-        // Send the user to the extension page for their default browser and
-        // explain the other-browser option.
+        // ---- stage: browser-prompt (browser extension setup) ----
+        // Summoned from two places: the install worker, directly after a
+        // manager install whose consent gate found no browser extension,
+        // and the bar's left-click gate when the extension is missing
+        // from every installed browser ("none") or from the default
+        // browser specifically ("missing-default"). The copy explains
+        // that the extension carries the plugin's core marketplace
+        // feature; declining it (Cancel) records a dismissal so the bar
+        // stops intercepting clicks.
         Column {
           visible: root.stage === "browser-prompt"
           width: cardColumn.width
           spacing: Style.spacing.lg
           PiLine {
-            text: "The Omarchy plugin is installed. Its browser extension is "
-              + "what shows the Install buttons on plugins.omarchy.org, so "
-              + "without it the plugin does nothing."
+            text: "The browser extension carries this plugin's core feature: "
+              + "it shows the Install buttons on the official Omarchy "
+              + "Marketplace at plugins.omarchy.org, so you can manage "
+              + "plugins straight from the website. Installing it is "
+              + "highly recommended."
           }
           PiLine {
+            visible: root.extPromptReason === "missing-default"
+            text: "The extension is already installed in "
+              + root.extSeenFamiliesPhrase + ", but not in your default "
+              + "browser: the button below adds it there too, so the "
+              + "marketplace works wherever you browse."
+          }
+          PiLine {
+            visible: root.extPromptReason !== "missing-default"
             text: "The button below opens the extension in the "
               + root.primaryStoreName + " for your default browser; the "
               + "browser asks before installing anything."
-          }
-          PiTextLink {
-            text: "For " + root.otherFamilyName + ": "
-              + root.linkTag(root.otherExtensionUrl, root.otherLinkText)
-          }
-        }
-
-        // ---- stage: browser-defer (user cancelled the prompt) ----
-        Column {
-          visible: root.stage === "browser-defer"
-          width: cardColumn.width
-          spacing: Style.spacing.lg
-          PiLine {
-            color: Color.urgent
-            text: "Without the browser extension this plugin does nothing: "
-              + "no Install buttons will appear on plugins.omarchy.org."
           }
           PiTextLink {
             text: "For " + root.otherFamilyName + ": "
@@ -2938,10 +4836,25 @@ Item {
                 labelPixelSize: Style.space(24)
                 label: root.sectionIcon(modelData)
                 tooltipText: root.sectionLabel(modelData)
-                  + (root.defaultSection === modelData ? " (default)" : "")
-                onClickedPi: root.mode === "install"
-                  ? root.installWithSection(modelData)
-                  : root.enable(modelData)
+                  + (root.placementFromSettings && root.placementPreviousSection === modelData
+                    ? " (current)"
+                    : (root.defaultSection === modelData ? " (default)" : ""))
+                primary: root.currentPlacementSection() === modelData
+                onClickedPi: {
+                  if (root.placementFromSettings) {
+                    root.manageMove(root.pluginId, modelData)
+                    // A browser-sourced detour has no settings panel to
+                    // return to: the move closes the panel outright.
+                    if (root.placementReturnsToSettings())
+                      root.returnPlacementToSettings()
+                    else
+                      root.close()
+                  } else if (root.mode === "install") {
+                    root.installWithSection(modelData)
+                  } else {
+                    root.enable(modelData)
+                  }
+                }
               }
             }
           }
@@ -2950,7 +4863,7 @@ Item {
         // Divider spanning the full card width, above the footer action buttons.
         Item {
           id: footerDivider
-          visible: footerRow.visible && footerRow.implicitHeight > 0
+          visible: footerArea.visible && footerArea.height > 0
           width: cardColumn.width
           implicitHeight: visible ? 1 : 0
           height: implicitHeight
@@ -2966,12 +4879,68 @@ Item {
 
         // ---- footer: confirm / cancel ----
         // Right-to-left layout: the primary action (Install/Uninstall/...)
-        // lands rightmost, Cancel to its left, as in standard dialogs.
-        Row {
-          id: footerRow
+        // lands rightmost, Cancel to its left, as in standard dialogs. The
+        // settings stage additionally pins a left-aligned pair of browser
+        // store buttons on the opposite end of the same strip.
+        Item {
+          id: footerArea
+          visible: root.footerVisible
           width: cardColumn.width
-          layoutDirection: Qt.RightToLeft
-          spacing: Style.spacing.controlGap
+          // Even padding on all four sides of the footer strip: the
+          // column gap above the buttons (panel-gap) is smaller than the
+          // card's footer insets (left, right and below), so the area
+          // carries the difference as headroom and the rows sit on its
+          // bottom edge: gap + headroom = the inset, everywhere.
+          height: Math.max(footerRow.implicitHeight,
+            footerStoreRow.implicitHeight)
+            + Math.max(0, card.footerInset - cardColumn.spacing)
+
+          // Left end (settings stage only): labeled icon buttons that
+          // open this plugin's Chrome Web Store / Firefox Add-ons page in
+          // the first installed browser of that family. Identical behavior
+          // to the About tab's labeled store buttons (openStoreAndClose
+          // queues the launch line, then closes the panel): the store page
+          // is the point of the click, so the panel dismisses once the
+          // command is queued. PiButton, so the pair carries the same
+          // glyph+label treatment, and the exact default control height, as
+          // the Close button at the other end of the strip.
+          Row {
+            id: footerStoreRow
+            visible: root.stage === "settings"
+            // The strip's side padding is the footer inset, not the body's
+            // content inset: reach closer to the card border (two 15% steps).
+            anchors.leftMargin: -(card.contentLeftInset - card.footerInset)
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            spacing: Style.spacing.controlGap
+            PiButton {
+              iconText: "󰊯"
+              label: "Chrome extension"
+              tooltipText: "Open this plugin's page in the Chrome Web"
+                + " Store, in Google Chrome"
+              onClickedPi: root.openStoreAndClose("chromeUrl", "chromeBin")
+            }
+            PiButton {
+              iconText: "󰈹"
+              label: "Firefox addon"
+              tooltipText: "Open this plugin's page in Firefox"
+                + " Add-ons, in Firefox"
+              onClickedPi: root.openStoreAndClose("firefoxUrl", "firefoxBin")
+            }
+          }
+
+          Row {
+            id: footerRow
+            // Stretched equally past both ends of the column: the Close
+            // button's right padding lands on the footer inset too.
+            width: cardColumn.width + 2 * (card.contentLeftInset - card.footerInset)
+            x: -(card.contentLeftInset - card.footerInset)
+            // Both rows ride the area's bottom edge (same default control
+            // height), so they share one baseline and the strip's top
+            // headroom pads the divider gap out to the side insets.
+            anchors.bottom: parent.bottom
+            layoutDirection: Qt.RightToLeft
+            spacing: Style.spacing.controlGap
           PiButton {
             visible: root.mode === "install" && root.stage === "review"
             enabled: root.canInstall
@@ -3010,7 +4979,9 @@ Item {
           }
           PiButton {
             visible: root.stage === "settings"
-            primary: true
+            // Secondary treatment: closing the panel is not an affirmative
+            // action, so it carries no accent highlight (the store buttons
+            // on the same strip are flat too).
             label: "Close"
             onClickedPi: root.close()
           }
@@ -3039,7 +5010,13 @@ Item {
           PiButton {
             visible: root.stage === "placement"
             label: "Cancel"
-            onClickedPi: root.close()
+            onClickedPi: {
+              if (root.placementReturnsToSettings()) {
+                root.returnPlacementToSettings()
+              } else {
+                root.close()
+              }
+            }
           }
           PiButton {
             visible: root.stage === "browser-prompt"
@@ -3049,28 +5026,15 @@ Item {
           }
           PiButton {
             visible: root.stage === "browser-prompt"
+            // Declining writes the dismissal marker first (the bar
+            // watches it), so left-clicks open the manage popup again.
             label: "Cancel"
-            onClickedPi: root.stage = "browser-defer"
+            onClickedPi: root.dismissExtensionPrompt()
           }
-          PiButton {
-            visible: root.stage === "browser-defer"
-            primary: true
-            label: root.primaryExtensionLabel
-            onClickedPi: root.openExtensionPage()
-          }
-          PiButton {
-            visible: root.stage === "browser-defer"
-            danger: true
-            label: "Uninstall Omarchy plugin"
-            onClickedPi: root.uninstallManager()
-          }
-          PiButton {
-            visible: root.stage === "browser-defer"
-            label: "Cancel"
-            onClickedPi: root.close()
           }
         }
       }
     }
   }
 }
+

@@ -95,13 +95,13 @@ while [ $# -gt 0 ]; do
     fi
   fi
   OUT=""
-  if [ -n "$id" ] && [ "$bad_sha" -eq 0 ] && [ -n "$expected" ] && [ -d "$plug/$id/.git" ]; then
+  if [ -n "$id" ] && [ "$bad_sha" -eq 0 ] && [ -n "$expected" ]; then
     if OUT=$("$updater" apply "$id" "$expected" 2>&1); then
       ok=$((ok+1))
     else
       fail=$((fail+1)); failed="$failed $id ($(reason "$(entry "$OUT")"))"
     fi
-  elif [ -n "$id" ] && [ "$bad_sha" -eq 0 ] && "$updater" apply "$id" "" >/dev/null 2>&1; then
+  elif [ -n "$id" ] && [ "$bad_sha" -eq 0 ] && [ -z "$expected" ] && "$updater" apply "$id" "" >/dev/null 2>&1; then
     ok=$((ok+1))
   else
     fail=$((fail+1)); failed="$failed ${id:-$(entry "$spec")}"

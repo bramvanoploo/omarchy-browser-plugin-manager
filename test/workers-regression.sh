@@ -176,6 +176,17 @@ status_all_out=$(send_msg '{"type":"status_all"}' | "$HOST" | tail -c +5)
 check "native host status_all ok" "true" "$(jq -r '.ok // false' <<<"$status_all_out" 2>/dev/null)"
 check "native host status_all plugins array" "array" "$(jq -r '.plugins | type' <<<"$status_all_out" 2>/dev/null)"
 
+# The status frame carries the bar-widget flag (it drives the marketplace
+# Position button): a not-installed id answers false...
+check "native host status barWidget flag" "false" "$(jq -r '.barWidget' <<<"$status_out" 2>/dev/null)"
+# ...and a placement request for that id fails closed with not-installed,
+# before anything is summoned.
+placement_out=$(send_msg '{"type":"placement","id":"test.plugin","repo":"https://github.com/test/test"}' | "$HOST" | tail -c +5)
+check "native host placement rejects not-installed" "not-installed" "$(jq -r '.reason // ""' <<<"$placement_out" 2>/dev/null)"
+# Malformed targets are rejected by the same grammar as every action.
+placement_bad=$(send_msg '{"type":"placement","id":"../evil","repo":"https://github.com/test/test"}' | "$HOST" | tail -c +5)
+check "native host placement rejects bad id" "invalid-plugin-id" "$(jq -r '.reason // ""' <<<"$placement_bad" 2>/dev/null)"
+
 # ---- 6. Sanitized notification bodies ------------------------------------
 # An invalid id may carry newlines/control chars: the failure notification
 # echoes only a sanitized, capped rendering (no spoofed extra body lines).
@@ -244,7 +255,7 @@ cp "$HOST" "$hosttmp/bin/omarchy-plugin-install-host"
 jq -cn --arg v '9.9", "evil": "yes' '{version: $v}' > "$hosttmp/manifest.json"
 tampered_out=$(send_msg '{"type":"ping"}' | "$hosttmp/bin/omarchy-plugin-install-host" | tail -c +5)
 check "tampered manifest: ping frame still parses" "0" "$(jq -e . <<<"$tampered_out" >/dev/null 2>&1; echo $?)"
-check "tampered manifest: version falls back" "0.9.5" "$(jq -r '.version // ""' <<<"$tampered_out")"
+check "tampered manifest: version falls back" "1.0.0" "$(jq -r '.version // ""' <<<"$tampered_out")"
 check "tampered manifest: no injected key" "" "$(jq -r '.evil // ""' <<<"$tampered_out")"
 rm -rf "$hosttmp"
 
@@ -282,7 +293,7 @@ fi
 # browser-bin allowlist, and the plugin-id grammar before argv handoff),
 # trusted-click guards in the extension, curl size caps, worker umask.
 check "BarWatch browser-bin allowlist wired" "2" "$(grep -c 'allowedBrowserBins' "$REPO_ROOT/BarWatch.qml")"
-check "BarWatch plugin-id grammar wired" "2" "$(grep -c 'validPluginId' "$REPO_ROOT/BarWatch.qml")"
+check "BarWatch plugin-id grammar wired" "7" "$(grep -c 'validPluginId' "$REPO_ROOT/BarWatch.qml")"
 check "BarWatch store links are https-gated" "1" "$(grep -cF '!/^https:' "$REPO_ROOT/BarWatch.qml")"
 check "content.js guards untrusted clicks" "1" "$(grep -c 'isTrusted' "$REPO_ROOT/browser/extension/content.js")"
 check "catalog.js guards untrusted clicks" "1" "$(grep -c 'isTrusted' "$REPO_ROOT/browser/extension/catalog.js")"

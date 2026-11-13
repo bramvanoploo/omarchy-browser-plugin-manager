@@ -7,6 +7,8 @@
 #   - record_visit dedupe, staleness pruning, payload validation
 #   - clear_visit prunes exactly one tab key
 #   - focus-request consumption answers "activate" and stamps consumedBy
+#   - stamp_seen install evidence: mode, freshness, key pruning, corrupt-entry
+#     repair (a non-numeric value must not read as fresh)
 #
 # The host script guards main() behind [[ ${BASH_SOURCE[0]} == "$0" ]], so
 # sourcing it here only defines functions. Everything runs against a throwaway
@@ -126,6 +128,54 @@ check "stale entry pruned" "fresh" "$(jq -r '[.tabs[].key] | join(",")' "$TABS_F
 record_watch '{"type":"watch","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}'
 check "browser-watch.json mode (watch)" 600 "$(perms "$STATE_DIR/browser-watch.json")"
 check "watch record id" "acme.weather" "$(jq -r .id "$STATE_DIR/browser-watch.json")"
+
+# --- stamp_seen install evidence (browser-extension-seen.json) ---------------
+check "seen file absent initially" "missing" "$(perms "$STATE_DIR/browser-extension-seen.json")"
+stamp_seen firefox
+check "seen file mode" 600 "$(perms "$SEEN_FILE")"
+check "seen firefox numeric" "number" "$(jq -r '.firefox | type' "$SEEN_FILE")"
+check "seen chrome absent" "null" "$(jq -r '.chrome | type' "$SEEN_FILE")"
+stamp_seen brave
+check "unknown family ignored" "null" "$(jq -r '.chrome | type' "$SEEN_FILE")"
+first_seen=$(jq -r '.firefox' "$SEEN_FILE")
+stamp_seen firefox
+check "fresh stamp not rewritten" "$first_seen" "$(jq -r '.firefox' "$SEEN_FILE")"
+# stale entries are refreshed and unknown keys pruned on merge
+printf '{"firefox":1,"safari":123}\n' >"$SEEN_FILE"
+stamp_seen firefox
+check "stale firefox refreshed" "true" "$(jq -r '.firefox > 1' "$SEEN_FILE")"
+check "merge prunes unknown keys" "firefox" "$(jq -r 'keys | join(",")' "$SEEN_FILE")"
+stamp_seen chrome
+check "second family merged in" "chrome,firefox" "$(jq -r 'keys | sort | join(",")' "$SEEN_FILE")"
+# regression: a corrupt non-numeric entry must not read as fresh (jq's total
+# ordering puts strings above numbers, which used to lock the family out of
+# ever being re-stamped)
+printf '{"firefox":"yesterday"}\n' >"$SEEN_FILE"
+stamp_seen firefox
+check "corrupt entry repaired" "number" "$(jq -r '.firefox | type' "$SEEN_FILE")"
+check "corrupt sibling kept usable" "true" "$(jq -r '.firefox > 0' "$SEEN_FILE")"
+
+# --- concurrent record_visit preserves every key & live tmp files ---------
+rm -f "$TABS_FILE"
+live_tmp="$STATE_DIR/live.tmp.999999"
+printf 'keep' > "$live_tmp"
+for i in 1 2 3 4 5 6; do
+  record_visit "{\"type\":\"visit\",\"source\":\"firefox\",\"key\":\"conc$i\",\"url\":\"https://plugins.omarchy.org/#$i\"}" >/dev/null &
+done
+wait
+check "concurrent record_visit preserves all 6 keys" "conc1,conc2,conc3,conc4,conc5,conc6" \
+  "$(jq -r '[.tabs[].key] | sort | join(",")' "$TABS_FILE")"
+check "ensure_private_state leaves active tmp files intact" "yes" "$([[ -f $live_tmp ]] && echo yes || echo no)"
+rm -f "$live_tmp"
+
+# --- corrupt focus/cache/settings resilience -------------------------------
+printf '{"ts":"not-a-number"}\n' > "$FOCUS_FILE"
+check "corrupt focus ts does not crash record_visit" "0" \
+  "$(record_visit '{"type":"visit","source":"firefox","key":"kfocus","url":"https://plugins.omarchy.org/"}' >/dev/null; echo $?)"
+printf '{"checked":"bad"}\n' > "$UPDATE_CACHE_FILE"
+check "corrupt update cache age stays positive numeric" "true" "$([[ $(update_cache_age) -gt 100000 ]] && echo true || echo false)"
+rm -f "$SETTINGS_FILE"
+check "missing settings defaults allowUnverified false" "false" "$(allow_unverified_setting)"
 
 echo
 if (( FAILURES > 0 )); then

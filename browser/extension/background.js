@@ -20,6 +20,7 @@ const ALLOWED_TYPES = new Set([
   "enable",
   "disable",
   "update",
+  "placement",
   "updates",
   "watch",
   "unwatch",
@@ -102,30 +103,29 @@ function ensurePort() {
 
 function pumpQueue() {
   if (currentTask) return;
-  const next = taskQueue.shift();
-  if (!next) {
-    scheduleIdleDisconnect();
-    return;
-  }
-  clearIdleTimer();
-  const port = ensurePort();
-  if (!port) {
-    next.resolve({ ok: false, reason: "host-not-registered" });
-    pumpQueue();
-    return;
-  }
-  const timeoutMs = FAST_TYPES.has(next.payload.type) ? QUERY_TIMEOUT_MS : ACTION_TIMEOUT_MS;
-  next.timer = setTimeout(() => {
-    if (currentTask === next) {
-      dropPort("host-timeout");
+  while (taskQueue.length > 0) {
+    const next = taskQueue.shift();
+    clearIdleTimer();
+    const port = ensurePort();
+    if (!port) {
+      next.resolve({ ok: false, reason: "host-not-registered" });
+      continue;
     }
-  }, timeoutMs);
-  currentTask = next;
-  try {
-    port.postMessage(next.payload);
-  } catch (_e) {
-    dropPort("host-not-registered");
+    const timeoutMs = FAST_TYPES.has(next.payload.type) ? QUERY_TIMEOUT_MS : ACTION_TIMEOUT_MS;
+    next.timer = setTimeout(() => {
+      if (currentTask === next) {
+        dropPort("host-timeout");
+      }
+    }, timeoutMs);
+    currentTask = next;
+    try {
+      port.postMessage(next.payload);
+    } catch (_e) {
+      dropPort("host-not-registered");
+    }
+    return;
   }
+  scheduleIdleDisconnect();
 }
 
 function sanitizeMessage(message) {
@@ -198,6 +198,10 @@ let presenceTimer = null;
 // another full round of host messages behind the first.
 let presenceRunning = false;
 let presenceSource = null; // "firefox" | "chrome" (host field), resolved lazily
+
+function isMarketplaceUrl(url) {
+  return typeof url === "string" && url.startsWith("https://plugins.omarchy.org/");
+}
 
 function makePresenceKey() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
@@ -299,15 +303,40 @@ function schedulePresenceSync() {
   runPresenceSync();
 }
 
-api.tabs.onCreated.addListener(() => schedulePresenceSync());
-api.tabs.onRemoved.addListener(() => schedulePresenceSync());
-api.tabs.onUpdated.addListener((tabId, changeInfo) => {
+api.tabs.onCreated.addListener((tab) => {
+  if (tab && isMarketplaceUrl(tab.url || tab.pendingUrl)) schedulePresenceSync();
+});
+api.tabs.onRemoved.addListener((tabId) => {
+  if (presenceKeys.has(tabId)) schedulePresenceSync();
+});
+api.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const url = changeInfo.url || (tab && tab.url) || "";
+  const isTracked = presenceKeys.has(tabId);
+  if (!isTracked && !isMarketplaceUrl(url)) return;
   // A completed navigation replaced the page: the old presence key belongs
-  // to the previous document, so mint a fresh one for the new load.
-  if (changeInfo.status === "complete") presenceKeys.set(tabId, makePresenceKey());
+  // to the previous document, so retire it before sync mints a new key.
+  if (changeInfo.status === "complete" && isTracked) {
+    const oldKey = presenceKeys.get(tabId);
+    presenceKeys.delete(tabId);
+    if (oldKey) talkToHost({ type: "unvisit", key: oldKey }).catch(() => {});
+  }
   schedulePresenceSync();
 });
 
-if (api.runtime.onStartup) api.runtime.onStartup.addListener(() => schedulePresenceSync());
-if (api.runtime.onInstalled) api.runtime.onInstalled.addListener(() => schedulePresenceSync());
+// Install evidence for the bar widget: report ourselves to the host
+// whenever this worker boots (browser start, install, update). The host
+// stamps browser-extension-seen.json for this browser family; a bar-icon
+// left click then opens the browser-extension install prompt only when an
+// installed browser family has no evidence (see BarWatch.qml). No open
+// marketplace tab is needed: the native messaging connection itself is
+// the proof, and the host relaunches per worker boot.
+function reportExtensionSeen() {
+  detectSource().then((source) => {
+    talkToHost({ type: "seen", source }).catch(() => { /* host down or unregistered: presence heartbeats stamp it anyway */ });
+  });
+}
+
+if (api.runtime.onStartup) api.runtime.onStartup.addListener(() => { schedulePresenceSync(); reportExtensionSeen(); });
+if (api.runtime.onInstalled) api.runtime.onInstalled.addListener(() => { schedulePresenceSync(); reportExtensionSeen(); });
 schedulePresenceSync(); // worker boot (also covers browser start on Firefox)
+reportExtensionSeen();
