@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "bramvanoploo.omarchy-browser-plugin-manager",
   "name": "PlugBrug",
-  "version": "0.9.5",
+  "version": "1.0.0",
   "author": "Bram van Oploo",
   "description": "The missing bridge between the official plugin Marketplace and your system. Manage your plugins directly from the browser Marketplace. Install, remove, update and place plugins. Install the accompanying extension for your Firefox- or CHromium-based browser and off you go!",
   "kinds": [
