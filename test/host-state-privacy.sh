@@ -7,6 +7,8 @@
 #   - record_visit dedupe, staleness pruning, payload validation
 #   - clear_visit prunes exactly one tab key
 #   - focus-request consumption answers "activate" and stamps consumedBy
+#   - stamp_seen install evidence: mode, freshness, key pruning, corrupt-entry
+#     repair (a non-numeric value must not read as fresh)
 #
 # The host script guards main() behind [[ ${BASH_SOURCE[0]} == "$0" ]], so
 # sourcing it here only defines functions. Everything runs against a throwaway
@@ -126,6 +128,32 @@ check "stale entry pruned" "fresh" "$(jq -r '[.tabs[].key] | join(",")' "$TABS_F
 record_watch '{"type":"watch","id":"acme.weather","repo":"https://github.com/acme/weather.git","name":"Weather"}'
 check "browser-watch.json mode (watch)" 600 "$(perms "$STATE_DIR/browser-watch.json")"
 check "watch record id" "acme.weather" "$(jq -r .id "$STATE_DIR/browser-watch.json")"
+
+# --- stamp_seen install evidence (browser-extension-seen.json) ---------------
+check "seen file absent initially" "missing" "$(perms "$STATE_DIR/browser-extension-seen.json")"
+stamp_seen firefox
+check "seen file mode" 600 "$(perms "$SEEN_FILE")"
+check "seen firefox numeric" "number" "$(jq -r '.firefox | type' "$SEEN_FILE")"
+check "seen chrome absent" "null" "$(jq -r '.chrome | type' "$SEEN_FILE")"
+stamp_seen brave
+check "unknown family ignored" "null" "$(jq -r '.chrome | type' "$SEEN_FILE")"
+first_seen=$(jq -r '.firefox' "$SEEN_FILE")
+stamp_seen firefox
+check "fresh stamp not rewritten" "$first_seen" "$(jq -r '.firefox' "$SEEN_FILE")"
+# stale entries are refreshed and unknown keys pruned on merge
+printf '{"firefox":1,"safari":123}\n' >"$SEEN_FILE"
+stamp_seen firefox
+check "stale firefox refreshed" "true" "$(jq -r '.firefox > 1' "$SEEN_FILE")"
+check "merge prunes unknown keys" "firefox" "$(jq -r 'keys | join(",")' "$SEEN_FILE")"
+stamp_seen chrome
+check "second family merged in" "chrome,firefox" "$(jq -r 'keys | sort | join(",")' "$SEEN_FILE")"
+# regression: a corrupt non-numeric entry must not read as fresh (jq's total
+# ordering puts strings above numbers, which used to lock the family out of
+# ever being re-stamped)
+printf '{"firefox":"yesterday"}\n' >"$SEEN_FILE"
+stamp_seen firefox
+check "corrupt entry repaired" "number" "$(jq -r '.firefox | type' "$SEEN_FILE")"
+check "corrupt sibling kept usable" "true" "$(jq -r '.firefox > 0' "$SEEN_FILE")"
 
 echo
 if (( FAILURES > 0 )); then

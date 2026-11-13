@@ -175,6 +175,10 @@ Panel {
     // good (extensionDismissPath).
     var reason = root.extensionPromptReason()
     if (reason !== "") {
+      // Same popup/settings teardown as the ungated path, so a click that
+      // gets intercepted never leaves a popup open behind the dialog.
+      root.settingsOpen = false
+      root.close()
       root.summonExtensionPrompt(reason)
       return
     }
@@ -1810,6 +1814,22 @@ Panel {
     }
     onExited: function (_code) {
       root.applyProbeOutput(String(browserCheckOut.text || ""))
+    }
+  }
+
+  // Browser installs and the default browser can change at any time (a
+  // browser installed after shell start, the default switched in the
+  // system settings). The left-click extension gate reads both, so they
+  // are re-probed periodically instead of running on boot-time data
+  // until the next shell restart.
+  Timer {
+    id: browserRefreshTimer
+    interval: 60000
+    repeat: true
+    running: true
+    onTriggered: {
+      browserCheckProc.running = true
+      defaultBrowserProc.running = true
     }
   }
 

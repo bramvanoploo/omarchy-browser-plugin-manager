@@ -625,8 +625,11 @@ stamp_seen() {
   ts=${EPOCHSECONDS:-$(date +%s)}
   json=$(cat "$SEEN_FILE" 2>/dev/null) || json=""
   [[ ${json:0:1} == "{" ]] || json='{}'
+  # Type-guarded compare: jq orders strings above numbers, so a corrupt
+  # non-numeric entry would otherwise read as "fresh forever" and lock the
+  # family out of ever being (re)stamped.
   if jq -e --arg s "$src" --argjson fresh "$((ts - 3600))" \
-      '(.[$s] // 0) >= $fresh' <<<"$json" >/dev/null 2>&1; then
+      '(.[$s] | if type == "number" then . else 0 end) >= $fresh' <<<"$json" >/dev/null 2>&1; then
     return 0
   fi
   ensure_private_state || return 0
