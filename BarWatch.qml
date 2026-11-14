@@ -1999,7 +1999,7 @@ Panel {
   // for display only (preview thumbnail, description, author, version).
   Process {
     id: catalogProc
-    command: ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--max-filesize", "16777216", "--", "https://plugins.omarchy.org/catalog.json"]
+    command: ["curl", "-fsSL", "--compressed", "--proto", "=https", "--max-time", "15", "--max-filesize", "67108864", "--", "https://plugins.omarchy.org/catalog.json"]
     stdout: StdioCollector {
       id: catalogProcOut
       waitForEnd: true

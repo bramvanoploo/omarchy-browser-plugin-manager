@@ -647,7 +647,7 @@ Item {
 
     catalogProc.running = true
     if (needsManifest) {
-      manifestProc.command = ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--max-filesize", "16777216", "--", mUrl]
+      manifestProc.command = ["curl", "-fsSL", "--compressed", "--proto", "=https", "--max-time", "15", "--max-filesize", "67108864", "--", mUrl]
       manifestProc.running = true
     } else {
       manifestLoaded = true
@@ -854,7 +854,7 @@ Item {
 
   Process {
     id: catalogProc
-    command: ["curl", "-fsSL", "--proto", "=https", "--max-time", "15", "--max-filesize", "16777216", "--", "https://plugins.omarchy.org/catalog.json"]
+    command: ["curl", "-fsSL", "--compressed", "--proto", "=https", "--max-time", "15", "--max-filesize", "67108864", "--", "https://plugins.omarchy.org/catalog.json"]
     stdout: StdioCollector {
       id: catalogProcOut
       waitForEnd: true
