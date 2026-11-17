@@ -4340,7 +4340,17 @@ Item {
                           font.family: root.fontFamily
                           color: root.foreground
                           clip: true
-                          readOnly: false
+                          // Keep the field read-only unless it holds active
+                          // focus. A writable QQuickTextInput re-reads the
+                          // clipboard on every QClipboard::dataChanged to
+                          // refresh paste availability (q_canPasteChanged ->
+                          // mimeData->text()), and the Qt Wayland data-offer
+                          // reader accumulates that transfer without a total
+                          // byte bound. When read-only, that recompute
+                          // short-circuits before touching the clipboard, so
+                          // an idle field here never retrieves clipboard
+                          // content (marketplace review #14923).
+                          readOnly: !activeFocus
                           text: root.pluginFilterQuery
                           onTextChanged: root.pluginFilterQuery = text
                         }
