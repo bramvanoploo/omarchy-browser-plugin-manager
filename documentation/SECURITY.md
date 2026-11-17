@@ -15,3 +15,7 @@
    catalog.
 5. Installs the repo's current HEAD, which may differ from the marketplace's
    verified snapshot — the wizard says so.
+6. **Wizard UI**: its only text input (the plugin search field) stays
+   read-only unless it holds active focus, so an idle field never triggers
+   the automatic clipboard retrieval that writable Qt text inputs perform on
+   Wayland (unbounded data-offer reads can otherwise stall the shell).
