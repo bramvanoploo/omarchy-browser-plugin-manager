@@ -70,10 +70,17 @@ Each updatable-plugin row carries two compact icon buttons: an
 anything runs: uninstall states exactly what `omarchy plugin remove --yes`
 does (folder deleted — a symlinked dev folder is only unlinked, plugin
 unloaded from the shell, bar icon dropped, reinstallable from the catalog)
-and confirms with an urgent-toned button; the removal runs in the same
+and confirms with an urgent-toned button; the uninstall runs in the same
 kind of detached worker as updates (id-validated, one rescan at the end,
 summary notification, survives the shell reload when the manager itself
-is removed).
+is uninstalled). Built-in (first-party) plugins carry no uninstall button:
+they live inside the Omarchy install, so the official CLI uninstall refuses
+them ("not installed") and only the enable switch applies. The Manage tab
+lists them like any other row but offers a "Hide built-in" filter beside
+the enabled/disabled ones, which drops those rows from the list (it
+composes with the search text and the state filter). The command path
+and both workers repeat that check, answering such a request with the
+`omarchy plugin disable <id>` alternative instead of a CLI failure.
 
 **Browser extension prompt**: after this plugin is installed in Omarchy
 (install only, not on later enables), the wizard shows a prompt that detects
@@ -91,12 +98,12 @@ the Install buttons on plugins.omarchy.org) rather than threatening
 inaction; Cancel writes `browser-prompt-dismissed.json` so left clicks
 resume opening the manage popup. Uninstalling the plugin clears both files.
 
-**Uninstall cleanup**: removing the plugin unloads the wizard, whose
+**Uninstall cleanup**: uninstalling the plugin unloads the wizard, whose
 detached self-cleanup unregisters the native messaging host a few seconds
-later (best effort: it needs the shell running at removal time). If the
+later (best effort: it needs the shell running at uninstall time). If the
 manifests survive anyway, run
 `~/.config/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager/bin/plugin-installer-setup --uninstall`
-before removing — the script lives inside the plugin folder.
+before uninstalling — the script lives inside the plugin folder.
 
 ## Components
 

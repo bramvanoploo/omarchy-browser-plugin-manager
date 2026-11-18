@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Bar widget uninstall worker (BarWatch.qml's startUninstall runs this
-# detached). Runs the official CLI removal (omarchy plugin remove --yes) per
-# plugin id, mirroring its id validation (same pattern as the CLI's
-# valid_plugin_id), then fires one rescan so the bar drops removed icons.
+# detached). Runs the official CLI uninstall (omarchy plugin remove --yes)
+# per plugin id, mirroring its id validation (same pattern as the CLI's
+# valid_plugin_id), then fires one rescan so the bar drops uninstalled icons.
 # The CLI unloads an enabled plugin from the shell itself; a symlinked
 # plugin (dev clone) is only unlinked, never followed. Detached like the
-# update worker, so removing this manager itself still finishes and
+# update worker, so uninstalling this manager itself still finishes and
 # notifies after the shell reload destroys the widget.
 set -u
 # Marker files record in-progress batches (mode, timestamps); owner-only
@@ -19,6 +19,18 @@ notify() {
 }
 real_shell="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell"
 command -v "$real_shell" >/dev/null 2>&1 || real_shell="$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)"
+
+# Built-in (first-party) plugins are part of the Omarchy install itself: the
+# official CLI uninstall only ever acts on the user plugins directory
+# (~/.config/omarchy/plugins) and refuses them with "not installed". Read the
+# live list once up front, so those ids get the actionable answer instead of a
+# CLI failure, while the rest of the batch still runs.
+first_party_ids=$(omarchy plugin list --json 2>/dev/null \
+  | jq -r '[.[]? | select(type == "object" and .firstParty == true) | .id] | .[]' 2>/dev/null || true)
+is_first_party() {
+  [ -n "$first_party_ids" ] || return 1
+  printf '%s\n' "$first_party_ids" | grep -qxF -- "$1"
+}
 
 # In-progress system panel (same protocol as the wizard's workers): the
 # first argv is a display label (plugin name, or "N plugins" for a
@@ -35,11 +47,15 @@ jq -cn --arg mode "uninstall" --arg name "$LABEL" '{mode:$mode,id:"",name:$name,
 PAYLOAD=$(jq -cn --arg name "$LABEL" '{source:"worker",mode:"running",id:"",name:$name,action:"uninstall"}' 2>/dev/null)
 [ -n "$PAYLOAD" ] && "$real_shell" -q shell summon bramvanoploo.omarchy-browser-plugin-manager "$PAYLOAD" >/dev/null 2>&1 || true
 
-ok=0; fail=0; failed=""
+ok=0; fail=0; failed=""; builtin=0; builtins=""
 while [ $# -gt 0 ]; do
   id="$1"
   case "$id" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*) id="" ;; esac
-  if [ -n "$id" ]; then
+  if [ -z "$id" ]; then
+    fail=$((fail+1)); failed="$failed $id"
+  elif is_first_party "$id"; then
+    builtin=$((builtin+1)); builtins="$builtins $id"
+  else
     if [ "$id" = "bramvanoploo.omarchy-browser-plugin-manager" ]; then
       plug="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager"
       if [ -x "$plug/bin/plugin-installer-setup" ]; then
@@ -56,18 +72,23 @@ while [ $# -gt 0 ]; do
     else
       fail=$((fail+1)); failed="$failed $id"
     fi
-  else
-    fail=$((fail+1)); failed="$failed $id"
   fi
   shift
 done
 if [ "$ok" -gt 0 ]; then
   "$real_shell" -q shell rescanPlugins >/dev/null 2>&1 || true
 fi
+if [ "$builtin" -gt 0 ]; then
+  if [ "$builtin" -gt 1 ]; then
+    notify "Cannot uninstall built-in plugins" "${builtins# } ship with Omarchy, so they cannot be uninstalled. Turn them off instead, one id at a time: omarchy plugin disable <id>."
+  else
+    notify "Cannot uninstall built-in plugin" "${builtins# } ships with Omarchy, so it cannot be uninstalled. Turn it off instead: omarchy plugin disable ${builtins# }."
+  fi
+fi
 if [ "$fail" -gt 0 ]; then
-  notify "Plugin removals finished" "$ok removed, $fail failed:$failed"
+  notify "Uninstall finished with failures" "$ok uninstalled, $fail failed:$failed"
 elif [ "$ok" -gt 0 ]; then
-  notify "Plugins uninstalled" "$ok plugin(s) removed."
-else
-  notify "No plugin removed" "No plugin was uninstalled."
+  notify "Plugins uninstalled" "$ok plugin(s) uninstalled."
+elif [ "$builtin" -eq 0 ]; then
+  notify "Nothing uninstalled" "No plugin was uninstalled."
 fi

@@ -53,6 +53,12 @@ clean() { printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-40
 NAME="$(printf '%s' "$NAME" | tr -d '\000-\037\177' | cut -c1-80)"
 list() { omarchy plugin list --json 2>/dev/null; }
 enabled() { list | jq -e --arg id "$ID" 'any(.[]; .id == $id and .enabled == true)' >/dev/null 2>&1; }
+# Built-in (first-party) plugins are part of the Omarchy install itself: the
+# official CLI uninstall only ever acts on the user plugins directory
+# (~/.config/omarchy/plugins), so it refuses them with "not installed".
+# Answer that request with the action that does apply instead of letting the
+# CLI fail on it.
+first_party() { list | jq -e --arg id "$ID" 'any(.[]; .id == $id and .firstParty == true)' >/dev/null 2>&1; }
 # The bar layout entry is the real placement record; a missing
 # user config means defaults are in use and nothing verifies it.
 placed() {
@@ -204,8 +210,13 @@ install)
   fi
   ;;
 uninstall)
-  # Unregister the native messaging host only when removing the manager itself,
-  # while the plugin directory still exists (setup script lives inside it).
+  if first_party; then
+    notify "Cannot uninstall built-in plugin" "$NAME ships with Omarchy, so it cannot be uninstalled. Turn it off instead: omarchy plugin disable $ID."
+    exit 1
+  fi
+  # Unregister the native messaging host only when uninstalling the manager
+  # itself, while the plugin directory still exists (the setup script lives
+  # inside it).
   if [ "$ID" = "bramvanoploo.omarchy-browser-plugin-manager" ]; then
     PLUG="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/bramvanoploo.omarchy-browser-plugin-manager"
     if [ -x "$PLUG/bin/plugin-installer-setup" ]; then
@@ -217,7 +228,7 @@ uninstall)
     notify "Plugin uninstall failed" "$NAME: $(clean "$OUT")"
     exit 1
   fi
-  notify "Plugin uninstalled" "$NAME has been removed."
+  notify "Plugin uninstalled" "$NAME has been uninstalled."
   ;;
 *)
   notify "Plugin action failed" "$NAME: unknown worker action $KIND."

@@ -106,8 +106,8 @@ desktop notification.
 ```
 
 Then remove the extension from the browser (chrome://extensions /
-about:addons) and the shell plugin
+about:addons) and uninstall the shell plugin
 (`omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager`).
-Removing the shell plugin while the shell runs also triggers the wizard's
+Uninstalling the shell plugin while the shell runs also triggers the wizard's
 self-cleanup (auto-unregister a few seconds later); the command above is
 the deterministic way and works with the shell stopped.

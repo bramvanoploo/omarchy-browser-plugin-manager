@@ -33,9 +33,9 @@ import qs.Ui
 // family as a second link. Cancelling records a dismissal marker so the
 // bar stops intercepting clicks; the store buttons just open and close.
 // The native messaging host registration is automated: registering on every
-// load is idempotent, the uninstall worker unregisters before removing the
-// plugin, and a destruction-time watcher unregisters after a terminal
-// removal (self-cleanup copy parked in the state dir).
+// load is idempotent, the uninstall worker unregisters before uninstalling
+// the plugin, and a destruction-time watcher unregisters after a terminal
+// uninstall (self-cleanup copy parked in the state dir).
 
 Item {
   id: root
@@ -1324,13 +1324,21 @@ Item {
   // the search text, and it is applied after managePlugins()' optimistic
   // override, so a row the user just toggled follows along immediately.
   property string manageStateFilter: ""
+  // Manage-tab built-in filter: while on, the rows for Omarchy's own
+  // plugins (first-party: they ship inside the desktop, cannot be
+  // uninstalled, and are only ever switched on or off) drop out of the
+  // list. Orthogonal to the state filter, so it composes with it and with
+  // the search text; the row flag comes from the official plugin list.
+  property bool manageHideBuiltIn: false
   function manageFilteredRows() {
     var q = root.manageFilter.trim().toLowerCase()
     var st = root.manageStateFilter
+    var hideBi = root.manageHideBuiltIn
     var rows = root.managePlugins()
-    if (q === "" && st === "") return rows
+    if (q === "" && st === "" && !hideBi) return rows
     return rows.filter(function (r) {
       if (!r) return false
+      if (hideBi && r.firstParty === true) return false
       if (st !== "" && Boolean(r.enabled) !== (st === "enabled")) return false
       if (q === "") return true
       var hay = (String(r.name || "") + " " + String(r.id || "")
@@ -1359,16 +1367,17 @@ Item {
   property var manageRenderRows: []
   onManageRenderSigChanged: manageRenderRows = root.filteredPlugins
   // Scroll-position hold, the safety net under that: a rebuild the id
-  // signature cannot avoid (a plugin installed or removed elsewhere)
+  // signature cannot avoid (a plugin installed or uninstalled elsewhere)
   // still flashes contentHeight through its collapsed value, and
   // StopAtBounds clamps contentY to 0 in that window. Track the last
   // real scroll offset on every contentY change and re-assert it as the
-  // rebuilt cards restore contentHeight. Search/state-filter edits
-  // still land at the top: they change which rows exist, so the old
+  // rebuilt cards restore contentHeight. Search/state/built-in filter
+  // edits still land at the top: they change which rows exist, so the old
   // offset is meaningless.
   property real manageSavedY: -1
   property string manageSavedFilter: ""
   property string manageSavedState: ""
+  property bool manageSavedHideBuiltIn: false
   property bool manageRestoring: false
   // Where and when the hold last wrote contentY. The Flickable answers
   // a restore write with a sub-pixel correction of its own (118.5 ->
@@ -1419,9 +1428,11 @@ Item {
   // to the top instead of re-asserting the hold.
   function manageScrollModelSwapped() {
     if (manageFilter !== manageSavedFilter
-      || manageStateFilter !== manageSavedState) {
+      || manageStateFilter !== manageSavedState
+      || manageHideBuiltIn !== manageSavedHideBuiltIn) {
       manageSavedFilter = manageFilter
       manageSavedState = manageStateFilter
+      manageSavedHideBuiltIn = manageHideBuiltIn
       manageSavedY = -1
       pluginCardsFlickable.contentY = 0
     }
@@ -1457,6 +1468,10 @@ Item {
         o.enabled = inst.enabled
         o.isBarWidget = inst.isBarWidget
         o.kinds = inst.kinds
+        // The uninstall button's gate: update rows come from the widget's
+        // update list, which says nothing about first-party status, so take
+        // it from the installed row (built-in plugins have no uninstall).
+        o.firstParty = inst.firstParty === true
         if (!o.section) o.section = inst.section
         if (!o.name) o.name = inst.name
       }
@@ -1660,7 +1675,8 @@ Item {
       kind: "uninstall",
       ids: [String(row.id)],
       names: [String(row.name)],
-      text: "Runs omarchy plugin remove on " + String(row.name) + ": deletes"
+      text: "Runs the official uninstall (omarchy plugin remove) on "
+        + String(row.name) + ": deletes"
         + " its folder in ~/.config/omarchy/plugins (a symlinked dev"
         + " folder is only unlinked), unloads it from the shell, and drops"
         + " its bar icon. The catalog entry lets you reinstall it"
@@ -1741,7 +1757,7 @@ Item {
   // presence: registering on every load is idempotent (the script rewrites
   // its manifests, pinned to the published extension IDs), so installing the
   // plugin in Omarchy is all that is needed; the uninstall worker runs the
-  // script with --uninstall before the plugin directory is removed.
+  // script with --uninstall before the plugin is uninstalled.
   Process {
     id: hostSetupProc
     command: ["bash", root.pluginDir + "/bin/plugin-installer-setup"]
@@ -1756,13 +1772,13 @@ Item {
     bootScanProc.running = true
   }
 
-  // Self-cleanup: removing the plugin (terminal `omarchy plugin remove`)
+  // Self-cleanup: uninstalling the plugin (terminal `omarchy plugin remove`)
   // destroys this overlay on the shell reload; a detached watcher checks a
   // few seconds later that the plugin folder really is gone (a plain reload
   // or disable leaves it in place) and then unregisters the native
   // messaging host via the standalone copy of the setup script that
   // registration parks in the state dir. The wizard-driven uninstall path
-  // already unregisters in its worker before removing.
+  // already unregisters in its worker before uninstalling.
   Component.onDestruction: {
     Quickshell.execDetached(["bash", "-c",
       "sleep 3;"
@@ -2190,7 +2206,7 @@ Item {
   // Every action ends in a notification + close; there is no completion
   // stage. ---- install / uninstall (detached workers) ----------------------
   // Install/uninstall touch the watched plugins directory: the clone (or
-  // removal) event makes the shell reload all plugins, which destroys this
+  // uninstall) event makes the shell reload all plugins, which destroys this
   // wizard overlay and kills the Processes it owns mid-action. These two
   // actions therefore run as a detached bash worker that outlives the
   // wizard: it performs the CLI work, retries the enable through the
@@ -2572,7 +2588,7 @@ Item {
   // plugin description, and the action row: the marketplace page and the
   // repository link on the left, and Update (arms the same settings-confirm
   // gate the batch action uses), Position bar icon (bar widgets and placed
-  // plugins) and Remove (uninstall gate) right-aligned underneath the
+  // plugins) and Uninstall (uninstall gate) right-aligned underneath the
   // toggle. Every string comes from the widget's
   // snapshot, and plain-text Text keeps remote names inert.
   component PiPluginCard: BorderSurface {
@@ -2824,8 +2840,8 @@ Item {
                         // links sit on the left; the actions (Update, then the
                         // one that opens the plugin - Position bar icon for
                         // bar widgets, Open for summonable panel-type ones -
-                        // then Remove) are right-aligned, in
-                        // that order, so Remove lands directly underneath
+                        // then Uninstall) are right-aligned, in that
+                        // order, so Uninstall lands directly underneath
                         // the enable/disable toggle in the header row. The
                         // positioner skips invisible children, so hidden
                         // conditional buttons leave no gaps behind.
@@ -2945,10 +2961,14 @@ Item {
                               onClicked: root.manageSummonPlugin(pluginCard.safeRow)
                             }
 
-                            // Remove button
+                            // Uninstall button. Hidden for built-in
+                            // (first-party) plugins: they ship inside the
+                            // Omarchy install, so the official CLI's
+                            // uninstall refuses them and the row's enable
+                            // switch is the only action that applies.
                             Button {
-                              visible: true
-                              tooltipText: pluginCard.isBusy ? "Removing..." : "Remove"
+                              visible: pluginCard.safeRow.firstParty !== true
+                              tooltipText: pluginCard.isBusy ? "Uninstalling..." : "Uninstall"
                               iconText: pluginCard.isBusy ? "󰑐" : "󰆴"
                               iconSpinning: pluginCard.isBusy
                               bordered: true
@@ -4405,6 +4425,21 @@ Item {
                       onClicked: root.manageStateFilter
                         = root.manageStateFilter === "disabled" ? "" : "disabled"
                     }
+                    // Built-in filter: a hide-toggle, not a show-only one
+                    // like the two above - its label therefore says what it
+                    // does. It drops the plugins that ship inside Omarchy
+                    // (first-party rows, which have no Uninstall button and
+                    // are only ever switched on or off), and composes with
+                    // the state filter and the search text.
+                    Button {
+                      text: "Hide built-in"
+                      fontSize: Style.font.caption
+                      bordered: true
+                      selected: root.manageHideBuiltIn
+                      tooltipText: "Hide the plugins that ship with Omarchy"
+                        + " \u2014 click again to show them"
+                      onClicked: root.manageHideBuiltIn = !root.manageHideBuiltIn
+                    }
                   }
 
                   Row {
@@ -4532,7 +4567,7 @@ Item {
                     // list (which collapses contentHeight and jumps the
                     // scroll position mid-frame).
                     model: root.manageRenderRows
-                    // Id-set changes (filter edits, installs, removals) do
+                    // Id-set changes (filter edits, installs, uninstalls) do
                     // rebuild; filter/search edits reset to the top.
                     onModelChanged: root.manageScrollModelSwapped()
 
@@ -4664,8 +4699,8 @@ Item {
           PiPreviewImage {}
 
           PiLine {
-            text: "Installed as a user plugin. Uninstalling removes the plugin files, "
-              + "disables it, and removes its bar layout entry."
+            text: "Installed as a user plugin. Uninstalling deletes the plugin "
+              + "files, disables it, and drops its bar layout entry."
           }
         }
         PiLine {

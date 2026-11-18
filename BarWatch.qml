@@ -611,12 +611,12 @@ Panel {
   }
 
   // Uninstall runs as a detached bash worker (bin/omarchy-plugin-uninstall-worker):
-  // the official CLI removal (omarchy plugin remove --yes) per plugin id,
+  // the official CLI uninstall (omarchy plugin remove --yes) per plugin id,
   // with the CLI's own id validation, then one rescan so the bar drops
-  // removed icons. The CLI unloads an enabled plugin from the shell itself;
-  // a symlinked plugin (dev clone) is only unlinked, never followed.
-  // Detached like the update worker, so removing this manager itself still
-  // finishes and notifies after the shell reload destroys the widget.
+  // uninstalled icons. The CLI unloads an enabled plugin from the shell
+  // itself; a symlinked plugin (dev clone) is only unlinked, never followed.
+  // Detached like the update worker, so uninstalling this manager itself
+  // still finishes and notifies after the shell reload destroys the widget.
   // Runs the detached uninstall worker for the given plugin ids (the
   // per-row uninstall buttons pass a single one, after confirmation).
   function startUninstall(ids) {
@@ -625,10 +625,24 @@ Panel {
     var argv = ["bash", root.pluginDir + "/bin/omarchy-plugin-uninstall-worker",
       ids.length === 1 ? ids[0] : ids.length + " plugins"]
     Quickshell.execDetached(argv.concat(ids))
-    // Closing the popups is harmless: removing this manager unloads the
+    // Closing the popups is harmless: uninstalling this manager unloads the
     // widget, and the detached worker outlives that with its notification.
     root.settingsOpen = false
     root.close()
+  }
+
+  // Is this id a built-in (first-party) plugin in the installed-plugin rows?
+  // Its Uninstall button is already hidden; this answers for the command
+  // path, where a row the panel has not re-read yet must not start an
+  // uninstall that the CLI can only refuse. Unknown ids answer false, so
+  // the worker (and the CLI) still get to judge them.
+  function rowIsFirstParty(id) {
+    var rows = root.installedPlugins || []
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i] && String(rows[i].id) === String(id))
+        return rows[i].firstParty === true
+    }
+    return false
   }
 
   // Runs the detached worker for the given specs: the batch button passes
@@ -777,6 +791,13 @@ Panel {
           updatable: eligible[id] === true,
           updateAvailable: up !== undefined,
           isBarWidget: Array.isArray(item.kinds) && item.kinds.indexOf("bar-widget") !== -1,
+          // Built-in (first-party) plugins ship inside Omarchy itself: the
+          // official CLI only ever uninstalls entries under
+          // ~/.config/omarchy/plugins, so `omarchy plugin remove` refuses
+          // them and they can only be disabled. The panel hides their
+          // Uninstall button from this flag (same rule as the popup's
+          // pluginInstalled gate).
+          firstParty: item.firstParty === true,
           // The manifest kinds themselves (the CLI list carries them): the
           // panel decides which rows can be summoned (panel/overlay/menu
           // kinds get the Manage row's Open button, services never do).
@@ -1027,12 +1048,23 @@ Panel {
       if (list.length > 0) root.startUpdate(root.updateSpecs(list))
     } else if (action === "run_uninstall") {
       // Re-check the id grammar before handing argv to the worker (the
-      // worker validates again, and omarchy plugin remove only ever acts
-      // on installed plugins, so a forged id can at most name a missing
-      // one).
-      root.startUninstall((cmd.ids || []).map(String).filter(function (s) {
+      // worker validates again, and the CLI uninstall only ever acts on
+      // plugins under ~/.config/omarchy/plugins, so a forged id can at
+      // most name a missing one).
+      var wanted = (cmd.ids || []).map(String).filter(function (s) {
         return root.validPluginId(s)
-      }))
+      })
+      // Built-in (first-party) plugins cannot be uninstalled: they are part
+      // of the Omarchy install and the CLI refuses them. Say so instead of
+      // letting the worker run an action that cannot succeed, and still
+      // uninstall the rest of the batch.
+      var builtIn = wanted.filter(root.rowIsFirstParty)
+      if (builtIn.length > 0)
+        root.notify("Cannot uninstall built-in plugin",
+          builtIn.join(", ") + " ships with Omarchy, so it cannot be"
+          + " uninstalled. Turn it off with the switch on its row.")
+      var rest = wanted.filter(function (s) { return !root.rowIsFirstParty(s) })
+      if (rest.length > 0) root.startUninstall(rest)
     } else if (action === "move_icon") {
       // Manage-tab move: same validation and CLI chain as the popup's move
       // row; the panel stays open and the republished snapshot carries the

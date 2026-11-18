@@ -617,7 +617,7 @@
 
   // Real-time sync: poll the host's live state every second. When it
   // diverges from the mounted buttons (wizard confirmed/cancelled, plugin
-  // enabled/disabled/removed on the desktop), rebuild the group. The Copy
+  // enabled/disabled/uninstalled on the desktop), rebuild the group. The Copy
   // button node is restored to the head first, so the page's own listener
   // survives every rebuild.
   let pollTimer = null;

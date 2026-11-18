@@ -2,7 +2,7 @@
 # Fixture harness for the mutating workers that change plugin state:
 #   bin/omarchy-plugin-update apply    — the shared pinned, fail-closed update
 #   bin/omarchy-plugin-update-worker   — bar widget batch update
-#   bin/omarchy-plugin-uninstall-worker — bar widget removal
+#   bin/omarchy-plugin-uninstall-worker — bar widget uninstall
 #   bin/omarchy-plugin-worker          — wizard install/update/uninstall
 #
 # What is verified:
@@ -51,7 +51,7 @@ SHIMBIN="$TESTHOME/shim/bin"
 mkdir -p "$SHIMBIN"
 export SHELLLOG="$TESTHOME/shell.log"
 export NOTIFLOG="$TESTHOME/notify.log"
-export removelog="$TESTHOME/remove.log"
+export uninstalllog="$TESTHOME/uninstall.log"
 cat > "$SHIMBIN/omarchy" <<'EOF'
 #!/bin/bash
 case "$1 $2" in
@@ -69,7 +69,7 @@ case "$1 $2" in
     printf '{"id":"%s","name":"From Repo","version":"0.1.0"}' "$id" \
       > "$XDG_CONFIG_HOME/omarchy/plugins/$id/manifest.json"
     exit 0;;
-  "plugin remove") printf '%s\n' "$3" >> "${removelog:-/dev/null}"; exit "${FIX_REMOVE_RC:-0}";;
+  "plugin remove") printf '%s\n' "$3" >> "${uninstalllog:-/dev/null}"; exit "${FIX_UNINSTALL_RC:-0}";;
   *) exit 0;;
 esac
 EOF
@@ -231,16 +231,31 @@ check "worker pinned missing clone: fails closed with no git clone" "0 updated, 
 check "worker pinned missing clone: no CLI update call" "0" "$(grep -c 'shell rescanPlugins' "$SHELLLOG")"
 
 # ---- uninstall worker -----------------------------------------------------
-: > "$SHELLLOG"; : > "$NOTIFLOG"; : > "$TESTHOME/remove.log"
+: > "$SHELLLOG"; : > "$NOTIFLOG"; : > "$TESTHOME/uninstall.log"
 bash "$UNIW" "2 plugins" batchok.plugin "bad id" >/dev/null 2>&1
-check "uninstall notif title" "Plugin removals finished" "$(head -1 "$NOTIFLOG" | cut -f1)"
+check "uninstall notif title" "Uninstall finished with failures" "$(head -1 "$NOTIFLOG" | cut -f1)"
 # The worker blanks ids that fail the CLI's id pattern before recording the
 # failure (faithful to the original inline worker), so the invalid spec
 # shows up as a blank entry: "1 failed:" + " " + empty id.
-check "uninstall notif body" "1 removed, 1 failed: " "$(head -1 "$NOTIFLOG" | cut -f2-)"
-check "uninstall only removed the valid id" "batchok.plugin" "$(cat "$TESTHOME/remove.log")"
+check "uninstall notif body" "1 uninstalled, 1 failed: " "$(head -1 "$NOTIFLOG" | cut -f2-)"
+check "uninstall only uninstalled the valid id" "batchok.plugin" "$(cat "$TESTHOME/uninstall.log")"
 check "uninstall fired exactly one rescan" "1" "$(grep -c 'shell rescanPlugins' "$SHELLLOG")"
 check "uninstall summoned running stage" "1" "$(grep -c 'shell summon bramvanoploo' "$SHELLLOG")"
+
+# A built-in (first-party) plugin is not in the user plugins directory, so the
+# official CLI could only fail on it: the worker answers it with the disable
+# hint and still uninstalls the rest of the batch.
+: > "$SHELLLOG"; : > "$NOTIFLOG"; : > "$TESTHOME/uninstall.log"
+jq -n '[{id:"omarchy.active-window",name:"Active window",firstParty:true},{id:"acme.weather",name:"Weather"}]' > "$TESTHOME/builtinlist.json"
+FIX_LIST="$TESTHOME/builtinlist.json" \
+  bash "$UNIW" "2 plugins" omarchy.active-window acme.notes >/dev/null 2>&1
+check "uninstall built-in: only the community plugin is uninstalled" "acme.notes" "$(cat "$TESTHOME/uninstall.log")"
+check "uninstall built-in: refusal title" "Cannot uninstall built-in plugin" "$(head -1 "$NOTIFLOG" | cut -f1)"
+check "uninstall built-in: refusal body names the alternative" \
+  "omarchy.active-window ships with Omarchy, so it cannot be uninstalled. Turn it off instead: omarchy plugin disable omarchy.active-window." \
+  "$(head -1 "$NOTIFLOG" | cut -f2-)"
+check "uninstall built-in: batch summary still lands" "1 plugin(s) uninstalled." "$(tail -1 "$NOTIFLOG" | cut -f2-)"
+check "uninstall built-in: exactly two notifications" "2" "$(wc -l < "$NOTIFLOG")"
 
 # ---- wizard worker: update modes ------------------------------------------
 read -r A5 B5 < <(mk_clone wiz.plugin)
@@ -289,15 +304,30 @@ check "wizard install rejects dot-component repo: exit 2" "2" "$rc"
 # ---- wizard worker: notification bodies are sanitized ----------------------
 # A display name carrying a newline could spoof a second notification line.
 : > "$NOTIFLOG"
-FIX_REMOVE_RC=0 bash "$WIZW" uninstall wiz.plugin "$(printf 'Ev\nil')" "" "" >/dev/null 2>&1
+FIX_UNINSTALL_RC=0 bash "$WIZW" uninstall wiz.plugin "$(printf 'Ev\nil')" "" "" >/dev/null 2>&1
 check "wizard uninstall: name control chars stripped" \
-  "Evil has been removed." "$(tail -1 "$NOTIFLOG" | cut -f2-)"
+  "Evil has been uninstalled." "$(tail -1 "$NOTIFLOG" | cut -f2-)"
 check "wizard uninstall: one notification line per run" "1" "$(wc -l < "$NOTIFLOG")"
 
 # ---- wizard worker: uninstall mode ----------------------------------------
 : > "$NOTIFLOG"
-FIX_REMOVE_RC=0 bash "$WIZW" uninstall wiz.plugin "Wiz Plugin" "" "" >/dev/null 2>&1
-check "wizard uninstall: notification" "Wiz Plugin has been removed." "$(head -1 "$NOTIFLOG" | cut -f2-)"
+FIX_UNINSTALL_RC=0 bash "$WIZW" uninstall wiz.plugin "Wiz Plugin" "" "" >/dev/null 2>&1
+check "wizard uninstall: notification" "Wiz Plugin has been uninstalled." "$(head -1 "$NOTIFLOG" | cut -f2-)"
+check "wizard uninstall: one notification line per run" "1" "$(wc -l < "$NOTIFLOG")"
+
+# A built-in (first-party) plugin lives in the Omarchy install, not in the
+# user plugins directory: the CLI uninstall can only refuse it, so the worker
+# says so (and points at disable) instead of running it.
+: > "$NOTIFLOG"
+jq -n '[{id:"omarchy.active-window",name:"Active window",firstParty:true}]' > "$TESTHOME/onelist.json"
+FIX_LIST="$TESTHOME/onelist.json" \
+  FIX_UNINSTALL_RC=0 bash "$WIZW" uninstall omarchy.active-window "Active window" "" "" >/dev/null 2>&1; rc=$?
+check "wizard uninstall built-in: exit 1" "1" "$rc"
+check "wizard uninstall built-in: notification" "Cannot uninstall built-in plugin" "$(head -1 "$NOTIFLOG" | cut -f1)"
+check "wizard uninstall built-in: names the alternative" \
+  "Active window ships with Omarchy, so it cannot be uninstalled. Turn it off instead: omarchy plugin disable omarchy.active-window." \
+  "$(head -1 "$NOTIFLOG" | cut -f2-)"
+check "wizard uninstall built-in: one notification line per run" "1" "$(wc -l < "$NOTIFLOG")"
 
 # ---- wizard worker: marker protocol (mode recorded, cleaned up) -----------
 : > "$SHELLLOG"
