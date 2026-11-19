@@ -31,16 +31,27 @@ omarchy plugin add https://github.com/bramvanoploo/omarchy-browser-plugin-manage
 
 The wizard path (the browser's Uninstall button, or "Uninstall Omarchy
 plugin" in the extension prompt) unregisters the native messaging host and
-removes the plugin in one confirmed action.
+uninstalls the plugin in one confirmed action.
 
-Terminal removal works too:
+Terminal uninstall works too:
 
 ```bash
 omarchy plugin remove bramvanoploo.omarchy-browser-plugin-manager
 ```
 
-After removing the plugin, also remove the browser extension
+After uninstalling the plugin, also remove the browser extension
 (chrome://extensions / about:addons).
+
+Built-in Omarchy plugins - the rows the Manage tab lists with Omarchy as
+their author, like *Active window* - ship inside the Omarchy install, so
+they have no Uninstall button and cannot be uninstalled: the official CLI
+only uninstalls plugins you installed yourself. The "Hide built-in" filter
+beside the search field drops them from the list entirely, and you turn
+one off with its row's switch instead:
+
+```bash
+omarchy plugin disable omarchy.active-window
+```
 
 ## Browser extensions
 

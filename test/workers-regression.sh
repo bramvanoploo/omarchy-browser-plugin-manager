@@ -48,14 +48,14 @@ SHIMBIN="$TESTHOME/shim/bin"
 mkdir -p "$SHIMBIN"
 export SHELLLOG="$TESTHOME/shell.log"
 export NOTIFLOG="$TESTHOME/notify.log"
-export REMOVELOG="$TESTHOME/remove.log"
+export UNINSTALLLOG="$TESTHOME/uninstall.log"
 export SETUPLOG="$TESTHOME/setup.log"
 
 cat > "$SHIMBIN/omarchy" <<'EOF'
 #!/bin/bash
 case "$1 $2" in
   "plugin list") cat "${FIX_LIST:-[]}"; exit 0;;
-  "plugin remove") sleep "${REMOVESLEEP:-0}"; printf '%s\n' "$3" >> "${REMOVELOG:-/dev/null}"; exit 0;;
+  "plugin remove") sleep "${UNINSTALLSLEEP:-0}"; printf '%s\n' "$3" >> "${UNINSTALLLOG:-/dev/null}"; exit 0;;
   "plugin update") printf 'Updated %s\n' "$3"; exit 0;;
   *) exit 0;;
 esac
@@ -105,39 +105,39 @@ check() { # check <label> <expected> <actual>
 
 # ---- 1. Native host unregister isolation -------------------------------------
 # Normal plugin uninstall via wizard worker:
-: > "$SETUPLOG"; : > "$NOTIFLOG"; : > "$REMOVELOG"
+: > "$SETUPLOG"; : > "$NOTIFLOG"; : > "$UNINSTALLLOG"
 bash "$WIZW" uninstall acme.weather "Weather" "" "" >/dev/null 2>&1
 check "wizard worker other plugin: no host unregister" "0" "$(wc -l < "$SETUPLOG")"
-check "wizard worker other plugin: removed" "acme.weather" "$(cat "$REMOVELOG")"
+check "wizard worker other plugin: uninstalled" "acme.weather" "$(cat "$UNINSTALLLOG")"
 
 # Manager plugin uninstall via wizard worker:
-: > "$SETUPLOG"; : > "$NOTIFLOG"; : > "$REMOVELOG"
+: > "$SETUPLOG"; : > "$NOTIFLOG"; : > "$UNINSTALLLOG"
 bash "$WIZW" uninstall "$MANAGER_ID" "PlugBrug" "" "" >/dev/null 2>&1
 check "wizard worker manager: host unregister called" "--uninstall" "$(cat "$SETUPLOG")"
-check "wizard worker manager: removed" "$MANAGER_ID" "$(cat "$REMOVELOG")"
+check "wizard worker manager: uninstalled" "$MANAGER_ID" "$(cat "$UNINSTALLLOG")"
 
 # Normal plugin uninstall via bar batch worker:
-: > "$SETUPLOG"; : > "$NOTIFLOG"; : > "$REMOVELOG"
+: > "$SETUPLOG"; : > "$NOTIFLOG"; : > "$UNINSTALLLOG"
 bash "$UNIW" "1 plugin" acme.notes >/dev/null 2>&1
 check "batch worker other plugin: no host unregister" "0" "$(wc -l < "$SETUPLOG")"
-check "batch worker other plugin: removed" "acme.notes" "$(cat "$REMOVELOG")"
+check "batch worker other plugin: uninstalled" "acme.notes" "$(cat "$UNINSTALLLOG")"
 
 # Manager plugin uninstall via bar batch worker:
-: > "$SETUPLOG"; : > "$NOTIFLOG"; : > "$REMOVELOG"
+: > "$SETUPLOG"; : > "$NOTIFLOG"; : > "$UNINSTALLLOG"
 bash "$UNIW" "1 plugin" "$MANAGER_ID" >/dev/null 2>&1
 check "batch worker manager: host unregister called" "--uninstall" "$(cat "$SETUPLOG")"
-check "batch worker manager: removed" "$MANAGER_ID" "$(cat "$REMOVELOG")"
+check "batch worker manager: uninstalled" "$MANAGER_ID" "$(cat "$UNINSTALLLOG")"
 
 # ---- 2. Flag / hyphen injection rejection ------------------------------------
 # Hyphenated leading ids must be rejected without touching omarchy plugin remove
-: > "$REMOVELOG"
+: > "$UNINSTALLLOG"
 bash "$WIZW" uninstall "--danger" "Danger" "" "" >/dev/null 2>&1; rc=$?
 check "wizard worker rejects leading hyphen (rc 2)" "2" "$rc"
-check "wizard worker rejects leading hyphen (no remove call)" "0" "$(wc -l < "$REMOVELOG")"
+check "wizard worker rejects leading hyphen (no uninstall call)" "0" "$(wc -l < "$UNINSTALLLOG")"
 
-: > "$REMOVELOG"
+: > "$UNINSTALLLOG"
 bash "$UNIW" "1 plugin" "--help" >/dev/null 2>&1
-check "batch uninstall rejects leading hyphen (no remove call)" "0" "$(wc -l < "$REMOVELOG")"
+check "batch uninstall rejects leading hyphen (no uninstall call)" "0" "$(wc -l < "$UNINSTALLLOG")"
 
 out=$(bash "$UPD" apply "--option" "" 2>&1); rc=$?
 check "update apply rejects leading hyphen (rc 2)" "2" "$rc"
@@ -228,9 +228,9 @@ check "extension sender origin validation" "pass" "$node_test"
 # ---- 7. Worker state permissions (umask 077) ----------------------------
 # The in-progress markers record which action runs on which plugin, so the
 # state subtree must be owner-only from creation whatever the caller umask.
-# Probed live: the remove shim sleeps while the marker is still on disk.
+# Probed live: the uninstall shim sleeps while the marker is still on disk.
 PROBE_DIR="$XDG_STATE_HOME/omarchy/$MANAGER_ID/in-progress"
-REMOVESLEEP=2 bash "$UNIW" "1 plugin" acme.perm >/dev/null 2>&1 &
+UNINSTALLSLEEP=2 bash "$UNIW" "1 plugin" acme.perm >/dev/null 2>&1 &
 marker=""
 for _ in $(seq 1 40); do
   marker=$(find "$PROBE_DIR" -name '*.json' 2>/dev/null | head -1)
@@ -255,7 +255,7 @@ cp "$HOST" "$hosttmp/bin/omarchy-plugin-install-host"
 jq -cn --arg v '9.9", "evil": "yes' '{version: $v}' > "$hosttmp/manifest.json"
 tampered_out=$(send_msg '{"type":"ping"}' | "$hosttmp/bin/omarchy-plugin-install-host" | tail -c +5)
 check "tampered manifest: ping frame still parses" "0" "$(jq -e . <<<"$tampered_out" >/dev/null 2>&1; echo $?)"
-check "tampered manifest: version falls back" "1.0.0" "$(jq -r '.version // ""' <<<"$tampered_out")"
+check "tampered manifest: version falls back" "1.0.1" "$(jq -r '.version // ""' <<<"$tampered_out")"
 check "tampered manifest: no injected key" "" "$(jq -r '.evil // ""' <<<"$tampered_out")"
 rm -rf "$hosttmp"
 

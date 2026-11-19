@@ -461,7 +461,7 @@
 
   // Real-time sync: refresh the host's batch state on a poll. When a card's
   // live state diverges from its mounted button (wizard confirmed/cancelled,
-  // plugin installed/removed on the desktop), swap the button. Mirrors the
+  // plugin installed/uninstalled on the desktop), swap the button. Mirrors the
   // plugin pages' state sync at a catalog-friendly interval.
   async function syncRendered() {
     if (!statuses || !pluginsById) return;
