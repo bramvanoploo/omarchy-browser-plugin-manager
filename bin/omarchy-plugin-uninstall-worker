@@ -52,7 +52,11 @@ while [ $# -gt 0 ]; do
   id="$1"
   case "$id" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*) id="" ;; esac
   if [ -z "$id" ]; then
-    fail=$((fail+1)); failed="$failed $id"
+    fail=$((fail+1))
+    # Show the sanitized original spec (as the update worker does): the
+    # blanked id would render an empty name after "failed:".
+    bad=$(printf '%s' "$1" | head -n1 | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-120)
+    failed="$failed ${bad:-<empty>}"
   elif is_first_party "$id"; then
     builtin=$((builtin+1)); builtins="$builtins $id"
   else

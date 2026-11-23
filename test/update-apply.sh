@@ -234,10 +234,10 @@ check "worker pinned missing clone: no CLI update call" "0" "$(grep -c 'shell re
 : > "$SHELLLOG"; : > "$NOTIFLOG"; : > "$TESTHOME/uninstall.log"
 bash "$UNIW" "2 plugins" batchok.plugin "bad id" >/dev/null 2>&1
 check "uninstall notif title" "Uninstall finished with failures" "$(head -1 "$NOTIFLOG" | cut -f1)"
-# The worker blanks ids that fail the CLI's id pattern before recording the
-# failure (faithful to the original inline worker), so the invalid spec
-# shows up as a blank entry: "1 failed:" + " " + empty id.
-check "uninstall notif body" "1 uninstalled, 1 failed: " "$(head -1 "$NOTIFLOG" | cut -f2-)"
+# The invalid spec is rejected by the id pattern, but the notification shows
+# the sanitized original ("bad id"), not a blank entry: the user must be able
+# to see which spec was rejected.
+check "uninstall notif body" "1 uninstalled, 1 failed: bad id" "$(head -1 "$NOTIFLOG" | cut -f2-)"
 check "uninstall only uninstalled the valid id" "batchok.plugin" "$(cat "$TESTHOME/uninstall.log")"
 check "uninstall fired exactly one rescan" "1" "$(grep -c 'shell rescanPlugins' "$SHELLLOG")"
 check "uninstall summoned running stage" "1" "$(grep -c 'shell summon bramvanoploo' "$SHELLLOG")"

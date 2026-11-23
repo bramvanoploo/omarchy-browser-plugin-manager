@@ -39,11 +39,11 @@ CHROME_DIRS=(
   "$CONFIG_HOME/BraveSoftware/Brave-Browser"
 )
 # Firefox (Linux) scans native messaging manifests in the XDG location
-# (~/.config/mozilla/... since Firefox 133) and the legacy ~/.mozilla one.
-# Register in both; older Firefox builds only read the legacy path.
+# (~/.config/mozilla/... since Firefox 133). The extension's
+# strict_min_version is 142, so no browser that can load this add-on ever
+# reads the pre-133 legacy path (~/.mozilla) — registering there is dead.
 FIREFOX_DIRS=(
   "$CONFIG_HOME/mozilla/native-messaging-hosts"
-  "$HOME/.mozilla/native-messaging-hosts"
 )
 
 usage() {

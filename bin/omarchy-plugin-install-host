@@ -68,13 +68,13 @@ HOST_NAME="bramvanoploo_omarchy_browser_plugin_manager"
 HOST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOST_VERSION="$(jq -r '.version // empty' "$HOST_DIR/../manifest.json" 2>/dev/null || true)"
 if [[ -z "$HOST_VERSION" ]]; then
-  HOST_VERSION="1.0.1"
+  HOST_VERSION="1.0.2"
 fi
 # The extension's transport can touch the manifest, so a tampered version
 # string must never travel into a reply frame as raw bytes: keep only a
 # conservative version-shaped token, and fall back to the built-in default
 # (kept in step with the release in manifest.json).
-[[ "$HOST_VERSION" =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || HOST_VERSION="1.0.1"
+[[ "$HOST_VERSION" =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || HOST_VERSION="1.0.2"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
 MAX_FRAME_BYTES=65536
@@ -117,6 +117,12 @@ UPDATE_TTL_SECONDS=300
 UPDATE_ACTION_STAMP="$STATE_DIR/update-action.stamp"
 UPDATE_FAST_TTL_SECONDS=5
 UPDATE_FAST_WINDOW_SECONDS=120
+# The viewed marketplace page polls "status" every second, and each status
+# answer needs the plugin list — spawning the Qt `omarchy plugin list` CLI
+# once per poll burns CPU forever for no visible gain. The raw output is
+# reused inside this process for this many seconds; after a wizard action
+# the button state can lag by up to that window, which is not perceptible.
+PLUGIN_LIST_TTL_SECONDS=1
 
 # Owner-only state storage, established before anything is written: the
 # directory becomes 700 and every entry in it loses group/other access,
@@ -164,6 +170,22 @@ reply_err() {
   reply --arg reason "$reason" '{ok:false, reason:$reason}'
 }
 
+# Raw `omarchy plugin list --json` output, cached for PLUGIN_LIST_TTL_SECONDS
+# in this long-lived host process. The native-messaging loop serializes
+# messages, so plain variables are race-free here; concurrent hosts (one per
+# browser connection) each cache on their own.
+PLUGIN_LIST_CACHE=""
+PLUGIN_LIST_CACHE_AT=0
+plugin_list_json() {
+  local now=${EPOCHSECONDS:-$(date +%s)}
+  if [[ -z $PLUGIN_LIST_CACHE ]] || (( now - PLUGIN_LIST_CACHE_AT >= PLUGIN_LIST_TTL_SECONDS )); then
+    PLUGIN_LIST_CACHE=$(omarchy plugin list --json 2>/dev/null) || PLUGIN_LIST_CACHE="[]"
+    [[ -n $PLUGIN_LIST_CACHE ]] || PLUGIN_LIST_CACHE="[]"
+    PLUGIN_LIST_CACHE_AT=$now
+  fi
+  printf '%s\n' "$PLUGIN_LIST_CACHE"
+}
+
 # Is this plugin installed as a user (non-first-party) plugin? Prints
 # {id, installed, enabled, firstParty} as compact JSON. Always succeeds
 # with valid JSON. The id rides the output so the status handler's
@@ -177,7 +199,7 @@ plugin_status() {
   # The id passed the charset regex above (no quotes, backslashes, or
   # control characters), so embedding it in JSON is safe.
   default="{\"id\":\"$id\",\"installed\":false,\"enabled\":false,\"firstParty\":false,\"barWidget\":false}"
-  raw=$(omarchy plugin list --json 2>/dev/null) || raw="[]"
+  raw=$(plugin_list_json)
   [[ -n $raw ]] || raw="[]"
   # The viewed marketplace page polls this every second, so the requested
   # id is browsing activity: pass the id and the plugin list in one stdin
@@ -822,7 +844,7 @@ main() {
         # first-party) plugin in one call, decorated with the cached
         # update info (verification setting applied). Plugins missing
         # from the list are not installed.
-        all_status=$(omarchy plugin list --json 2>/dev/null | jq -c \
+        all_status=$(plugin_list_json | jq -c \
           '[ (if type == "array" then . else [] end)[] | select(type == "object" and ((.firstParty // false) | not)) | {id: .id, installed: true, enabled: (.enabled == true), barWidget: (((.kinds // []) | index("bar-widget")) != null)} ]' \
           2>/dev/null) || all_status="[]"
         [[ ${all_status:-} == "["* ]] || all_status="[]"
