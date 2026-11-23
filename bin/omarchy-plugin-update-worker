@@ -18,17 +18,8 @@
 # shadows omarchy-shell on PATH to swallow those per-plugin rescans and
 # fires one real rescan after the whole batch, so the bar reloads once.
 set -u
-# Marker files record in-progress batches (mode, timestamps); owner-only
-# from creation, whatever the caller's umask.
-umask 077
-export PATH="${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH"
-notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
-command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)"
-notify() {
-  "$notify_cmd" --app-name omarchy-browser-plugin-manager --expire-time 8000 "$1" "$2"
-}
-real_shell="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell"
-command -v "$real_shell" >/dev/null 2>&1 || real_shell="$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)"
+# shellcheck disable=SC1091
+source "$(dirname -- "$0")/omarchy-plugin-lib"
 updater="$(dirname -- "$0")/omarchy-plugin-update"
 plug="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"
 export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true
@@ -37,22 +28,15 @@ export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}"
 # In-progress system panel (same protocol as the wizard's workers): the
 # first argv is a display label (plugin name, or "N plugins" for a
 # batch); publish a marker file per run (removed on any exit) and summon
-# the wizard on its running stage, which polls the marker directory and
-# closes itself once no fresh marker remains.
+# the wizard on its running stage.
 LABEL="${1:-plugins}"; shift
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager"
-MARK_DIR="$STATE_DIR/in-progress"
-mkdir -p "$MARK_DIR" 2>/dev/null || true
-MARK="$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json"
 bin_dir=""
 cleanup() {
-  rm -f "$MARK" 2>/dev/null || true
+  rm -f "${MARK:-}" 2>/dev/null || true
   [ -n "${bin_dir:-}" ] && rm -rf "$bin_dir" 2>/dev/null || true
 }
 trap cleanup EXIT
-jq -cn --arg mode "update" --arg name "$LABEL" '{mode:$mode,id:"",name:$name,started:(now|floor)}' > "$MARK" 2>/dev/null || true
-PAYLOAD=$(jq -cn --arg name "$LABEL" '{source:"worker",mode:"running",id:"",name:$name,action:"update"}' 2>/dev/null)
-[ -n "$PAYLOAD" ] && "$real_shell" -q shell summon bramvanoploo.omarchy-browser-plugin-manager "$PAYLOAD" >/dev/null 2>&1 || true
+start_progress "update" "" "$LABEL"
 
 # apply's one-word status codes mapped back to this widget's notification
 # wording (batch summaries list failures with their reason).
@@ -67,11 +51,6 @@ reason() {
     *) echo "$1" ;;
   esac
 }
-# Failure entries ride into one summary notification: keep them to the
-# single status word (apply's cli-failed status carries raw CLI output on
-# following lines), strip control characters, and cap the length so a
-# malformed spec or a chatty CLI cannot spoof lines or bloat the body.
-entry() { printf '%s' "$1" | head -n1 | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-120; }
 
 bin_dir=$(mktemp -d)
 printf '%s\n' '#!/bin/bash' '[ "${1:-}" = shell ] && [ "${2:-}" = rescanPlugins ] && exit 0' "exec $(printf '%q' "$real_shell") \"\$@\"" > "$bin_dir/omarchy-shell"

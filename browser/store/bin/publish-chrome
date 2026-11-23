@@ -22,12 +22,12 @@
 #      https://www.googleapis.com/auth/chromewebstore, Authorize APIs
 #      (sign in as the store's developer account; 2-step verification must
 #      be on) -> Exchange authorization code for tokens.
-#   5. Copy into .env: the client ID, client secret, and the REFRESH_TOKEN
+#   5. Copy into ~/.config/plugbrug/store.env: the client ID, client secret, and the REFRESH_TOKEN
 #      (a long-lived credential; access tokens are minted per run).
 #   6. Publisher ID: Developer Dashboard -> Publisher -> Settings
 #      -> GOOGLE_CWS_PUBLISHER_ID.
 #
-# .env keys required (gitignored, same file the AMO scripts use):
+# store.env keys required (outside the repo, same file the AMO scripts use):
 #   GOOGLE_CWS_PUBLISHER_ID   Google publisher ID (decimal number)
 #   GOOGLE_CWS_CLIENT_ID      OAuth client ID from step 3
 #   GOOGLE_CWS_CLIENT_SECRET  OAuth client secret from step 3
@@ -50,7 +50,9 @@ BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
 REPO_DIR="$(dirname -- "$(dirname -- "$(dirname -- "$BIN_DIR")")")"
 EXT_DIR="$REPO_DIR/browser/extension"
 DIST_DIR="$REPO_DIR/dist"
-ENV_FILE="$REPO_DIR/.env"
+# Credentials live outside the repo so a stray `git add -A` can never
+# publish them: ~/.config/plugbrug/store.env
+ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/plugbrug/store.env"
 STATE_FILE="$DIST_DIR/.chrome-published-version"
 
 # Same item the plugin-installer-setup allowlists (its CHROME_STORE_ID).
@@ -64,11 +66,11 @@ for arg in "$@"; do
   esac
 done
 
-[[ -f "$ENV_FILE" ]] || { echo "Missing .env with the GOOGLE_CWS_* keys (see this script's header for the one-time setup)." >&2; exit 1; }
+[[ -f "$ENV_FILE" ]] || { echo "Missing store.env with the GOOGLE_CWS_* keys (see this script's header for the one-time setup)." >&2; exit 1; }
 set -a; source "$ENV_FILE"; set +a
 [[ -n "${GOOGLE_CWS_PUBLISHER_ID:-}" && -n "${GOOGLE_CWS_CLIENT_ID:-}" \
    && -n "${GOOGLE_CWS_CLIENT_SECRET:-}" && -n "${GOOGLE_CWS_REFRESH_TOKEN:-}" ]] || {
-  echo "Set GOOGLE_CWS_PUBLISHER_ID, GOOGLE_CWS_CLIENT_ID, GOOGLE_CWS_CLIENT_SECRET and GOOGLE_CWS_REFRESH_TOKEN in .env (see this script's header for the one-time setup)." >&2
+  echo "Set GOOGLE_CWS_PUBLISHER_ID, GOOGLE_CWS_CLIENT_ID, GOOGLE_CWS_CLIENT_SECRET and GOOGLE_CWS_REFRESH_TOKEN in store.env (see this script's header for the one-time setup)." >&2
   exit 1
 }
 

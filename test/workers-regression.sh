@@ -255,7 +255,7 @@ cp "$HOST" "$hosttmp/bin/omarchy-plugin-install-host"
 jq -cn --arg v '9.9", "evil": "yes' '{version: $v}' > "$hosttmp/manifest.json"
 tampered_out=$(send_msg '{"type":"ping"}' | "$hosttmp/bin/omarchy-plugin-install-host" | tail -c +5)
 check "tampered manifest: ping frame still parses" "0" "$(jq -e . <<<"$tampered_out" >/dev/null 2>&1; echo $?)"
-check "tampered manifest: version falls back" "1.0.2" "$(jq -r '.version // ""' <<<"$tampered_out")"
+check "tampered manifest: version falls back" "1.0.3" "$(jq -r '.version // ""' <<<"$tampered_out")"
 check "tampered manifest: no injected key" "" "$(jq -r '.evil // ""' <<<"$tampered_out")"
 rm -rf "$hosttmp"
 
@@ -300,8 +300,12 @@ check "catalog.js guards untrusted clicks" "1" "$(grep -c 'isTrusted' "$REPO_ROO
 check "wizard curls capped" "2" "$(grep -c 'max-filesize' "$REPO_ROOT/Wizard.qml")"
 check "bar curl capped" "1" "$(grep -c 'max-filesize' "$REPO_ROOT/BarWatch.qml")"
 for w in "$WIZW" "$UPDW" "$UNIW"; do
-  check "worker sets umask 077: $(basename "$w")" "1" "$(grep -c 'umask 077' "$w")"
+  # The umask moved into the shared lib every worker sources; check both
+  # halves so the owner-only-marker guard cannot silently disappear.
+  check "worker sources shared lib: $(basename "$w")" "1" \
+    "$(grep -cF 'source "$(dirname -- "$0")/omarchy-plugin-lib"' "$w")"
 done
+check "shared lib sets umask 077" "1" "$(grep -c 'umask 077' "$REPO_ROOT/bin/omarchy-plugin-lib")"
 
 echo
 if (( FAILURES > 0 )); then

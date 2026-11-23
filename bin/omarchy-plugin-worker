@@ -17,10 +17,8 @@
 # the bar widget), so confirming a verified update in either surface loads
 # exactly the reviewed commit or nothing at all.
 set -u
-# Marker files record in-progress actions (plugin name, mode, timestamps);
-# owner-only from creation, whatever the caller's umask.
-umask 077
-export PATH="${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH"
+# shellcheck disable=SC1091
+source "$(dirname -- "$0")/omarchy-plugin-lib"
 KIND="${1:-}"
 ID="${2:-}"
 NAME="${3:-}"
@@ -28,25 +26,13 @@ REPO="${4:-}"
 SECTION="${5:-}"
 
 case "$ID" in ''|[!a-z0-9]*|*[!a-z0-9.-]*|*..*)
-  notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
-  command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)"
   # Echo a sanitized, length-capped rendering only: $ID failed the id
   # whitelist, so its raw text may carry control characters or newline
   # escapes that would spoof lines in the notification body.
   id_display=$(printf '%s' "$ID" | tr -dc 'a-zA-Z0-9._-' | cut -c1-40)
-  "$notify_cmd" --app-name omarchy-browser-plugin-manager --expire-time 8000 "Plugin action failed" "Invalid plugin id: ${id_display:-(empty)}"
+  notify "Plugin action failed" "Invalid plugin id: ${id_display:-(empty)}"
   exit 2
 ;; esac
-notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
-command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)"
-notify() {
-  "$notify_cmd" --app-name omarchy-browser-plugin-manager --expire-time 8000 "$1" "$2"
-}
-# Notification bodies must not carry control characters (a newline from a
-# CLI error could spoof extra notification lines) and must stay bounded.
-# \011 (tab) and \012 (LF) survive deliberately; high bytes (UTF-8) survive
-# so plugin display names are not mangled.
-clean() { printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-400; }
 # $NAME is display-only (notifications, marker, summon payload) and arrives
 # unvalidated from the summoner: strip control characters up front, cap the
 # length; the payload itself is built by jq, which quotes it anyway.
@@ -68,18 +54,10 @@ placed() {
   jq -e --arg id "$ID" --arg s "$SECTION" '(.bar.layout[$s] // []) | any(.[]; .id == $id)' "$f" >/dev/null 2>&1
 }
 OUT=''
-# In-progress system panel: publish a marker file (one per worker, removed
-# on any exit) and summon the wizard on the running stage. The panel polls
-# this directory and closes itself once no fresh marker remains; staleness
-# (15min) guards workers that died without their EXIT trap.
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager"
-MARK_DIR="$STATE_DIR/in-progress"
-mkdir -p "$MARK_DIR" 2>/dev/null || true
-MARK="$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json"
+# In-progress system panel: publish the marker ($MARK, removed by the EXIT
+# trap) and summon the running stage; protocol in omarchy-plugin-lib.
+start_progress "$KIND" "$ID" "$NAME"
 trap 'rm -f "$MARK"' EXIT
-jq -cn --arg mode "$KIND" --arg id "$ID" --arg name "$NAME" '{mode:$mode,id:$id,name:$name,started:(now|floor)}' > "$MARK" 2>/dev/null || true
-PAYLOAD=$(jq -cn --arg id "$ID" --arg name "$NAME" --arg action "$KIND" '{source:"worker",mode:"running",id:$id,name:$name,action:$action}' 2>/dev/null)
-[ -n "$PAYLOAD" ] && omarchy-shell -q shell summon bramvanoploo.omarchy-browser-plugin-manager "$PAYLOAD" >/dev/null 2>&1 || true
 updater="$(dirname -- "$0")/omarchy-plugin-update"
 
 case "$KIND" in

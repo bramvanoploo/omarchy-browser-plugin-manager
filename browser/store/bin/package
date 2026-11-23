@@ -28,16 +28,16 @@ REPO_DIR="$(dirname -- "$(dirname -- "$(dirname -- "$BIN_DIR")")")"
 EXT_DIR="$REPO_DIR/browser/extension"
 DIST_DIR="$REPO_DIR/dist"
 
-# Ensure extension manifest version is in sync with root manifest.json
+# The two manifests must declare the same version. Packaging used to rewrite
+# the extension manifest to match the root one mid-build; that mutated tracked
+# source and hid a missed bump. Fail loudly instead.
 ROOT_MANIFEST="$REPO_DIR/manifest.json"
 if [[ -f "$ROOT_MANIFEST" ]]; then
   ROOT_VERSION="$(jq -r '.version // empty' "$ROOT_MANIFEST" 2>/dev/null || true)"
-  if [[ -n "$ROOT_VERSION" ]]; then
-    CUR_EXT_VER="$(jq -r '.version // empty' "$EXT_DIR/manifest.json" 2>/dev/null || true)"
-    if [[ "$CUR_EXT_VER" != "$ROOT_VERSION" ]]; then
-      tmp="$(mktemp)"
-      jq --arg v "$ROOT_VERSION" '.version = $v' "$EXT_DIR/manifest.json" > "$tmp" && mv "$tmp" "$EXT_DIR/manifest.json"
-    fi
+  CUR_EXT_VER="$(jq -r '.version // empty' "$EXT_DIR/manifest.json" 2>/dev/null || true)"
+  if [[ -n "$ROOT_VERSION" && "$CUR_EXT_VER" != "$ROOT_VERSION" ]]; then
+    echo "Version mismatch: root manifest.json ($ROOT_VERSION) vs browser/extension/manifest.json ($CUR_EXT_VER). Bump both; packaging does not rewrite source." >&2
+    exit 1
   fi
 fi
 
@@ -96,8 +96,10 @@ jq '.background = {scripts: ["background.js"]}
 # (2025+) rejects uploaded manifests containing "key", and the store assigns
 # its own ID derived from the store-side keypair at item creation. That
 # dashboard-reported ID is what bin/plugin-installer-setup must allowlist
-# (CHROME_STORE_ID). chrome-key.pem is kept only to derive the legacy
-# key-pinned ID for packed installs ("Load unpacked" uses the path-derived
+# (CHROME_STORE_ID). The key-pinned ID for packed installs is derived from
+# the committed public key (browser/store/chrome-key.pub); the private half
+# lives outside the repo (~/.local/share/plugbrug/chrome-key.pem) and is
+# only needed to sign new packages ("Load unpacked" uses the path-derived
 # ID; setup registers both).
 mkdir -p "$STAGE/chrome"
 cp -r "$EXT_DIR/." "$STAGE/chrome/"
@@ -114,7 +116,7 @@ STAGE_SRC="$STAGE/src/$NAME"
 mkdir -p "$STAGE_SRC"
 ( cd "$REPO_DIR" && git ls-files -z | xargs -0 -I{} cp -a --parents {} "$STAGE_SRC"/ ) 2>/dev/null \
   || cp -a "$REPO_DIR"/. "$STAGE_SRC"/
-rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist" "$STAGE_SRC/browser/store/chrome-key.pem" "$STAGE_SRC"/browser/store/chrome-key-*.pem.bak "$STAGE_SRC/.env"
+rm -rf "$STAGE_SRC/.git" "$STAGE_SRC/dist" "$STAGE_SRC/.env"
 rm -f "$STAGE_SRC/browser/extension/.amo-upload-uuid"
 ( cd "$STAGE/src" && zip -qr "$DIST_DIR/$NAME-$VERSION-$STAMP.zip" . )
 

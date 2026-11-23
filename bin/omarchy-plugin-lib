@@ -1,0 +1,47 @@
+# shellcheck shell=bash
+# Shared helpers for the three PlugBrug workers (wizard worker, bar update
+# worker, bar uninstall worker): notification plumbing, sanitized rendering
+# of untrusted text, and the in-progress marker + running-stage summon
+# protocol. Sourced, never executed: each worker starts with
+#   source "$(dirname -- "$0")/omarchy-plugin-lib"
+
+# Marker files record in-progress actions; owner-only from creation,
+# whatever the caller's umask.
+umask 077
+export PATH="${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH"
+
+notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
+command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)"
+notify() {
+  "$notify_cmd" --app-name omarchy-browser-plugin-manager --expire-time 8000 "$1" "$2"
+}
+
+real_shell="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell"
+command -v "$real_shell" >/dev/null 2>&1 || real_shell="$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)"
+
+# Notification bodies must not carry control characters (a newline from a
+# CLI error could spoof extra notification lines) and must stay bounded.
+# \011 (tab) and \012 (LF) survive deliberately; high bytes (UTF-8) survive
+# so plugin display names are not mangled.
+clean() { printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-400; }
+# One failure entry for a batch summary: keep apply's single status word
+# (cli-failed carries raw CLI output on the following lines), strip control
+# characters, and cap the length so a malformed spec or a chatty CLI cannot
+# spoof lines or bloat the body.
+entry() { printf '%s' "$1" | head -n1 | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-120; }
+
+# In-progress system panel: publish a marker file (one per worker run; the
+# caller's EXIT trap removes it via $MARK) and summon the wizard on the
+# running stage. The panel polls this directory and closes itself once no
+# fresh marker remains; staleness (15min) guards workers that died without
+# their EXIT trap.
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager"
+MARK_DIR="$STATE_DIR/in-progress"
+start_progress() { # $1 mode, $2 id ("" for batches), $3 display name
+  mkdir -p "$MARK_DIR" 2>/dev/null || true
+  MARK="$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json"
+  jq -cn --arg mode "$1" --arg id "$2" --arg name "$3" '{mode:$mode,id:$id,name:$name,started:(now|floor)}' > "$MARK" 2>/dev/null || true
+  local payload
+  payload=$(jq -cn --arg id "$2" --arg name "$3" --arg action "$1" '{source:"worker",mode:"running",id:$id,name:$name,action:$action}' 2>/dev/null)
+  [ -n "$payload" ] && "$real_shell" -q shell summon bramvanoploo.omarchy-browser-plugin-manager "$payload" >/dev/null 2>&1 || true
+}
