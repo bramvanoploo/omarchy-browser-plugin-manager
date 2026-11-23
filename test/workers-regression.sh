@@ -255,7 +255,7 @@ cp "$HOST" "$hosttmp/bin/omarchy-plugin-install-host"
 jq -cn --arg v '9.9", "evil": "yes' '{version: $v}' > "$hosttmp/manifest.json"
 tampered_out=$(send_msg '{"type":"ping"}' | "$hosttmp/bin/omarchy-plugin-install-host" | tail -c +5)
 check "tampered manifest: ping frame still parses" "0" "$(jq -e . <<<"$tampered_out" >/dev/null 2>&1; echo $?)"
-check "tampered manifest: version falls back" "1.0.1" "$(jq -r '.version // ""' <<<"$tampered_out")"
+check "tampered manifest: version falls back" "1.0.2" "$(jq -r '.version // ""' <<<"$tampered_out")"
 check "tampered manifest: no injected key" "" "$(jq -r '.evil // ""' <<<"$tampered_out")"
 rm -rf "$hosttmp"
 
