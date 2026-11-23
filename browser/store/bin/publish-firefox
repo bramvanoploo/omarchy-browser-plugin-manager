@@ -10,8 +10,9 @@
 # auto-approved within minutes; occasionally AMO asks a human reviewer, which
 # still needs no action here (the old version keeps serving until then).
 #
-# Credentials: the SAME .env the unlisted signer uses (AMO_API_KEY and
-# AMO_API_SECRET from https://addons.mozilla.org/developers/keys/; the key
+# Credentials: the store.env outside the repo (~/.config/plugbrug/store.env),
+# holding AMO_API_KEY and AMO_API_SECRET from
+# https://addons.mozilla.org/developers/keys/; the key
 # belongs to the account that owns the listing, so it can submit listed
 # versions too).
 #
@@ -30,7 +31,9 @@ SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 BIN_DIR="$(dirname -- "$SCRIPT_PATH")"
 REPO_DIR="$(dirname -- "$(dirname -- "$(dirname -- "$BIN_DIR")")")"
 EXT_DIR="$REPO_DIR/browser/extension"
-ENV_FILE="$REPO_DIR/.env"
+# Credentials live outside the repo so a stray `git add -A` can never
+# publish them: ~/.config/plugbrug/store.env
+ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/plugbrug/store.env"
 ADDON_SLUG="omarchy-browser-plugin-manager"
 
 FORCE=0
@@ -41,7 +44,7 @@ for arg in "$@"; do
   esac
 done
 
-[[ -f "$ENV_FILE" ]] || { echo "Missing .env with AMO_API_KEY and AMO_API_SECRET" >&2; exit 1; }
+[[ -f "$ENV_FILE" ]] || { echo "Missing store.env with AMO_API_KEY and AMO_API_SECRET" >&2; exit 1; }
 set -a; source "$ENV_FILE"; set +a
 [[ -n "${AMO_API_KEY:-}" && -n "${AMO_API_SECRET:-}" ]] || {
   echo "Set AMO_API_KEY and AMO_API_SECRET (https://addons.mozilla.org/developers/keys/)." >&2

@@ -20,6 +20,7 @@
         "https://plugins.omarchy.org/plugin.html*"
       ],
       "js": [
+        "util.js",
         "content.js"
       ],
       "run_at": "document_idle"
@@ -32,6 +33,7 @@
         "https://plugins.omarchy.org/plugin.html*"
       ],
       "js": [
+        "util.js",
         "catalog.js"
       ],
       "run_at": "document_idle"

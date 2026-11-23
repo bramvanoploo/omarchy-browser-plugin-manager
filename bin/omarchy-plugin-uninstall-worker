@@ -8,17 +8,8 @@
 # update worker, so uninstalling this manager itself still finishes and
 # notifies after the shell reload destroys the widget.
 set -u
-# Marker files record in-progress batches (mode, timestamps); owner-only
-# from creation, whatever the caller's umask.
-umask 077
-export PATH="${OMARCHY_PATH:-/usr/share/omarchy}/bin:$PATH"
-notify_cmd="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-notification-send"
-command -v "$notify_cmd" >/dev/null 2>&1 || notify_cmd="$(command -v omarchy-notification-send 2>/dev/null || echo omarchy-notification-send)"
-notify() {
-  "$notify_cmd" --app-name omarchy-browser-plugin-manager --expire-time 8000 "$1" "$2"
-}
-real_shell="${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-shell"
-command -v "$real_shell" >/dev/null 2>&1 || real_shell="$(command -v omarchy-shell 2>/dev/null || echo /usr/share/omarchy/bin/omarchy-shell)"
+# shellcheck disable=SC1091
+source "$(dirname -- "$0")/omarchy-plugin-lib"
 
 # Built-in (first-party) plugins are part of the Omarchy install itself: the
 # official CLI uninstall only ever acts on the user plugins directory
@@ -33,19 +24,10 @@ is_first_party() {
 }
 
 # In-progress system panel (same protocol as the wizard's workers): the
-# first argv is a display label (plugin name, or "N plugins" for a
-# batch); publish a marker file per run (removed on any exit) and summon
-# the wizard on its running stage, which polls the marker directory and
-# closes itself once no fresh marker remains.
+# first argv is a display label (plugin name, or "N plugins" for a batch).
 LABEL="${1:-plugins}"; [ $# -gt 0 ] && shift
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/bramvanoploo.omarchy-browser-plugin-manager"
-MARK_DIR="$STATE_DIR/in-progress"
-mkdir -p "$MARK_DIR" 2>/dev/null || true
-MARK="$MARK_DIR/$$-$(date +%s)-${RANDOM:-0}.json"
-trap 'rm -f "$MARK"' EXIT
-jq -cn --arg mode "uninstall" --arg name "$LABEL" '{mode:$mode,id:"",name:$name,started:(now|floor)}' > "$MARK" 2>/dev/null || true
-PAYLOAD=$(jq -cn --arg name "$LABEL" '{source:"worker",mode:"running",id:"",name:$name,action:"uninstall"}' 2>/dev/null)
-[ -n "$PAYLOAD" ] && "$real_shell" -q shell summon bramvanoploo.omarchy-browser-plugin-manager "$PAYLOAD" >/dev/null 2>&1 || true
+start_progress "uninstall" "" "$LABEL"
+trap 'rm -f "${MARK:-}"' EXIT
 
 ok=0; fail=0; failed=""; builtin=0; builtins=""
 while [ $# -gt 0 ]; do
@@ -55,7 +37,7 @@ while [ $# -gt 0 ]; do
     fail=$((fail+1))
     # Show the sanitized original spec (as the update worker does): the
     # blanked id would render an empty name after "failed:".
-    bad=$(printf '%s' "$1" | head -n1 | tr -d '\000-\010\013\014\016-\037\177' | cut -c1-120)
+    bad=$(entry "$1")
     failed="$failed ${bad:-<empty>}"
   elif is_first_party "$id"; then
     builtin=$((builtin+1)); builtins="$builtins $id"

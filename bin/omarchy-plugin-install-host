@@ -76,6 +76,9 @@ fi
 # (kept in step with the release in manifest.json).
 [[ "$HOST_VERSION" =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || HOST_VERSION="1.0.2"
 CATALOG_URL="https://plugins.omarchy.org/catalog.json"
+# Plugin id grammar, shared by plugin_status and normalize_target (the jq
+# copies inside record_watch keep their own: jq cannot read bash variables).
+PLUGIN_ID_RE='^[a-z0-9][a-z0-9.-]{0,127}$'
 WIZARD_ID="bramvanoploo.omarchy-browser-plugin-manager"
 MAX_FRAME_BYTES=65536
 # Watcher-mode beacon record: the plugin page of the tab(s) currently open.
@@ -192,7 +195,7 @@ plugin_list_json() {
 # update-merge can match cache entries without re-binding it in argv.
 plugin_status() {
   local id="$1" raw out default=""
-  if [[ ! $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ || $id == *..* ]]; then
+  if [[ ! $id =~ $PLUGIN_ID_RE || $id == *..* ]]; then
     printf '%s\n' '{"id":"","installed":false,"enabled":false,"firstParty":false,"barWidget":false}'
     return 0
   fi
@@ -363,7 +366,7 @@ normalize_target() {
     ] | @tsv' <<<"$payload" 2>/dev/null || echo ""
   )
 
-  [[ $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ && $id != *..* ]] || {
+  [[ $id =~ $PLUGIN_ID_RE && $id != *..* ]] || {
     echo "invalid-plugin-id"
     return 1
   }
@@ -514,7 +517,7 @@ summon_wizard() {
 # ever keys anything.
 current_bar_section() {
   local id="$1" file="" out=""
-  [[ $id =~ ^[a-z0-9][a-z0-9.-]{0,127}$ && $id != *..* ]] || return 0
+  [[ $id =~ $PLUGIN_ID_RE && $id != *..* ]] || return 0
   file="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
   [[ -f $file ]] || return 0
   out=$(head -c 262144 "$file" 2>/dev/null | jq -r --arg id "$id" '

@@ -3,7 +3,8 @@
 # the browsers, and prints the browser-extension installation steps
 # (Chrome Web Store / Firefox Add-ons listings, or manual loading).
 #
-# Browsers covered: Google Chrome, Chromium, Brave, Firefox.
+# Browsers covered: Google Chrome, Chromium, Brave, Microsoft Edge, Vivaldi,
+# Opera, Firefox.
 # The host manifest is written per browser family:
 #   - Chromium family: allowed_origins pinned to the extension ID derived from
 #     the extension directory path (stable for "Load unpacked" at that path),
@@ -23,7 +24,7 @@ FIREFOX_ADDON_ID="bramvanoploo.omarchy-browser-plugin-manager@bram.dev"
 AMO_ADDON_ID="omarchy-browser-plugin-manager@sudo-systems.com"
 # Chrome Web Store item ID, assigned by the store at first upload from the
 # store-side keypair (the 2025+ CWS dashboard rejects manifests containing
-# "key", so it is NOT derivable from chrome-key.pem). Copy from the dashboard.
+# "key", so it is NOT derivable from the extension's public key). Copy from the dashboard.
 CHROME_STORE_ID="nalcgjmbglkcmohokidcmogcbpmhkdjf"
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
@@ -33,10 +34,17 @@ HOST_PATH="$BIN_DIR/omarchy-plugin-install-host"
 EXT_DIR="${PLUGIN_INSTALLER_EXT_DIR:-$REPO_DIR/browser/extension}"
 
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+# One manifest per Chromium-family profile dir: each browser only reads
+# NativeMessagingHosts under its own config dir, so an advertised browser
+# (README lists Edge/Vivaldi/Opera) without a registered manifest connects
+# and then fails every action with "host not registered".
 CHROME_DIRS=(
   "$CONFIG_HOME/google-chrome"
   "$CONFIG_HOME/chromium"
   "$CONFIG_HOME/BraveSoftware/Brave-Browser"
+  "$CONFIG_HOME/microsoft-edge"
+  "$CONFIG_HOME/vivaldi"
+  "$CONFIG_HOME/opera"
 )
 # Firefox (Linux) scans native messaging manifests in the XDG location
 # (~/.config/mozilla/... since Firefox 133). The extension's
@@ -85,16 +93,19 @@ chrome_extension_id() {
     | tr '0123456789abcdef' 'abcdefghijklmnop'
 }
 
-# Stable Chrome extension ID derived from the manifest's "key" (public key):
-# used by packed/zip installs. The source manifest carries no key (Firefox
-# warns about it), so fall back to the repo's browser/store/chrome-key.pem (when present)
-# or the legacy pinned ID. The Chrome Web Store item ID is separate
-# (CHROME_STORE_ID): the store derives it from its own keypair.
+# Stable Chrome extension ID derived from the extension's public key: used
+# by packed/zip installs. The source manifest carries no key (Firefox warns
+# about it), so fall back to the committed public key
+# (browser/store/chrome-key.pub, base64 SPKI DER). The private half lives
+# outside the repo (~/.local/share/plugbrug/chrome-key.pem) and is only
+# needed to sign new packages, never to derive this ID. The Chrome Web Store
+# item ID is separate (CHROME_STORE_ID): the store derives it from its own
+# keypair.
 chrome_key_id() {
   local key=""
   key=$(jq -r '.key // ""' "$1" 2>/dev/null) || true
-  if [[ -z $key && -f "$REPO_DIR/browser/store/chrome-key.pem" ]]; then
-    key=$(openssl pkey -in "$REPO_DIR/browser/store/chrome-key.pem" -pubout -outform DER 2>/dev/null | base64 -w0) || true
+  if [[ -z $key && -f "$REPO_DIR/browser/store/chrome-key.pub" ]]; then
+    key=$(tr -d '\n' < "$REPO_DIR/browser/store/chrome-key.pub")
   fi
   if [[ -z $key ]]; then
     printf '%s\n' "$CHROME_STORE_ID"

@@ -3,7 +3,7 @@
 # derivations and manifest registration (the audit gap: a silently wrong
 # derived ID makes Chrome refuse connectNative with no error anywhere).
 #   - chrome_extension_id: path hash -> hex -> a-p nibble mapping
-#   - chrome_key_id: manifest "key" hash, chrome-key.pem fallback, and the
+#   - chrome_key_id: manifest "key" hash, chrome-key.pub fallback, and the
 #     CHROME_STORE_ID last resort
 #   - end-to-end: manifests land in the XDG Firefox dir (NOT the dead legacy
 #     ~/.mozilla one), allowed_origins carry the path-derived ID and the
@@ -62,7 +62,14 @@ KEY_B64=$(openssl pkey -in "$KEY_PEM" -pubout -outform DER 2>/dev/null | base64 
 printf '{"key":"%s"}\n' "$KEY_B64" >"$EXT/manifest.json"
 check "chrome_key_id hashes the manifest key" "$(ref_key_id "$KEY_B64")" "$(chrome_key_id "$EXT/manifest.json")"
 
-# No manifest key, no chrome-key.pem anywhere -> the store ID is the answer.
+# A repo whose browser/store/chrome-key.pub exists derives the packed-install
+# ID from it (the committed public key is enough; no private key involved).
+REPO_DIR="$TESTHOME/pub-repo"; mkdir -p "$REPO_DIR/browser/store"
+printf '%s\n' "$KEY_B64" >"$REPO_DIR/browser/store/chrome-key.pub"
+printf '{"manifest_version":3}\n' >"$EXT/manifest.json"
+check "chrome_key_id falls back to the repo public key" "$(ref_key_id "$KEY_B64")" "$(chrome_key_id "$EXT/manifest.json")"
+
+# No manifest key, no chrome-key.pub anywhere -> the store ID is the answer.
 REPO_DIR="$TESTHOME/empty-repo"; mkdir -p "$REPO_DIR/browser/store"
 printf '{"manifest_version":3}\n' >"$EXT/manifest.json"
 check "chrome_key_id falls back to CHROME_STORE_ID" "$CHROME_STORE_ID" "$(chrome_key_id "$EXT/manifest.json")"

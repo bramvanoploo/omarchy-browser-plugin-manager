@@ -13,7 +13,7 @@ packages from the [GitHub releases page](https://github.com/bramvanoploo/omarchy
 - `omarchy-browser-plugin-manager-<version>.xpi` — unsigned Firefox add-on
   for ESR / Developer Edition / Nightly (see step 2).
 - `omarchy-browser-plugin-manager-<version>-chrome.zip` — Chrome-family
-  packed build with the pinned key (see step 2).
+  packed build that gets the key-pinned ID (see step 2).
 
 ## 1. Register the native messaging host
 
@@ -43,9 +43,11 @@ every shell start and this step is redundant.
 is the CWS upload format: CWS rejects `"key"` manifests, so the store
 assigns its own ID `nalcgjmbglkcmohokidcmogcbpmhkdjf`; zipped packed
 installs get the key-pinned ID `nbngempephjmagmlfbfdodboeimfoibp` (from
-`browser/store/chrome-key.pem`). The setup script registers all three IDs.
-Keep `browser/store/chrome-key.pem` safe: the packed-install ID cannot be
-reproduced without it.
+the committed public key `browser/store/chrome-key.pub`). The setup script
+registers all three IDs. The ID is reproducible from that public key alone;
+the private signing key lives outside the repo
+(`~/.local/share/plugbrug/chrome-key.pem`) and is only needed to sign new
+packages.
 
 **Firefox (release builds, >= 121): signed `.xpi` required**
 
